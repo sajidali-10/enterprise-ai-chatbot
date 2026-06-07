@@ -1,0 +1,10 @@
+{ "id": "q1", "question": "What is the company's return policy?", "category": "policy", "expected_keywords": ["return", "policy", "days", "refund"] }
+{ "id": "q2", "question": "How do I reset my password?", "category": "support", "expected_keywords": ["password", "reset", "login", "account"] }
+{ "id": "q3", "question": "What are the subscription tiers and pricing?", "category": "pricing", "expected_keywords": ["subscription", "tier", "pricing", "plan", "cost"] }
+{ "id": "q4", "question": "How can I contact customer support?", "category": "support", "expected_keywords": ["contact", "support", "email", "phone", "help"] }
+{ "id": "q5", "question": "What is the data privacy policy?", "category": "policy", "expected_keywords": ["privacy", "data", "policy", "gdpr", "personal"] }
+{ "id": "q6", "question": "How do I upgrade my account?", "category": "account", "expected_keywords": ["upgrade", "account", "plan", "subscription"] }
+{ "id": "q7", "question": "What payment methods are accepted?", "category": "billing", "expected_keywords": ["payment", "credit", "card", "paypal", "billing"] }
+{ "id": "q8", "question": "Can I export my data?", "category": "data", "expected_keywords": ["export", "data", "download", "csv", "json"] }
+{ "id": "q9", "question": "What are the API rate limits?", "category": "api", "expected_keywords": ["api", "rate", "limit", "request", "throttle"] }
+{ "id": "q10", "question": "How do I delete my account?", "category": "account", "expected_keywords": ["delete", "account", "data", "permanent"] }

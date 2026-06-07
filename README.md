@@ -266,6 +266,141 @@ curl -X POST http://localhost:8000/api/documents/{document_id}/index
 | `EMBEDDING_DIMENSION` | 384 | Vector dimension (mock provider) |
 | `OPENAI_EMBEDDING_MODEL` | text-embedding-3-small | OpenAI embedding model |
 
+## RAG Chat (Phase 4 & Phase 5)
+
+The chat endpoint supports two modes:
+
+### Normal Chat
+```bash
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello"}'
+```
+
+### RAG Chat (with document retrieval)
+```bash
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is in the knowledge base?", "mode": "rag"}'
+```
+
+When `mode: "rag"` is specified, the system:
+1. **Phase 5**: Optionally rewrites the query for better retrieval
+2. Performs hybrid retrieval (vector + keyword search) by default
+3. Optionally reranks results using configurable reranker
+4. Builds a prompt with the retrieved context
+5. Generates an answer with inline citations [1], [2], etc.
+6. Returns citations below the answer
+
+### Hybrid Retrieval (Phase 5)
+
+Phase 5 introduces hybrid retrieval combining:
+- **Vector search (Qdrant)**: Semantic similarity using embeddings
+- **Keyword search (PostgreSQL)**: Full-text search with `ts_rank` scoring
+
+Results are fused using weighted score normalization:
+```
+fused_score = (vector_weight × normalized_vector_score) + (keyword_weight × normalized_keyword_score)
+```
+
+Default weights: 70% vector, 30% keyword (configurable).
+
+### Reranking (Phase 5)
+
+After fusion, results can be reranked using:
+- **noop** (default): No reranking, use fused scores
+- **mock**: Simple heuristic reranking based on text overlap and title matches
+
+Future: Cohere Rerank and BGE reranker integrations.
+
+### Query Rewriting (Phase 5)
+
+Optional query rewriting before retrieval:
+- **passthrough** (default): No rewriting
+- **mock**: Basic query expansion (adds trailing `?`)
+
+### Debug Mode
+
+Enable debug mode to see retrieval details:
+```bash
+curl -X POST "http://localhost:8000/api/chat?mode=rag&debug=true" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the return policy?"}'
+```
+
+Response includes `debug_info` with:
+- `original_query` / `rewritten_query`
+- `vector_results_count` / `keyword_results_count`
+- `config` settings used
+- Per-chunk scores and rankings
+
+### Retrieval Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RETRIEVAL_VECTOR_TOP_K` | 15 | Vector search results to fetch |
+| `RETRIEVAL_KEYWORD_TOP_K` | 15 | Keyword search results to fetch |
+| `RETRIEVAL_FINAL_TOP_K` | 5 | Final results after fusion/reranking |
+| `RETRIEVAL_MIN_SCORE` | 0.1 | Minimum score threshold |
+| `RETRIEVAL_RERANKER_TYPE` | noop | Reranker: noop, mock, cohere, bge |
+| `RETRIEVAL_RERANK_FINAL_K` | 20 | Number of results to rerank |
+| `RETRIEVAL_VECTOR_WEIGHT` | 0.7 | Weight for vector scores in fusion |
+| `RETRIEVAL_KEYWORD_WEIGHT` | 0.3 | Weight for keyword scores in fusion |
+| `RETRIEVAL_QUERY_REWRITER` | passthrough | Rewriter: passthrough, mock |
+| `RETRIEVAL_SHOW_DEBUG` | false | Always show debug info in responses |
+
+### Citation Format
+Citations are returned in the response:
+```json
+{
+  "message": "According to [1]...",
+  "citations": [
+    {
+      "index": 1,
+      "source_file_name": "policy.pdf",
+      "content_snippet": "The capital of France is Paris...",
+      "relevance_score": 0.92
+    }
+  ]
+}
+```
+
+If no relevant chunks are found (score below threshold), the system returns:
+"I could not find enough information in the approved knowledge base to answer confidently."
+
+## RAG Evaluation (Phase 5)
+
+Run retrieval evaluation to measure quality:
+
+```bash
+python scripts/run_rag_eval.py
+```
+
+### Evaluation Dataset Format
+
+Questions are in JSONL format at `evals/questions.jsonl`:
+```json
+{"id": "q1", "question": "What is the return policy?", "category": "policy", "expected_keywords": ["return", "refund", "days"]}
+```
+
+### Evaluation Output
+
+The script outputs:
+- Average chunks retrieved per query
+- Top score and average top-5 scores
+- Keyword coverage (% of expected keywords found)
+- Category breakdown with per-category metrics
+
+### Running Custom Evaluation
+
+```bash
+# Use custom questions file
+python scripts/run_rag_eval.py --questions path/to/my_questions.jsonl
+
+# Write results to JSON
+python scripts/run_rag_eval.py --output results.json
+```
+
 ## License
 
 Proprietary — All rights reserved.
