@@ -1,0 +1,163 @@
+# ==============================================================================
+# Enterprise AI Chatbot — Docker Compose Configuration
+# ==============================================================================
+# This file defines all services required for Phase 0 foundation:
+# - PostgreSQL: Primary relational database
+# - Qdrant: Vector database for RAG embeddings (deferred Phase 1)
+# - Redis: Caching and session store
+# - MinIO: S3-compatible object storage for document uploads (deferred Phase 1)
+# - Backend: FastAPI application server
+# - Frontend: Next.js application
+# ==============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # PostgreSQL — Primary Database
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: chatbot_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Qdrant — Vector Database
+  # --------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: chatbot_qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6333/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Redis — Caching & Session Store
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: chatbot_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # MinIO — S3-Compatible Object Storage
+  # --------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: chatbot_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # API port
+      - "9001:9001"   # Console port
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Backend — FastAPI Application
+  # --------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: chatbot_backend
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_started  # Allow startup without strict health dependency for Phase 0
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_started
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Frontend — Next.js Application
+  # --------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    container_name: chatbot_frontend
+    depends_on:
+      - backend
+    env_file:
+      - .env
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  chatbot-network:
+    driver: bridge
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
+  minio_data:
