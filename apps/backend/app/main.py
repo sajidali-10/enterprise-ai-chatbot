@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api import chat as chat_router
+from app.api import documents as documents_router
+from app.db.base import Base, engine
 
 app = FastAPI(
     title="AI Chatbot API",
@@ -14,6 +17,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(chat_router.router)
+app.include_router(documents_router.router)
+
+
+@app.on_event("startup")
+def startup():
+    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/", tags=["Root"])

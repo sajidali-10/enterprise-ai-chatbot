@@ -4,7 +4,7 @@ A production-ready foundation for an enterprise AI chatbot application, built wi
 
 ## Overview
 
-This project establishes the foundational infrastructure for an enterprise-grade AI chatbot. The current Phase 0 deliverable includes a minimal working system with health check endpoints and basic service orchestration.
+This project establishes the foundational infrastructure for an enterprise-grade AI chatbot. The current Phase 1 deliverable adds a basic chat interface and backend API with an LLM provider abstraction, built on the Phase 0 foundation.
 
 ### Technology Stack
 
@@ -90,8 +90,8 @@ enterprise-ai-chatbot/
 │       │   ├── core/             # Core configuration
 │       │   ├── db/               # Database utilities
 │       │   ├── services/         # Business logic services
-│       │   ├── rag/              # RAG utilities (deferred Phase 1)
-│       │   ├── ingestion/        # Document ingestion (deferred Phase 1)
+│       │   ├── rag/              # RAG utilities (deferred Phase 3)
+│       │   ├── ingestion/        # Document ingestion (Phase 2)
 │       │   └── security/         # Auth & security (deferred Phase 1)
 │       ├── tests/                # Pytest test suite
 │       ├── Dockerfile
@@ -179,6 +179,92 @@ docker compose ps
 ```bash
 make check
 ```
+
+## Chat Usage
+
+Navigate to `http://localhost:3000/chat` to access the chat interface.
+
+The chat sends messages to the backend via `POST /api/chat` with a JSON body `{"message": "..."}`. By default, the mock provider responds with canned responses.
+
+### Switching to OpenAI-Compatible Provider
+
+1. Set `LLM_PROVIDER=openai` and `OPENAI_API_KEY=sk-...` in your `.env` file
+2. Restart the backend:
+   ```bash
+   make restart-backend
+   ```
+
+### Running Backend Chat Tests
+
+```bash
+make backend-test
+```
+
+## Document Upload
+
+Navigate to `http://localhost:3000/documents/upload` to upload documents.
+
+Supported file types:
+- PDF (`.pdf`)
+- Plain text (`.txt`)
+- Markdown (`.md`)
+- Word (`.docx`)
+
+Maximum file size: 10 MB (configurable via `UPLOAD_MAX_SIZE_MB`)
+
+### Upload Flow
+
+1. Select or drag-and-drop a file
+2. Frontend validates type and size
+3. Backend stores the file in MinIO
+4. Backend extracts text via parser pipeline
+5. Metadata and extracted text are saved in PostgreSQL
+
+### View Uploaded Documents
+
+Navigate to `http://localhost:3000/documents` to see a list of uploaded documents.
+
+### Running Document Tests
+
+```bash
+make backend-test
+```
+
+## Document Indexing
+
+The index endpoint processes a document's extracted text into chunks and stores them in both PostgreSQL and Qdrant for semantic search.
+
+### Trigger Indexing
+
+```bash
+curl -X POST http://localhost:8000/api/documents/{document_id}/index
+```
+
+### How It Works
+
+1. Fetch the document's latest version with extracted text
+2. Split text into ~3000-char chunks with ~400-char overlap
+3. Store chunks in PostgreSQL (`document_chunks` table) with metadata
+4. Generate embeddings via the configured provider (default: mock)
+5. Upsert vectors to Qdrant collection with chunk metadata payload
+
+### Embedding Providers
+
+- **Mock** (default): Deterministic pseudo-random vectors, no API key needed
+- **OpenAI-compatible**: Set `EMBEDDING_PROVIDER=openai` and `OPENAI_API_KEY` in `.env`
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QDRANT_HOST` | qdrant | Qdrant server host |
+| `QDRANT_PORT` | 6333 | Qdrant server port |
+| `QDRANT_COLLECTION` | documents | Collection name |
+| `CHUNK_SIZE` | 3000 | Max characters per chunk |
+| `CHUNK_OVERLAP` | 400 | Overlap characters between chunks |
+| `EMBEDDING_PROVIDER` | mock | mock or openai |
+| `EMBEDDING_DIMENSION` | 384 | Vector dimension (mock provider) |
+| `OPENAI_EMBEDDING_MODEL` | text-embedding-3-small | OpenAI embedding model |
 
 ## License
 

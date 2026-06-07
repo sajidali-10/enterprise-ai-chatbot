@@ -10,6 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 COPY tests/ ./tests/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 
 RUN chown -R appuser:appgroup /app
 
