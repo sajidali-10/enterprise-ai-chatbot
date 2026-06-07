@@ -401,6 +401,133 @@ python scripts/run_rag_eval.py --questions path/to/my_questions.jsonl
 python scripts/run_rag_eval.py --output results.json
 ```
 
+## Phase 6: Authentication, RBAC, and Audit Logging
+
+Phase 6 adds authentication, role-based access control (RBAC), document-level permissions, and audit logging for compliance and security monitoring.
+
+### Architecture Overview
+
+The security layer is designed to support local development (dev headers) and future enterprise SSO/OIDC integration without changing application code.
+
+```
+Request → CompositeAuthProvider
+           ├── DevAuthProvider (X-Dev-User header, local dev only)
+           ├── DatabaseAuthProvider (placeholder for SSO/JWT)
+           └── AnonymousAuthProvider (fallback)
+         ↓
+    AuthContext (user_id, username, role)
+         ↓
+PermissionChecker (document-level filtering)
+         ↓
+    RAG Retrieval (filtered results only)
+         ↓
+AuditLogger (records all interactions)
+```
+
+### User Roles
+
+| Role    | Access Level                                      |
+|---------|---------------------------------------------------|
+| ADMIN   | Full access to all documents (bypasses filtering) |
+| USER    | Access only to explicitly permitted documents     |
+| VIEWER  | Read-only access to explicitly permitted documents|
+
+### Dev Authentication (Local Development)
+
+Use the `X-Dev-User` header to authenticate without a database record:
+
+```bash
+# Regular user
+curl -H "X-Dev-User: myname" http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the policy?"}'
+
+# Admin user (bypasses all permission checks)
+curl -H "X-Dev-User: admin_superuser" http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the policy?"}'
+
+# Viewer (read-only)
+curl -H "X-Dev-User: viewer_guest" http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the policy?"}'
+```
+
+Username prefix determines role:
+- `admin_*` → ADMIN role
+- `viewer_*` → VIEWER role
+- anything else → USER role
+
+**Important:** Dev users have `user_id=None` and cannot access any documents (they need explicit permissions in the database). Only admin dev users bypass this restriction.
+
+### Document-Level Permissions
+
+Permissions are stored in the `document_permissions` table:
+
+| Field      | Type   | Description                          |
+|------------|--------|--------------------------------------|
+| user_id    | int    | Reference to users table             |
+| document_id| int    | Reference to documents table         |
+| can_read   | bool   | Allow reading this document          |
+| can_write  | bool   | Allow modifying this document        |
+| granted_by | int    | User ID who granted the permission   |
+
+**Permission flow:**
+1. User makes request with auth context
+2. RAG retrieves chunks from all documents
+3. `PermissionChecker.filter_accessible_documents()` removes unauthorized documents **before** answer generation
+4. Only authorized chunks are sent to the LLM
+
+Admin users bypass permission filtering entirely.
+
+### Audit Logging
+
+All RAG interactions are logged to the `audit_logs` table:
+
+| Field                 | Type     | Description                              |
+|-----------------------|----------|------------------------------------------|
+| user_id               | int?     | NULL for anonymous/dev users             |
+| username              | string   | Always populated                         |
+| action                | enum     | CHAT_RAG, CHAT_MESSAGE, etc.             |
+| question              | text     | User's question                          |
+| retrieved_document_ids| text     | JSON array of accessed document IDs      |
+| retrieved_chunk_ids   | text     | JSON array of accessed chunk IDs         |
+| model_provider        | string   | e.g., "openai", "mock"                   |
+| model_name            | string   | e.g., "gpt-4o-mini"                       |
+| status                | string   | success, failure, error                  |
+| duration_ms           | int      | Request duration in milliseconds         |
+| request_ip            | string   | Client IP address                        |
+| request_user_agent    | string   | Client user agent                        |
+| created_at            | datetime | Indexed for time-series queries          |
+
+### Database Migration
+
+Run the security tables migration:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+This creates:
+- `users` — user accounts with roles
+- `document_permissions` — document-level access control
+- `audit_logs` — compliance audit trail
+
+### Future SSO/OIDC Integration
+
+The `AuthProviderBase` interface allows dropping in OIDC/JWT validation without changing application code:
+
+```python
+class AuthProviderBase:
+    def authenticate(self, request: Request) -> Optional[AuthContext]:
+        raise NotImplementedError
+```
+
+To add OIDC:
+1. Implement `AuthProviderBase` with JWT validation
+2. Add it to `CompositeAuthProvider` in `get_auth_provider()`
+3. Remove or lower priority of `DevAuthProvider`
+
 ## License
 
 Proprietary — All rights reserved.
