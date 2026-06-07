@@ -3,9 +3,17 @@
 import { useState, useRef, FormEvent, KeyboardEvent } from 'react'
 import Link from 'next/link'
 
+interface Citation {
+  index: number
+  source_file_name: string
+  content_snippet: string
+  relevance_score?: number
+}
+
 interface Message {
   role: 'user' | 'assistant'
   text: string
+  citations?: Citation[]
 }
 
 export default function ChatPage() {
@@ -13,6 +21,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mode, setMode] = useState<'normal' | 'rag'>('normal')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -35,7 +44,7 @@ export default function ChatPage() {
       const res = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({ message: trimmed, mode }),
       })
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
@@ -43,7 +52,7 @@ export default function ChatPage() {
       const data = await res.json()
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', text: data.message },
+        { role: 'assistant', text: data.message, citations: data.citations },
       ])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -63,14 +72,41 @@ export default function ChatPage() {
   return (
     <div className="max-w-2xl mx-auto h-screen flex flex-col p-4">
       {/* Header */}
-      <header className="flex items-center mb-4">
-        <Link
-          href="/"
-          className="text-blue-600 hover:text-blue-800 text-sm font-medium mr-4"
-        >
-          &larr; Back
-        </Link>
-        <h1 className="text-2xl font-bold text-gray-900">Chat</h1>
+      <header className="flex items-center justify-between mb-4">
+        <div className="flex items-center">
+          <Link
+            href="/"
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium mr-4"
+          >
+            &larr; Back
+          </Link>
+          <h1 className="text-2xl font-bold text-gray-900">Chat</h1>
+        </div>
+        <div className="flex items-center space-x-2">
+          <span className="text-sm text-gray-600">Mode:</span>
+          <button
+            type="button"
+            onClick={() => setMode('normal')}
+            className={`px-3 py-1 text-sm rounded ${
+              mode === 'normal'
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            Normal
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('rag')}
+            className={`px-3 py-1 text-sm rounded ${
+              mode === 'rag'
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            RAG
+          </button>
+        </div>
       </header>
 
       {/* Error banner */}
@@ -93,14 +129,24 @@ export default function ChatPage() {
             key={i}
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
-            <div
-              className={`max-w-xs md:max-w-md px-4 py-2 rounded-lg text-sm ${
+            <div className={`max-w-xs md:max-w-md px-4 py-2 rounded-lg text-sm ${
                 msg.role === 'user'
                   ? 'bg-blue-500 text-white rounded-br-none'
                   : 'bg-gray-200 text-gray-900 rounded-bl-none'
-              }`}
-            >
+              }`}>
               {msg.text}
+              {msg.role === 'assistant' && msg.citations && msg.citations.length > 0 && (
+                <div className="mt-2 bg-gray-50 border border-gray-200 rounded p-3 text-sm">
+                  <p className="font-semibold mb-2">Sources:</p>
+                  {msg.citations.map((cit: Citation) => (
+                    <div key={cit.index} className="mb-2">
+                      <span className="font-medium text-blue-600">[{cit.index}] {cit.source_file_name}</span>
+                      <span className="text-gray-500 ml-2">(score: {cit.relevance_score?.toFixed(2)})</span>
+                      <p className="text-gray-700 mt-1">{cit.content_snippet}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ))}

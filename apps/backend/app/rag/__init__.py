@@ -11,8 +11,18 @@ This module provides components for RAG-based chat:
 - citations: Citation formatting for RAG responses
 """
 
-from app.rag.retriever import retrieve_chunks, retrieve_chunks_with_settings
-from app.rag.answer_generator import generate_answer_with_rag, generate_answer_without_rag
+from app.rag.retriever import (
+    retrieve_chunks,
+    retrieve_chunks_with_settings,
+    retrieve_chunks_with_auth,
+    get_retrievable_document_ids,
+)
+from app.rag.answer_generator import (
+    generate_answer_with_rag,
+    generate_answer_with_rag_audit,
+    generate_answer_without_rag,
+    generate_answer_without_rag_audit,
+)
 from app.rag.query_rewriter import (
     QueryRewriterBase,
     PassthroughRewriter,
@@ -36,12 +46,16 @@ __all__ = [
     # Retrieval
     "retrieve_chunks",
     "retrieve_chunks_with_settings",
+    "retrieve_chunks_with_auth",
+    "get_retrievable_document_ids",
     "retrieve_chunks_hybrid",
     "RetrievalConfig",
     "ScoredChunk",
     # Answer generation
     "generate_answer_with_rag",
+    "generate_answer_with_rag_audit",
     "generate_answer_without_rag",
+    "generate_answer_without_rag_audit",
     # Query rewriting
     "QueryRewriterBase",
     "PassthroughRewriter",

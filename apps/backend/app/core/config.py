@@ -34,4 +34,14 @@ class Settings(BaseSettings):
     # Admin/debug mode for showing retrieval details
     RETRIEVAL_SHOW_DEBUG: bool = os.getenv("RETRIEVAL_SHOW_DEBUG", "false").lower() in ("true", "1", "yes")
 
+    # Security settings (Phase 6 - Authentication & Authorization)
+    AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
+    DEV_AUTH_ENABLED: bool = os.getenv("DEV_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
+    DEV_USER_SECRET: str = os.getenv("DEV_USER_SECRET", "dev-secret-change-in-production")
+    # SSO/OIDC placeholder settings (for future integration)
+    OIDC_ENABLED: bool = os.getenv("OIDC_ENABLED", "false").lower() in ("true", "1", "yes")
+    OIDC_ISSUER_URL: str = os.getenv("OIDC_ISSUER_URL", "")
+    OIDC_CLIENT_ID: str = os.getenv("OIDC_CLIENT_ID", "")
+    OIDC_CLIENT_SECRET: str = os.getenv("OIDC_CLIENT_SECRET", "")
+
 settings = Settings()
