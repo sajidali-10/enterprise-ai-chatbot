@@ -15,7 +15,7 @@ from app.services.vector.qdrant_service import ensure_collection, upsert_chunks
 
 # Import security modules for Phase 6
 try:
-    from app.security.auth import AuthContext, authenticate_request, get_auth_context
+    from app.security.auth import AuthContext, authenticate_request
     from app.security.models import UserRole, AuditAction
     from app.security.audit import get_audit_logger
     HAS_SECURITY = True
@@ -23,6 +23,18 @@ except ImportError:
     HAS_SECURITY = False
     AuthContext = None
     UserRole = None
+
+
+def get_auth_context(request: Request) -> AuthContext:
+    """
+    Extract authentication context from request.
+    
+    Returns AuthContext with user info, role, and auth status.
+    In development, supports X-Dev-User header.
+    """
+    if not HAS_SECURITY:
+        return None
+    return authenticate_request(request)
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 

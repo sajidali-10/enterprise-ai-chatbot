@@ -28,3 +28,24 @@ def client(db_session):
     app.dependency_overrides[get_db] = override_get_db
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="function")
+def auth_client(db_session):
+    """
+    Test client with admin authentication via X-Dev-User header.
+    
+    Use this fixture for tests that require authentication.
+    """
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+    app.dependency_overrides[get_db] = override_get_db
+    
+    # Create client with admin auth header
+    client = TestClient(app, headers={"X-Dev-User": "admin_user"})
+    yield client
+    
+    app.dependency_overrides.clear()

@@ -3,14 +3,15 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.document import Document, DocumentVersion
 
-client = TestClient(app)
 
-def test_index_endpoint_requires_document(db_session):
-    # Without a document, should return 404
-    response = client.post("/api/documents/99999/index")
+def test_index_endpoint_requires_document(auth_client, db_session):
+    """Test index endpoint with auth but no document returns 404."""
+    response = auth_client.post("/api/documents/99999/index")
     assert response.status_code == 404
 
-def test_index_endpoint_requires_extracted_text(db_session):
+
+def test_index_endpoint_requires_extracted_text(auth_client, db_session):
+    """Test index endpoint requires extracted text."""
     # Create document without extracted text
     doc = Document(
         filename="test.txt",
@@ -22,5 +23,11 @@ def test_index_endpoint_requires_extracted_text(db_session):
     db_session.add(doc)
     db_session.commit()
     
-    response = client.post(f"/api/documents/{doc.id}/index")
+    response = auth_client.post(f"/api/documents/{doc.id}/index")
     assert response.status_code == 400
+
+
+def test_index_endpoint_unauthenticated(client, db_session):
+    """Test index endpoint without auth returns 401."""
+    response = client.post("/api/documents/1/index")
+    assert response.status_code == 401
