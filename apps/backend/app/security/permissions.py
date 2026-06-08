@@ -12,6 +12,18 @@ from sqlalchemy.orm import Session
 from app.security.auth import AuthContext
 from app.security.models import DocumentPermission, UserRole
 from app.db.session import SessionLocal
+from app.core.config import settings
+
+
+# Dev user detection: user_id=None means dev user (from X-Dev-User header)
+# These users bypass permission checks in development mode
+def is_dev_user(auth: AuthContext) -> bool:
+    """Check if this is a dev user (authenticated via X-Dev-User header)."""
+    return (
+        auth.is_authenticated and 
+        auth.user_id is None and 
+        auth.username != "anonymous"
+    )
 
 
 @dataclass
@@ -28,6 +40,7 @@ class PermissionChecker:
     
     Permission hierarchy:
     - Admin: Can access all documents (bypasses permission checks)
+    - Dev users: Can access all documents (development mode bypass)
     - User: Can only access documents they have explicit permission for
     - Viewer: Read-only access to permitted documents
     """
@@ -38,6 +51,16 @@ class PermissionChecker:
     def _check_admin_bypass(self, auth: AuthContext) -> bool:
         """Check if user is admin and can bypass permission checks."""
         return auth.is_admin()
+    
+    def _check_dev_bypass(self, auth: AuthContext) -> bool:
+        """Check if user is a dev user who bypasses permission checks.
+        
+        Dev bypass only applies when DEV_AUTH_ENABLED is true (development mode).
+        In production, dev users must have proper database records.
+        """
+        if not settings.DEV_AUTH_ENABLED:
+            return False
+        return is_dev_user(auth)
     
     def _check_document_permission(
         self,
@@ -97,7 +120,7 @@ class PermissionChecker:
         """
         Check if user can access a specific document.
         
-        Admin users bypass all permission checks.
+        Admin and dev users bypass all permission checks.
         """
         # Admin bypass
         if self._check_admin_bypass(auth):
@@ -107,11 +130,19 @@ class PermissionChecker:
                 document_id=document_id,
             )
         
-        # Dev users without user_id can't have permissions
+        # Dev user bypass (development mode)
+        if self._check_dev_bypass(auth):
+            return PermissionResult(
+                granted=True,
+                reason="Dev user bypass",
+                document_id=document_id,
+            )
+        
+        # Users without user_id (e.g., anonymous) can't have permissions
         if auth.user_id is None:
             return PermissionResult(
                 granted=False,
-                reason="Dev user without database record cannot access documents",
+                reason="No user ID - cannot access documents",
                 document_id=document_id,
             )
         
@@ -136,7 +167,11 @@ class PermissionChecker:
         if self._check_admin_bypass(auth):
             return list(document_ids)
         
-        # Dev users without user_id can't access any documents
+        # Dev user bypass (development mode)
+        if self._check_dev_bypass(auth):
+            return list(document_ids)
+        
+        # Users without user_id can't access any documents
         if auth.user_id is None:
             return []
         
