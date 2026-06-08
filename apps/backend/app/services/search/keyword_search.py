@@ -42,7 +42,18 @@ def search_chunks_keyword(
         tsquery_parts = " & ".join(f"{token}:*" for token in tokens if token)
         tsquery_str = tsquery_parts.strip(" & ")
         
-        sql = text("""
+        # Build params dict
+        params = {"query": query}
+        
+        # Build WHERE clause with optional document filter
+        where_clause = "WHERE to_tsvector('english', dc.content) @@ plainto_tsquery('english', :query)"
+        if document_ids:
+            placeholders = ", ".join(f":doc_{i}" for i in range(len(document_ids)))
+            where_clause += f" AND dc.document_id IN ({placeholders})"
+            for i, doc_id in enumerate(document_ids):
+                params[f"doc_{i}"] = doc_id
+        
+        sql = text(f"""
             SELECT
                 dc.id as chunk_id,
                 dc.document_id,
@@ -58,21 +69,10 @@ def search_chunks_keyword(
                 ts_headline('english', dc.content, plainto_tsquery('english', :query),
                     'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20, MaxFragments=2') as headline
             FROM document_chunks dc
-            WHERE to_tsvector('english', dc.content) @@ plainto_tsquery('english', :query)
-        """)
-        
-        params = {"query": query}
-        
-        if document_ids:
-            placeholders = ", ".join(f":doc_{i}" for i in range(len(document_ids)))
-            sql = sql.append(text(f" AND dc.document_id IN ({placeholders})"))
-            for i, doc_id in enumerate(document_ids):
-                params[f"doc_{i}"] = doc_id
-        
-        sql = sql.append(text("""
+            {where_clause}
             ORDER BY rank DESC
             LIMIT :limit
-        """))
+        """)
         params["limit"] = limit
         
         result = session.execute(sql, params)
@@ -130,7 +130,15 @@ def search_chunks_keyword_trigram(
         escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped_query}%"
         
-        sql = text("""
+        # Build WHERE clause with optional document filter
+        where_clause = "WHERE dc.content ILIKE :pattern AND similarity(dc.content, :query) >= :min_similarity"
+        if document_ids:
+            placeholders = ", ".join(f":doc_{i}" for i in range(len(document_ids)))
+            where_clause += f" AND dc.document_id IN ({placeholders})"
+            for i, doc_id in enumerate(document_ids):
+                params[f"doc_{i}"] = doc_id
+        
+        sql = text(f"""
             SELECT
                 dc.id as chunk_id,
                 dc.document_id,
@@ -144,43 +152,10 @@ def search_chunks_keyword_trigram(
                 LEFT(dc.content, 500) as content,
                 similarity(dc.content, :query) as similarity_score
             FROM document_chunks dc
-            WHERE dc.content ILIKE :pattern
-              AND similarity(dc.content, :query) >= :min_similarity
-        """)
-        
-        params = {
-            "query": query,
-            "pattern": pattern,
-            "min_similarity": min_similarity,
-        }
-        
-        if document_ids:
-            placeholders = ", ".join(f":doc_{i}" for i in range(len(document_ids)))
-            sql = text(f"""
-                SELECT
-                    dc.id as chunk_id,
-                    dc.document_id,
-                    dc.document_version_id,
-                    dc.chunk_index,
-                    dc.title,
-                    dc.section_heading,
-                    dc.page_number,
-                    dc.source_file_name,
-                    dc.content_hash,
-                    LEFT(dc.content, 500) as content,
-                    similarity(dc.content, :query) as similarity_score
-                FROM document_chunks dc
-                WHERE dc.content ILIKE :pattern
-                  AND similarity(dc.content, :query) >= :min_similarity
-                  AND dc.document_id IN ({placeholders})
-            """)
-            for i, doc_id in enumerate(document_ids):
-                params[f"doc_{i}"] = doc_id
-        
-        sql = sql.append(text("""
+            {where_clause}
             ORDER BY similarity_score DESC
             LIMIT :limit
-        """))
+        """)
         params["limit"] = limit
         
         result = session.execute(sql, params)

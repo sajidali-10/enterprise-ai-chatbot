@@ -2,6 +2,7 @@
 
 import { useState, useRef, DragEvent, ChangeEvent } from 'react'
 import Link from 'next/link'
+import { useAuthFetch } from '@/hooks/useApi'
 
 const ALLOWED_TYPES = ['.pdf', '.txt', '.md', '.docx']
 const MAX_SIZE = 10 * 1024 * 1024 // 10MB
@@ -13,6 +14,7 @@ export default function DocumentUploadPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const authFetch = useAuthFetch()
 
   function validateFile(file: File): string | null {
     const ext = '.' + file.name.split('.').pop()?.toLowerCase()
@@ -82,7 +84,7 @@ export default function DocumentUploadPage() {
     formData.append('file', file)
 
     try {
-      const res = await fetch('http://localhost:8000/api/documents/upload', {
+      const res = await authFetch('/api/documents/upload', {
         method: 'POST',
         body: formData,
       })

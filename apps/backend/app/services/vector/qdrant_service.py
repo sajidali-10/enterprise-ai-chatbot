@@ -30,8 +30,9 @@ def upsert_chunks(chunks_with_embeddings: List[tuple], metadata: List[dict]):
     """
     client = get_qdrant_client()
     points = []
-    for (chunk_content, embedding), meta in zip(chunks_with_embeddings, metadata):
-        point_id = f"{meta['document_id']}_{meta['chunk_index']}"
+    for i, ((chunk_content, embedding), meta) in enumerate(zip(chunks_with_embeddings, metadata)):
+        # Use integer ID to avoid Qdrant 1.18+ parsing issues with underscore-separated strings
+        point_id = meta['chunk_id']
         points.append(PointStruct(
             id=point_id,
             vector=embedding,

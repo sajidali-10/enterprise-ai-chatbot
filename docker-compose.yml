@@ -48,7 +48,7 @@ services:
     networks:
       - chatbot-network
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6333/health || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/localhost/6333' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -126,6 +126,12 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     networks:
       - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
@@ -140,6 +146,8 @@ services:
       - backend
     env_file:
       - .env
+    environment:
+      - HOST=0.0.0.0
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     networks:

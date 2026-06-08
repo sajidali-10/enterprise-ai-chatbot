@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useAuthFetch } from '@/hooks/useApi'
 
 interface Document {
   id: string
@@ -24,6 +25,7 @@ export default function DocumentsPage() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const authFetch = useAuthFetch()
 
   useEffect(() => {
     fetchDocuments()
@@ -33,7 +35,7 @@ export default function DocumentsPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('http://localhost:8000/api/documents')
+      const res = await authFetch('/api/documents')
       if (!res.ok) {
         throw new Error(`Failed to fetch documents: HTTP ${res.status}`)
       }

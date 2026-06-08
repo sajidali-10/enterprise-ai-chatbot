@@ -2,6 +2,8 @@
 
 import { useState, useRef, FormEvent, KeyboardEvent } from 'react'
 import Link from 'next/link'
+import { useAuthFetch } from '@/hooks/useApi'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface Citation {
   index: number
@@ -23,6 +25,8 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<'normal' | 'rag'>('normal')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const authFetch = useAuthFetch()
+  const { devUser } = useAuth()
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -41,7 +45,7 @@ export default function ChatPage() {
     scrollToBottom()
 
     try {
-      const res = await fetch('http://localhost:8000/api/chat', {
+      const res = await authFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, mode }),
@@ -82,7 +86,19 @@ export default function ChatPage() {
           </Link>
           <h1 className="text-2xl font-bold text-gray-900">Chat</h1>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-4">
+          {/* Auth Status */}
+          <Link
+            href="/auth"
+            className={`flex items-center space-x-2 px-3 py-1 rounded-full text-sm ${
+              devUser
+                ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${devUser ? 'bg-green-500' : 'bg-gray-400'}`} />
+            <span>{devUser || 'Not authenticated'}</span>
+          </Link>
           <span className="text-sm text-gray-600">Mode:</span>
           <button
             type="button"
