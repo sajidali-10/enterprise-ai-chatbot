@@ -1,3 +1,6 @@
+import os
+os.environ["LLM_PROVIDER"] = "mock"
+
 from fastapi.testclient import TestClient
 from app.main import app
 
