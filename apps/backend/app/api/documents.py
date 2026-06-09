@@ -2,6 +2,7 @@ import uuid
 import mimetypes
 import hashlib
 import io
+import os
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -439,3 +440,148 @@ def index_document(
         doc.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
+
+
+@router.delete("/{document_id}")
+def delete_document(
+    request: Request,
+    document_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    """
+    Delete a document and all its associated data.
+
+    Deletes:
+    - Document metadata from PostgreSQL
+    - All chunks from PostgreSQL
+    - All vectors from Qdrant
+    - File from MinIO
+
+    **Authentication Required:** Yes
+    **Roles Allowed:** admin
+    """
+    if not auth or not auth.is_authenticated:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    if not auth.is_admin():
+        raise HTTPException(status_code=403, detail="Permission denied: admin role required")
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Get storage key before deleting
+    storage_key = doc.filename
+
+    # Delete from Qdrant
+    try:
+        from app.services.vector.qdrant_service import delete_vectors_by_document_id
+        deleted_vectors = delete_vectors_by_document_id(document_id)
+    except Exception:
+        deleted_vectors = 0
+
+    # Delete chunks from PostgreSQL
+    db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
+
+    # Delete versions from PostgreSQL
+    db.query(DocumentVersion).filter(DocumentVersion.document_id == document_id).delete()
+
+    # Delete document
+    db.delete(doc)
+    db.commit()
+
+    # Delete from MinIO
+    try:
+        client = get_minio_client()
+        client.remove_object(settings.MINIO_BUCKET, storage_key)
+    except Exception:
+        pass  # Don't fail if MinIO delete fails
+
+    return {"deleted": True, "document_id": document_id, "vectors_deleted": deleted_vectors}
+
+
+@router.post("/reindex-all")
+def reindex_all_documents(
+    request: Request,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    """
+    Re-index all documents with the current embedding provider.
+
+    This clears all Qdrant vectors and re-embeds all documents.
+    Use this after changing the embedding provider.
+
+    **Authentication Required:** Yes
+    **Roles Allowed:** admin
+    """
+    if not auth or not auth.is_authenticated:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    if not auth.is_admin():
+        raise HTTPException(status_code=403, detail="Permission denied: admin role required")
+
+    # Get all indexed documents
+    docs = db.query(Document).filter(Document.status == "indexed").all()
+
+    if not docs:
+        return {"reindexed": 0, "message": "No indexed documents found"}
+
+    # Clear Qdrant collection
+    try:
+        from app.services.vector.qdrant_service import delete_collection, ensure_collection
+        delete_collection()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear Qdrant: {str(e)}")
+
+    # Get embedding provider
+    provider = get_embedding_provider()
+    ensure_collection(provider.dimension)
+
+    reindexed_count = 0
+    errors = []
+
+    for doc in docs:
+        try:
+            # Get all chunks for this document
+            chunks = db.query(DocumentChunk).filter(
+                DocumentChunk.document_id == doc.id
+            ).order_by(DocumentChunk.chunk_index).all()
+
+            if not chunks:
+                continue
+
+            # Get embeddings
+            texts = [c.content for c in chunks]
+            embeddings = provider.embed(texts)
+
+            # Prepare metadata
+            metadata_payloads = []
+            for i, chunk in enumerate(chunks):
+                metadata_payloads.append({
+                    "chunk_id": chunk.id,
+                    "document_id": doc.id,
+                    "document_version_id": chunk.document_version_id,
+                    "chunk_index": chunk.chunk_index,
+                    "content_hash": chunk.content_hash,
+                    "source_file_name": chunk.source_file_name,
+                    "title": chunk.title,
+                    "section_heading": chunk.section_heading,
+                })
+
+            # Upsert to Qdrant
+            chunks_with_embeddings = list(zip(texts, embeddings))
+            upsert_chunks(chunks_with_embeddings, metadata_payloads)
+            reindexed_count += 1
+
+        except Exception as e:
+            errors.append({"document_id": doc.id, "error": str(e)})
+
+    return {
+        "reindexed": reindexed_count,
+        "total_documents": len(docs),
+        "embedding_provider": os.getenv("EMBEDDING_PROVIDER", "mock"),
+        "embedding_dimension": provider.dimension,
+        "errors": errors if errors else None,
+    }

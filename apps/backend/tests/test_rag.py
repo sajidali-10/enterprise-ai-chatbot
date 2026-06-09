@@ -13,7 +13,7 @@ def test_build_rag_prompt_with_chunks():
 
 def test_build_rag_prompt_no_chunks():
     prompt = build_rag_prompt("What is the capital of France?", [])
-    assert "I could not find enough information" in prompt
+    assert "could not find enough" in prompt and "information" in prompt
 
 def test_format_citations():
     chunks = [

@@ -1,6 +1,6 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
-from typing import List
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from typing import List, Optional
 from app.core.config import settings
 
 _client = None
@@ -14,6 +14,15 @@ def get_qdrant_client() -> QdrantClient:
         )
     return _client
 
+
+def delete_collection():
+    """Delete the Qdrant collection (for reindexing with new embeddings)."""
+    client = get_qdrant_client()
+    collections = [c.name for c in client.get_collections().collections]
+    if settings.QDRANT_COLLECTION in collections:
+        client.delete_collection(collection_name=settings.QDRANT_COLLECTION)
+
+
 def ensure_collection(dimension: int):
     client = get_qdrant_client()
     collections = [c.name for c in client.get_collections().collections]
@@ -22,6 +31,33 @@ def ensure_collection(dimension: int):
             collection_name=settings.QDRANT_COLLECTION,
             vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
         )
+
+
+def delete_vectors_by_document_id(document_id: int) -> int:
+    """
+    Delete all vectors for a specific document.
+    Returns the number of vectors deleted.
+    """
+    client = get_qdrant_client()
+    # First, find all points for this document
+    try:
+        results = client.scroll(
+            collection_name=settings.QDRANT_COLLECTION,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+            ),
+            limit=10000,
+        )
+        if results[0]:
+            point_ids = [p.id for p in results[0]]
+            client.delete(
+                collection_name=settings.QDRANT_COLLECTION,
+                points=point_ids,
+            )
+            return len(point_ids)
+    except Exception:
+        pass
+    return 0
 
 def upsert_chunks(chunks_with_embeddings: List[tuple], metadata: List[dict]):
     """

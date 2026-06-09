@@ -102,9 +102,11 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
     
     # Add debug info if requested
     if debug or settings.RETRIEVAL_SHOW_DEBUG:
+        from app.services.embeddings import get_embedding_provider_info
         metadata["debug"] = True
         metadata["original_query"] = query
         metadata["rewritten_query"] = rewritten_query
+        metadata["embedding_provider_info"] = get_embedding_provider_info()
         metadata["config"] = {
             "vector_top_k": config.vector_top_k,
             "keyword_top_k": config.keyword_top_k,

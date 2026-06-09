@@ -240,6 +240,32 @@ The index endpoint processes a document's extracted text into chunks and stores 
 curl -X POST http://localhost:8000/api/documents/{document_id}/index
 ```
 
+### Re-index All Documents (after changing embedding provider)
+
+When changing the embedding provider (e.g., from mock to local), you must re-index all documents because vectors are provider-specific.
+
+```bash
+# First, update .env:
+# EMBEDDING_PROVIDER=local
+# LOCAL_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# Then re-index all documents:
+curl -X POST http://localhost:8000/api/documents/reindex-all
+```
+
+This will:
+1. Delete all existing Qdrant vectors
+2. Recreate the collection with the new embedding dimension
+3. Re-embed all indexed documents with the new provider
+
+### Delete Document
+
+```bash
+curl -X DELETE http://localhost:8000/api/documents/{document_id}
+```
+
+This deletes the document, its chunks, vectors, and MinIO file.
+
 ### How It Works
 
 1. Fetch the document's latest version with extracted text
@@ -250,8 +276,9 @@ curl -X POST http://localhost:8000/api/documents/{document_id}/index
 
 ### Embedding Providers
 
-- **Mock** (default): Deterministic pseudo-random vectors, no API key needed
+- **Mock** (default): Deterministic pseudo-random vectors based on text hash. Only for testing - produces irrelevant retrieval results.
 - **OpenAI-compatible**: Set `EMBEDDING_PROVIDER=openai` and `OPENAI_API_KEY` in `.env`
+- **Local** (recommended for development): Set `EMBEDDING_PROVIDER=local`. Uses `sentence-transformers/all-MiniLM-L6-v2` with 384 dimensions. No API key needed.
 
 ### Configuration
 
@@ -262,8 +289,9 @@ curl -X POST http://localhost:8000/api/documents/{document_id}/index
 | `QDRANT_COLLECTION` | documents | Collection name |
 | `CHUNK_SIZE` | 3000 | Max characters per chunk |
 | `CHUNK_OVERLAP` | 400 | Overlap characters between chunks |
-| `EMBEDDING_PROVIDER` | mock | mock or openai |
-| `EMBEDDING_DIMENSION` | 384 | Vector dimension (mock provider) |
+| `EMBEDDING_PROVIDER` | mock | mock, openai, or local |
+| `EMBEDDING_DIMENSION` | 384 | Vector dimension (384 for local/Mock, 1536 for OpenAI) |
+| `LOCAL_EMBEDDING_MODEL` | sentence-transformers/all-MiniLM-L6-v2 | Local embedding model |
 | `OPENAI_EMBEDDING_MODEL` | text-embedding-3-small | OpenAI embedding model |
 
 ## RAG Chat (Phase 4 & Phase 5)
