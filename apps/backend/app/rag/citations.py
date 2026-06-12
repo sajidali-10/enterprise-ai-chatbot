@@ -168,6 +168,18 @@ def score_excerpt_relevance(
         (r'\bin this\s+(chapter|section|document|guide|article)\b', 0.6),
         (r'\bconsistency across environments\b', 0.6),  # Common generic Docker phrase
         (r'\bplatform designed to help\b', 0.6),  # Generic description language
+        # CI/CD and deployment content - heavily penalize when asking about components
+        (r'\bcontinuous integration\b', 0.4),
+        (r'\bcontinuous deployment\b', 0.4),
+        (r'\bci/cd\b', 0.4),
+        (r'\bdevops\b', 0.4),
+        (r'\bdeveloped,?\s*updated,?\s*deployed\b', 0.35),
+        (r'\bdeployed independently\b', 0.35),
+        (r'\bservice can be\b', 0.45),
+        (r'\beach service can\b', 0.45),
+        (r'\bupdated and deployed\b', 0.4),
+        (r'\bdeveloped and deployed\b', 0.4),
+        (r'\bindependent(ly)?\s+(deploy|update|develop)\b', 0.45),
     ]
     
     for pattern, penalty in generic_patterns:
