@@ -41,6 +41,18 @@ from app.rag.hybrid_retriever import (
     RetrievalConfig,
     ScoredChunk,
 )
+from app.rag.grounding import (
+    check_retrieval_guardrail,
+    check_minimum_relevance,
+    check_citations,
+    check_answer_grounding,
+    apply_grounding_checks,
+    get_debug_info,
+    has_citations,
+    NO_CHUNKS_MESSAGE,
+    LOW_RELEVANCE_MESSAGE,
+    NO_CITATIONS_MESSAGE,
+)
 
 __all__ = [
     # Retrieval
@@ -67,4 +79,14 @@ __all__ = [
     "MockReranker",
     "NoOpReranker",
     "get_reranker",
+    # Grounding (Phase 10)
+    "check_retrieval_guardrail",
+    "check_minimum_relevance",
+    "check_citations",
+    "check_answer_grounding",
+    "apply_grounding_checks",
+    "get_debug_info",
+    "NO_CHUNKS_MESSAGE",
+    "LOW_RELEVANCE_MESSAGE",
+    "NO_CITATIONS_MESSAGE",
 ]

@@ -1,3 +1,11 @@
+"""
+Prompt Builder for RAG and General Chat
+
+Provides functions to build prompts for different chat modes with
+appropriate instructions for the LLM.
+"""
+
+
 def build_rag_prompt(query: str, chunks: list[dict], include_citations: bool = True) -> str:
     """
     Build a RAG prompt from user query and retrieved chunks.
@@ -24,7 +32,8 @@ If you don't know the answer, say so clearly and honestly. Do not make up inform
     context = "\n\n".join(context_parts)
     
     citation_instruction = """- Cite your answer using [1], [2], etc. to reference the numbered sources
-- Format citations like: "According to [1], ..." or "[1] states that ..." """ if include_citations else ""
+- Format citations like: "According to [1], ..." or "[1] states that ..."
+- Place citations near the claim they support" """ if include_citations else ""
     
     return f"""You are a helpful, concise support assistant. Answer the user's question using ONLY the information provided below.
 
@@ -33,13 +42,122 @@ INFORMATION:
 
 USER QUESTION: {query}
 
-GUIDELINES:
-- Answer ONLY from the information provided above
-- If the information is insufficient or doesn't contain the answer, say: "I could not find enough information in the provided sources to answer this question."
-- Do NOT make up, speculate, or infer information not present in the sources
+IMPORTANT GUIDELINES:
+- Answer ONLY from the information provided above in the INFORMATION section
+- Do NOT guess, infer, or make up information that is not directly in the sources
+- If the information does not directly support a specific answer, say: "I could not find enough information in the provided sources to answer this question."
+- Do NOT say "based on my knowledge" or "in general" - only use information from [1], [2], etc.
 - Do NOT reference the sources as "the provided information" or "the context" - use [1], [2], etc.
+- Format your answer with bullet points for list-style responses
+- Be concise and direct - avoid long paragraphs
 {citation_instruction}
-- Be concise and direct in your answer
 - Focus on being helpful to a user seeking support
+- If you're unsure, admit it rather than guessing
+
+ANSWER:"""
+
+
+def build_general_chat_prompt(query: str) -> str:
+    """
+    Build a prompt for General Chat mode (no RAG, no sources).
+    
+    Provides instructions for clean, concise, business-user friendly answers.
+    
+    Args:
+        query: User's question.
+        
+    Returns:
+        Formatted prompt for general chat response.
+    """
+    return f"""You are a helpful, professional AI assistant. Answer the user's question clearly and concisely.
+
+USER QUESTION: {query}
+
+IMPORTANT GUIDELINES:
+- Answer clearly and concisely
+- Use bullet points when helpful for list-style responses
+- Avoid overly long technical explanations unless the user asks for detail
+- Avoid raw markdown tables unless they significantly improve readability
+- Do NOT mention sources, documents, or knowledge bases
+- Write in a professional, business-friendly tone
+- If you're unsure, admit it rather than guessing
+
+ANSWER:"""
+
+
+def build_knowledge_base_prompt(query: str, chunks: list[dict]) -> str:
+    """
+    Build a prompt for Knowledge Base mode (RAG with citations).
+    
+    This is an alias for build_rag_prompt with citations enabled.
+    
+    Args:
+        query: User's question.
+        chunks: List of retrieved context chunks.
+        
+    Returns:
+        Formatted prompt for knowledge base response.
+    """
+    return build_rag_prompt(query, chunks, include_citations=True)
+
+
+def build_strict_citation_prompt(query: str, chunks: list[dict]) -> str:
+    """
+    Build a strict RAG prompt requiring explicit citations for every factual claim.
+    
+    This is used for retry when the initial LLM response omitted required citations.
+    The prompt enforces:
+    - Citation markers [1], [2], [3] on every factual statement
+    - Insufficient-information fallback if no citation can be provided
+    - Only information from retrieved source chunks (no hallucination)
+    
+    Args:
+        query: User's question.
+        chunks: List of retrieved context chunks.
+        
+    Returns:
+        Formatted strict prompt requiring citations.
+    """
+    if not chunks:
+        return f"""You are a helpful support assistant. The user asked: {query}
+
+I could not find enough relevant information in the knowledge base to answer this question.
+
+If you don't know the answer, say so clearly and honestly. Do not make up information."""
+    
+    context_parts = []
+    for i, chunk in enumerate(chunks, 1):
+        source = chunk.get("source_file_name", "Unknown")
+        content = chunk.get("content", "")[:500]  # Truncate for prompt size
+        context_parts.append(f"[{i}] Source: {source}\n{content}")
+    
+    context = "\n\n".join(context_parts)
+    
+    return f"""You are a precise support assistant. Answer the user's question using ONLY the information provided below.
+
+INFORMATION:
+{context}
+
+USER QUESTION: {query}
+
+STRICT CITATION REQUIREMENTS:
+- You MUST cite every factual statement using [1], [2], [3] etc. to reference the numbered sources above
+- Every bullet point in your answer MUST include at least one citation like [1] or [2]
+- Format citations like: "According to [1], ..." or "[1] states that ..."
+- Every distinct factual claim needs its own citation
+- If you cannot support a statement with a citation from the sources above, do NOT make that statement
+
+FALLBACK RULE:
+- If the information does not directly support a specific answer, you MUST say: "I could not find enough information in the provided sources to answer this question."
+- Do NOT guess or infer information not explicitly in the sources
+- Do NOT say "based on my knowledge" or "in general"
+
+RULES:
+- Answer ONLY from the information provided above in the INFORMATION section
+- Use ONLY the numbered citations [1], [2], etc. - do not use other citation formats
+- Each bullet point must contain at least one [N] citation
+- Write bullet points for list-style responses
+- Be concise and direct
+- If you're unsure, admit it rather than guessing
 
 ANSWER:"""
