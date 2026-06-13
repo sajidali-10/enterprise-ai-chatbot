@@ -70,8 +70,8 @@ export default function AuthPage() {
             <Image
               src="/hiplink-logo.png"
               alt="HipLink"
-              width={72}
-              height={72}
+              width={120}
+              height={120}
               className="object-contain mx-auto"
             />
           </Link>
@@ -103,8 +103,8 @@ export default function AuthPage() {
                     <p className="text-sm text-hiplink-secondary">Role: {user.role}</p>
                   </div>
                   {selectedUser === user.id && (
-                    <div className="w-5 h-5 rounded-full bg-hiplink-blue flex items-center justify-center">
-                      <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="w-6 h-6 rounded-full bg-hiplink-blue flex items-center justify-center">
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                       </svg>
                     </div>
@@ -116,7 +116,7 @@ export default function AuthPage() {
 
           <button
             onClick={handleClearAuth}
-            className="mt-4 w-full py-2 px-4 rounded-lg border border-hiplink-border text-hiplink-dark font-medium hover:bg-gray-50 transition-colors"
+            className="mt-4 w-full py-2.5 px-4 rounded-lg border border-hiplink-border text-hiplink-dark font-medium hover:bg-gray-50 transition-colors"
           >
             Clear Authentication
           </button>
@@ -128,17 +128,33 @@ export default function AuthPage() {
           {loading ? (
             <p className="text-hiplink-secondary">Loading...</p>
           ) : authInfo ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="flex items-center space-x-2">
                 <span className={`w-3 h-3 rounded-full ${authInfo.authenticated ? 'bg-hiplink-success' : 'bg-gray-400'}`} />
-                <span className="font-medium">
+                <span className="font-medium text-hiplink-dark">
                   {authInfo.authenticated ? `Authenticated as ${authInfo.username}` : 'Not authenticated'}
                 </span>
               </div>
-              <p className="text-sm text-hiplink-secondary">Role: {authInfo.role}</p>
-              {authInfo.user_id && <p className="text-sm text-hiplink-secondary">User ID: {authInfo.user_id}</p>}
-              <p className="text-sm text-hiplink-secondary">Admin: {authInfo.is_admin ? 'Yes' : 'No'}</p>
-              <p className="text-sm text-hiplink-secondary">Dev Mode Available: {authInfo.dev_mode ? 'Yes' : 'No'}</p>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="bg-hiplink-background rounded-lg p-2">
+                  <span className="text-hiplink-secondary">Role:</span>
+                  <span className="font-medium text-hiplink-dark ml-1">{authInfo.role}</span>
+                </div>
+                <div className="bg-hiplink-background rounded-lg p-2">
+                  <span className="text-hiplink-secondary">Admin:</span>
+                  <span className="font-medium text-hiplink-dark ml-1">{authInfo.is_admin ? 'Yes' : 'No'}</span>
+                </div>
+              </div>
+              {authInfo.user_id && (
+                <div className="bg-hiplink-background rounded-lg p-2">
+                  <span className="text-hiplink-secondary text-xs">User ID:</span>
+                  <span className="font-mono text-hiplink-dark ml-1 text-xs">{authInfo.user_id}</span>
+                </div>
+              )}
+              <div className="bg-hiplink-background rounded-lg p-2">
+                <span className="text-hiplink-secondary text-xs">Dev Mode:</span>
+                <span className="font-medium text-hiplink-dark ml-1 text-xs">{authInfo.dev_mode ? 'Available' : 'Not available'}</span>
+              </div>
             </div>
           ) : (
             <p className="text-hiplink-secondary">No auth info available</p>
@@ -162,8 +178,11 @@ export default function AuthPage() {
         )}
 
         <div className="text-center mt-6">
-          <Link href="/" className="text-hiplink-blue hover:text-hiplink-blue-dark font-medium">
-            &larr; Back to Home
+          <Link href="/" className="text-hiplink-blue hover:text-hiplink-blue-dark font-medium flex items-center justify-center gap-1">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back to Home
           </Link>
         </div>
       </div>

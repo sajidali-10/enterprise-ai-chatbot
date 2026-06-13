@@ -14,7 +14,7 @@
   }
 
   .btn-secondary {
-    @apply bg-gray-100 text-hiplink-dark px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors border border-hiplink-border;
+    @apply bg-white text-hiplink-dark px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors border border-hiplink-border;
   }
 
   .card {
@@ -24,4 +24,46 @@
   .brand-header {
     @apply bg-white border-b border-hiplink-border px-4 py-3;
   }
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-hiplink-background;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400;
+}
+
+/* Focus visible styles */
+*:focus-visible {
+  @apply outline-none ring-2 ring-hiplink-blue ring-offset-2;
+}
+
+/* Animation for typing indicator */
+@keyframes typing-dot {
+  0%, 60%, 100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-typing {
+  animation: typing-dot 1s ease-in-out infinite;
 }

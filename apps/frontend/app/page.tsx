@@ -14,6 +14,40 @@ interface HealthStatus {
   minio: 'healthy' | 'unhealthy' | 'unknown'
 }
 
+interface ServiceCardProps {
+  title: string
+  description: string
+  href: string
+  icon: React.ReactNode
+  iconBg: string
+  iconColor: string
+  buttonLabel: string
+  buttonVariant?: 'primary' | 'secondary' | 'success'
+}
+
+function ServiceCard({ title, description, href, icon, iconBg, iconColor, buttonLabel, buttonVariant = 'primary' }: ServiceCardProps) {
+  const buttonClasses = {
+    primary: 'btn-primary',
+    secondary: 'btn-secondary',
+    success: 'bg-hiplink-success text-white px-4 py-2 rounded-lg font-medium hover:bg-green-600 transition-colors',
+  }
+
+  return (
+    <div className="card p-6 hover:shadow-md transition-shadow">
+      <div className="flex items-center mb-4">
+        <div className={`w-12 h-12 ${iconBg} rounded-lg flex items-center justify-center mr-4`}>
+          <div className={iconColor}>{icon}</div>
+        </div>
+        <h3 className="text-lg font-semibold text-hiplink-dark">{title}</h3>
+      </div>
+      <p className="text-hiplink-secondary mb-4">{description}</p>
+      <Link href={href} className={buttonClasses[buttonVariant] + ' inline-block'}>
+        {buttonLabel}
+      </Link>
+    </div>
+  )
+}
+
 export default function Home() {
   const [health, setHealth] = useState<{ status: string; service: string } | null>(null)
   const [healthStatus, setHealthStatus] = useState<HealthStatus>({
@@ -25,6 +59,7 @@ export default function Home() {
   })
   const [error, setError] = useState<string | null>(null)
   const { devUser, auth } = useAuth()
+  const isAdmin = auth?.is_admin ?? false
 
   useEffect(() => {
     checkBackendHealth()
@@ -73,22 +108,35 @@ export default function Home() {
               <Image
                 src="/hiplink-logo.png"
                 alt="HipLink"
-                width={36}
-                height={36}
+                width={40}
+                height={40}
                 className="object-contain"
               />
-              <h1 className="text-xl font-semibold text-hiplink-dark">HipLink AI Assistant</h1>
+              <div>
+                <h1 className="text-xl font-bold text-hiplink-dark">HipLink AI Assistant</h1>
+                <p className="text-xs text-hiplink-secondary">Enterprise Knowledge Assistant</p>
+              </div>
             </div>
-            <div className="flex items-center space-x-6">
-              <Link href="/chat" className="text-hiplink-secondary hover:text-hiplink-blue font-medium transition-colors">
+            <div className="flex items-center space-x-2">
+              <Link href="/chat" className="px-4 py-2 text-sm font-medium rounded-lg bg-hiplink-blue text-white hover:bg-hiplink-blue-dark transition-colors">
                 Chat
               </Link>
-              <Link href="/documents" className="text-hiplink-secondary hover:text-hiplink-blue font-medium transition-colors">
+              <Link href="/documents" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 transition-colors">
                 Documents
               </Link>
-              <Link href="/auth" className="flex items-center space-x-2 text-hiplink-secondary hover:text-hiplink-blue">
+              {isAdmin && (
+                <>
+                  <Link href="/admin/observability" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 transition-colors">
+                    Observability
+                  </Link>
+                  <Link href="/admin/evaluations" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 transition-colors">
+                    Evaluations
+                  </Link>
+                </>
+              )}
+              <Link href="/auth" className="ml-2 flex items-center space-x-2 px-3 py-2 rounded-lg text-sm bg-gray-100 text-hiplink-secondary hover:bg-gray-200">
                 <span className={`w-2 h-2 rounded-full ${devUser ? 'bg-hiplink-success' : 'bg-gray-400'}`} />
-                <span className="font-medium">{devUser || 'Guest'}</span>
+                <span>{devUser || 'Guest'}</span>
               </Link>
             </div>
           </div>
@@ -96,13 +144,33 @@ export default function Home() {
       </nav>
 
       {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-4 py-8">
-        {/* Backend Health Status */}
-        <div className="card p-6 mb-6">
-          <h2 className="text-lg font-semibold mb-4 flex items-center">
-            <span className={`w-3 h-3 rounded-full mr-2 ${healthStatus.backend === 'healthy' ? 'bg-hiplink-success' : healthStatus.backend === 'unhealthy' ? 'bg-hiplink-error' : 'bg-yellow-500'}`} />
-            System Status
-          </h2>
+      <div className="max-w-6xl mx-auto px-4 py-10">
+        {/* Hero Section */}
+        <div className="text-center mb-12">
+          <div className="inline-block mb-4">
+            <Image
+              src="/hiplink-logo.png"
+              alt="HipLink"
+              width={80}
+              height={80}
+              className="object-contain"
+            />
+          </div>
+          <h2 className="text-3xl font-bold text-hiplink-dark mb-3">Enterprise AI Assistant</h2>
+          <p className="text-lg text-hiplink-secondary max-w-2xl mx-auto">
+            Chat with AI using general conversation or query your uploaded documents with RAG-powered retrieval.
+          </p>
+        </div>
+
+        {/* System Status */}
+        <div className="card p-6 mb-8">
+          <div className="flex items-center gap-2 mb-4">
+            <div className={`w-3 h-3 rounded-full ${
+              healthStatus.backend === 'healthy' ? 'bg-hiplink-success' : 
+              healthStatus.backend === 'unhealthy' ? 'bg-hiplink-error' : 'bg-yellow-500'
+            }`} />
+            <h3 className="text-lg font-semibold text-hiplink-dark">System Status</h3>
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             {[
               { name: 'Backend', status: healthStatus.backend },
@@ -111,9 +179,12 @@ export default function Home() {
               { name: 'Qdrant', status: healthStatus.qdrant },
               { name: 'MinIO', status: healthStatus.minio },
             ].map(({ name, status }) => (
-              <div key={name} className="text-center p-4 bg-hiplink-background rounded-lg">
+              <div key={name} className="text-center p-3 bg-hiplink-background rounded-lg">
                 <p className="text-sm text-hiplink-secondary mb-1">{name}</p>
-                <p className={`font-semibold ${status === 'healthy' ? 'text-hiplink-success' : status === 'unhealthy' ? 'text-hiplink-error' : 'text-yellow-600'}`}>
+                <p className={`font-semibold ${
+                  status === 'healthy' ? 'text-hiplink-success' : 
+                  status === 'unhealthy' ? 'text-hiplink-error' : 'text-yellow-600'
+                }`}>
                   {status === 'healthy' ? 'Healthy' : status === 'unhealthy' ? 'Unhealthy' : 'Checking...'}
                 </p>
               </div>
@@ -123,84 +194,88 @@ export default function Home() {
 
         {/* Error Banner */}
         {error && (
-          <div className="bg-red-50 border border-hiplink-error text-hiplink-error px-4 py-3 rounded-lg mb-6">
+          <div className="bg-red-50 border border-hiplink-error text-hiplink-error px-4 py-3 rounded-lg mb-8">
             <strong>Backend Connection Error:</strong> {error}
             <p className="text-sm mt-1">Make sure the backend service is running.</p>
           </div>
         )}
 
-        {/* Feature Cards */}
+        {/* Service Cards */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* Chat Card */}
-          <div className="card p-6">
-            <div className="flex items-center mb-4">
-              <div className="w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center mr-4">
-                <svg className="w-6 h-6 text-hiplink-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold">Chat</h3>
-            </div>
-            <p className="text-hiplink-secondary mb-4">
-              Chat with the AI using normal mode or RAG mode with document retrieval.
-            </p>
-            <Link
-              href="/chat"
-              className="btn-primary inline-block"
-            >
-              Open Chat
-            </Link>
-          </div>
+          <ServiceCard
+            title="Chat"
+            description="Chat with the AI using normal mode or RAG mode with document retrieval."
+            href="/chat"
+            iconBg="bg-blue-50"
+            iconColor="text-hiplink-blue"
+            icon={
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            }
+            buttonLabel="Open Chat"
+          />
 
-          {/* Documents Card */}
-          <div className="card p-6">
-            <div className="flex items-center mb-4">
-              <div className="w-12 h-12 bg-green-50 rounded-lg flex items-center justify-center mr-4">
-                <svg className="w-6 h-6 text-hiplink-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold">Documents</h3>
-            </div>
-            <p className="text-hiplink-secondary mb-4">
-              Upload and manage documents for RAG indexing and retrieval.
-            </p>
-            <div className="flex space-x-2">
-              <Link
-                href="/documents/upload"
-                className="bg-hiplink-success text-white px-4 py-2 rounded-lg font-medium hover:bg-green-600 transition-colors inline-block"
-              >
-                Upload
-              </Link>
-              <Link
-                href="/documents"
-                className="text-hiplink-success hover:text-green-700 font-medium px-4 py-2 border border-hiplink-success rounded-lg transition-colors inline-block"
-              >
-                View All
-              </Link>
-            </div>
-          </div>
+          <ServiceCard
+            title="Documents"
+            description="Upload and manage documents for RAG indexing and retrieval."
+            href="/documents"
+            iconBg="bg-green-50"
+            iconColor="text-hiplink-success"
+            buttonVariant="success"
+            icon={
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            }
+            buttonLabel="Manage Documents"
+          />
 
-          {/* Auth Card */}
-          <div className="card p-6">
-            <div className="flex items-center mb-4">
-              <div className="w-12 h-12 bg-purple-50 rounded-lg flex items-center justify-center mr-4">
-                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold">Authentication</h3>
-            </div>
-            <p className="text-hiplink-secondary mb-4">
-              Current user: <span className="font-medium">{devUser || 'Not authenticated'}</span>
-            </p>
-            <Link
-              href="/auth"
-              className="bg-purple-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-600 transition-colors inline-block"
-            >
-              {devUser ? 'Switch User' : 'Sign In (Dev)'}
-            </Link>
-          </div>
+          <ServiceCard
+            title="Authentication"
+            description={`Current user: ${devUser || 'Not authenticated'}`}
+            href="/auth"
+            iconBg="bg-purple-50"
+            iconColor="text-purple-600"
+            icon={
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+            }
+            buttonLabel={devUser ? 'Switch User' : 'Sign In (Dev)'}
+          />
+
+          {isAdmin && (
+            <>
+              <ServiceCard
+                title="Observability"
+                description="Monitor usage, latency, feedback, blocked answers, and source activity."
+                href="/admin/observability"
+                iconBg="bg-amber-50"
+                iconColor="text-hiplink-warning"
+                icon={
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                }
+                buttonLabel="View Dashboard"
+              />
+
+              <ServiceCard
+                title="Evaluations"
+                description="Track controlled RAG quality tests and failure reasons."
+                href="/admin/evaluations"
+                iconBg="bg-red-50"
+                iconColor="text-hiplink-error"
+                icon={
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                  </svg>
+                }
+                buttonLabel="View Results"
+              />
+            </>
+          )}
         </div>
       </div>
     </main>
