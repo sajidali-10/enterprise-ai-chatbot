@@ -3,14 +3,14 @@ import { AuthProvider } from '@/contexts/AuthContext'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'AI Chatbot',
-  description: 'Enterprise AI Chatbot Platform',
+  title: 'HipLink AI Assistant',
+  description: 'Enterprise Knowledge Assistant',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-gray-50 text-gray-900">
+      <body className="min-h-screen bg-hiplink-background text-hiplink-dark">
         <AuthProvider>
           {children}
         </AuthProvider>

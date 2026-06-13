@@ -1,3 +1,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-hiplink-background text-hiplink-dark;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-hiplink-blue text-white px-4 py-2 rounded-lg font-medium hover:bg-hiplink-blue-dark transition-colors disabled:bg-blue-300 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-100 text-hiplink-dark px-4 py-2 rounded-lg font-medium hover:bg-gray-200 transition-colors border border-hiplink-border;
+  }
+
+  .card {
+    @apply bg-hiplink-card border border-hiplink-border rounded-xl shadow-sm;
+  }
+
+  .brand-header {
+    @apply bg-white border-b border-hiplink-border px-4 py-3;
+  }
+}

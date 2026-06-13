@@ -55,6 +55,30 @@ interface LowConfidenceObservation {
   block_reason: string | null
 }
 
+interface MetricCardProps {
+  label: string
+  value: string | number
+  highlight?: 'success' | 'warning' | 'error' | 'blue'
+}
+
+function MetricCard({ label, value, highlight }: MetricCardProps) {
+  const colorClasses = {
+    success: 'text-hiplink-success',
+    warning: 'text-hiplink-warning',
+    error: 'text-hiplink-error',
+    blue: 'text-hiplink-blue',
+  }
+
+  return (
+    <div className="card p-4">
+      <div className={`text-2xl font-bold ${highlight ? colorClasses[highlight] : 'text-hiplink-dark'}`}>
+        {value}
+      </div>
+      <div className="text-sm text-hiplink-secondary mt-1">{label}</div>
+    </div>
+  )
+}
+
 export default function ObservabilityPage() {
   const [summary, setSummary] = useState<ObservabilitySummary | null>(null)
   const [recentObs, setRecentObs] = useState<Observation[]>([])
@@ -111,83 +135,69 @@ export default function ObservabilityPage() {
     return `${ms.toFixed(0)}ms`
   }
 
+  const getModeBadgeClass = (mode: string) => {
+    switch (mode) {
+      case 'general_chat':
+        return 'bg-blue-100 text-hiplink-blue'
+      case 'knowledge_base':
+        return 'bg-green-100 text-hiplink-success'
+      case 'debug':
+        return 'bg-purple-100 text-purple-700'
+      default:
+        return 'bg-gray-100 text-hiplink-secondary'
+    }
+  }
+
   if (loading) {
-    return <div className="text-center text-gray-500 py-8">Loading observability data...</div>
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="text-hiplink-secondary">Loading observability data...</div>
+      </div>
+    )
   }
 
   if (error) {
     return (
-      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-        <strong>Error:</strong> {error}
+      <div className="card p-6 border-hiplink-error">
+        <strong className="text-hiplink-error">Error:</strong> {error}
       </div>
     )
   }
 
   return (
     <div>
-      <h2 className="text-xl font-semibold text-gray-900 mb-4">Observability Dashboard</h2>
+      <h2 className="text-xl font-semibold text-hiplink-dark mb-6">Observability Dashboard</h2>
 
       {/* Summary Cards */}
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.total_questions}</div>
-            <div className="text-sm text-gray-500">Total Questions</div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+            <MetricCard label="Total Questions" value={summary.total_questions} />
+            <MetricCard label="Answered" value={summary.answered_count} highlight="success" />
+            <MetricCard label="Blocked" value={summary.blocked_count} highlight="error" />
+            <MetricCard label="Blocked Rate" value={`${summary.blocked_rate.toFixed(1)}%`} highlight={summary.blocked_rate > 10 ? 'warning' : undefined} />
+            <MetricCard label="Citation Rate" value={`${summary.citation_rate.toFixed(1)}%`} highlight="blue" />
+            <MetricCard label="Avg Latency" value={formatLatency(summary.average_latency_ms)} />
           </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.answered_count}</div>
-            <div className="text-sm text-gray-500">Answered</div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <MetricCard label="👍 Helpful" value={summary.thumbs_up_count} highlight="success" />
+            <MetricCard label="👎 Not Helpful" value={summary.thumbs_down_count} highlight="warning" />
+            <MetricCard label="Avg Top Score" value={summary.average_top_score.toFixed(3)} />
+            <MetricCard label="Knowledge Base" value={summary.knowledge_base_count} />
+            <MetricCard label="General Chat" value={summary.general_chat_count} />
+            <MetricCard label="Debug Mode" value={summary.debug_count} />
           </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.blocked_count}</div>
-            <div className="text-sm text-gray-500">Blocked</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.blocked_rate.toFixed(1)}%</div>
-            <div className="text-sm text-gray-500">Blocked Rate</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.citation_rate.toFixed(1)}%</div>
-            <div className="text-sm text-gray-500">Citation Rate</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{formatLatency(summary.average_latency_ms)}</div>
-            <div className="text-sm text-gray-500">Avg Latency</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.thumbs_up_count}</div>
-            <div className="text-sm text-gray-500">👍 Helpful</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.thumbs_down_count}</div>
-            <div className="text-sm text-gray-500">👎 Not Helpful</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.average_top_score.toFixed(3)}</div>
-            <div className="text-sm text-gray-500">Avg Top Score</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.knowledge_base_count}</div>
-            <div className="text-sm text-gray-500">Knowledge Base</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.general_chat_count}</div>
-            <div className="text-sm text-gray-500">General Chat</div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <div className="text-2xl font-bold text-gray-900">{summary.debug_count}</div>
-            <div className="text-sm text-gray-500">Debug Mode</div>
-          </div>
-        </div>
+        </>
       )}
 
       {/* Most Used Sources */}
       {summary && summary.most_used_sources.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
-          <h3 className="font-semibold text-gray-900 mb-3">Most Used Source Documents</h3>
+        <div className="card p-4 mb-6">
+          <h3 className="font-semibold text-hiplink-dark mb-3">Most Used Source Documents</h3>
           <div className="flex flex-wrap gap-2">
             {summary.most_used_sources.map((src, i) => (
-              <span key={i} className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">
+              <span key={i} className="bg-blue-50 text-hiplink-blue px-3 py-1 rounded-full text-sm">
                 {src.source} ({src.count})
               </span>
             ))}
@@ -197,174 +207,150 @@ export default function ObservabilityPage() {
 
       {/* Tab Navigation */}
       <div className="flex space-x-2 mb-4">
-        <button
-          onClick={() => setActiveTab('recent')}
-          className={`px-4 py-2 rounded font-medium ${
-            activeTab === 'recent'
-              ? 'bg-blue-500 text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Recent Questions
-        </button>
-        <button
-          onClick={() => setActiveTab('blocked')}
-          className={`px-4 py-2 rounded font-medium ${
-            activeTab === 'blocked'
-              ? 'bg-blue-500 text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Blocked
-        </button>
-        <button
-          onClick={() => setActiveTab('low-confidence')}
-          className={`px-4 py-2 rounded font-medium ${
-            activeTab === 'low-confidence'
-              ? 'bg-blue-500 text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Low Confidence
-        </button>
+        {(['recent', 'blocked', 'low-confidence'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              activeTab === tab
+                ? 'bg-hiplink-blue text-white'
+                : 'bg-white text-hiplink-dark border border-hiplink-border hover:bg-gray-50'
+            }`}
+          >
+            {tab === 'recent' ? 'Recent Questions' : tab === 'blocked' ? 'Blocked' : 'Low Confidence'}
+          </button>
+        ))}
       </div>
 
-      {/* Recent Questions Table */}
-      {activeTab === 'recent' && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Time</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">User</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Mode</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Question</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Sources</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Citations</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Latency</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Feedback</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {recentObs.map((obs) => (
-                <tr key={obs.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{formatDate(obs.created_at)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-700">{obs.username || 'Anonymous'}</td>
-                  <td className="px-3 py-2 text-xs">
-                    <span className={`px-2 py-0.5 rounded-full text-xs ${
-                      obs.mode === 'general_chat' ? 'bg-blue-100 text-blue-700' :
-                      obs.mode === 'knowledge_base' ? 'bg-green-100 text-green-700' :
-                      'bg-purple-100 text-purple-700'
-                    }`}>
-                      {obs.mode}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-gray-900 max-w-xs truncate">{obs.question}</td>
-                  <td className="px-3 py-2 text-xs text-gray-600">
-                    {obs.source_files ? obs.source_files.length : 0}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{obs.citation_count || 0}</td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{formatLatency(obs.latency_ms)}</td>
-                  <td className="px-3 py-2 text-xs">
-                    {obs.feedback_rating === 'helpful' && '👍'}
-                    {obs.feedback_rating === 'not_helpful' && '👎'}
-                    {!obs.feedback_rating && '—'}
-                  </td>
-                </tr>
-              ))}
-              {recentObs.length === 0 && (
+      {/* Tables */}
+      <div className="card overflow-hidden">
+        {/* Recent Questions Table */}
+        {activeTab === 'recent' && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-hiplink-border">
+              <thead className="bg-hiplink-background">
                 <tr>
-                  <td colSpan={8} className="px-3 py-4 text-center text-gray-500 text-sm">No observations yet.</td>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Time</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">User</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Mode</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Question</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Sources</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Citations</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Latency</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Feedback</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-hiplink-border">
+                {recentObs.map((obs) => (
+                  <tr key={obs.id} className="hover:bg-hiplink-background transition-colors">
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary whitespace-nowrap">{formatDate(obs.created_at)}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-dark">{obs.username || 'Anonymous'}</td>
+                    <td className="px-3 py-3 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getModeBadgeClass(obs.mode)}`}>
+                        {obs.mode}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-xs text-hiplink-dark max-w-xs truncate">{obs.question}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary">{obs.source_files?.length || 0}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary">{obs.citation_count || 0}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary">{formatLatency(obs.latency_ms)}</td>
+                    <td className="px-3 py-3 text-xs">
+                      {obs.feedback_rating === 'helpful' && '👍'}
+                      {obs.feedback_rating === 'not_helpful' && '👎'}
+                      {!obs.feedback_rating && '—'}
+                    </td>
+                  </tr>
+                ))}
+                {recentObs.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-8 text-center text-hiplink-secondary text-sm">No observations yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-      {/* Blocked Questions Table */}
-      {activeTab === 'blocked' && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Time</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Question</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Block Reason</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Top Score</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Mode</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {blockedObs.map((obs) => (
-                <tr key={obs.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{formatDate(obs.created_at)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-900 max-w-xs truncate">{obs.question}</td>
-                  <td className="px-3 py-2 text-xs text-red-600">{obs.block_reason || 'Insufficient information'}</td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{obs.top_score?.toFixed(3) || 'N/A'}</td>
-                  <td className="px-3 py-2 text-xs">
-                    <span className={`px-2 py-0.5 rounded-full text-xs ${
-                      obs.mode === 'general_chat' ? 'bg-blue-100 text-blue-700' :
-                      obs.mode === 'knowledge_base' ? 'bg-green-100 text-green-700' :
-                      'bg-purple-100 text-purple-700'
-                    }`}>
-                      {obs.mode}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {blockedObs.length === 0 && (
+        {/* Blocked Questions Table */}
+        {activeTab === 'blocked' && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-hiplink-border">
+              <thead className="bg-hiplink-background">
                 <tr>
-                  <td colSpan={5} className="px-3 py-4 text-center text-gray-500 text-sm">No blocked questions.</td>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Time</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Question</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Block Reason</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Top Score</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Mode</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-hiplink-border">
+                {blockedObs.map((obs) => (
+                  <tr key={obs.id} className="hover:bg-hiplink-background transition-colors">
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary whitespace-nowrap">{formatDate(obs.created_at)}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-dark max-w-xs truncate">{obs.question}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-error">{obs.block_reason || 'Insufficient information'}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary">{obs.top_score?.toFixed(3) || 'N/A'}</td>
+                    <td className="px-3 py-3 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getModeBadgeClass(obs.mode)}`}>
+                        {obs.mode}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {blockedObs.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-8 text-center text-hiplink-secondary text-sm">No blocked questions.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-      {/* Low Confidence Table */}
-      {activeTab === 'low-confidence' && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Time</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Question</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Top Score</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Citations</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Feedback</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Block Reason</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {lowConfObs.map((obs) => (
-                <tr key={obs.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{formatDate(obs.created_at)}</td>
-                  <td className="px-3 py-2 text-xs text-gray-900 max-w-xs truncate">{obs.question}</td>
-                  <td className="px-3 py-2 text-xs">
-                    <span className={obs.top_score && obs.top_score < 0.5 ? 'text-red-600 font-medium' : 'text-gray-600'}>
-                      {obs.top_score?.toFixed(3) || 'N/A'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{obs.citation_count || 0}</td>
-                  <td className="px-3 py-2 text-xs">
-                    {obs.feedback_rating === 'helpful' && '👍'}
-                    {obs.feedback_rating === 'not_helpful' && '👎'}
-                    {!obs.feedback_rating && '—'}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-gray-600">{obs.block_reason || '—'}</td>
-                </tr>
-              ))}
-              {lowConfObs.length === 0 && (
+        {/* Low Confidence Table */}
+        {activeTab === 'low-confidence' && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-hiplink-border">
+              <thead className="bg-hiplink-background">
                 <tr>
-                  <td colSpan={6} className="px-3 py-4 text-center text-gray-500 text-sm">No low confidence observations.</td>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Time</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Question</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Top Score</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Citations</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Feedback</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-hiplink-secondary uppercase tracking-wider">Block Reason</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-hiplink-border">
+                {lowConfObs.map((obs) => (
+                  <tr key={obs.id} className="hover:bg-hiplink-background transition-colors">
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary whitespace-nowrap">{formatDate(obs.created_at)}</td>
+                    <td className="px-3 py-3 text-xs text-hiplink-dark max-w-xs truncate">{obs.question}</td>
+                    <td className="px-3 py-3 text-xs">
+                      <span className={obs.top_score && obs.top_score < 0.5 ? 'text-hiplink-error font-medium' : 'text-hiplink-secondary'}>
+                        {obs.top_score?.toFixed(3) || 'N/A'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary">{obs.citation_count || 0}</td>
+                    <td className="px-3 py-3 text-xs">
+                      {obs.feedback_rating === 'helpful' && '👍'}
+                      {obs.feedback_rating === 'not_helpful' && '👎'}
+                      {!obs.feedback_rating && '—'}
+                    </td>
+                    <td className="px-3 py-3 text-xs text-hiplink-secondary">{obs.block_reason || '—'}</td>
+                  </tr>
+                ))}
+                {lowConfObs.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-8 text-center text-hiplink-secondary text-sm">No low confidence observations.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
