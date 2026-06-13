@@ -6,6 +6,10 @@
   body {
     @apply bg-hiplink-background text-hiplink-dark;
   }
+  
+  .dark body {
+    @apply bg-dark-bg text-dark-text;
+  }
 }
 
 @layer components {
@@ -17,12 +21,99 @@
     @apply bg-white text-hiplink-dark px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors border border-hiplink-border;
   }
 
+  .dark .btn-secondary {
+    @apply bg-dark-card text-dark-text border-dark-border hover:bg-dark-elevated;
+  }
+
   .card {
     @apply bg-hiplink-card border border-hiplink-border rounded-xl shadow-sm;
   }
 
+  .dark .card {
+    @apply bg-dark-card border-dark-border;
+  }
+
   .brand-header {
     @apply bg-white border-b border-hiplink-border px-4 py-3;
+  }
+
+  .dark .brand-header {
+    @apply bg-dark-card border-dark-border;
+  }
+
+  /* Dark mode text colors */
+  .dark .text-hiplink-dark {
+    @apply text-dark-text;
+  }
+
+  .dark .text-hiplink-secondary {
+    @apply text-dark-text-muted;
+  }
+
+  .dark .bg-hiplink-background {
+    @apply bg-dark-bg;
+  }
+
+  .dark .bg-hiplink-card {
+    @apply bg-dark-card;
+  }
+
+  .dark .border-hiplink-border {
+    @apply border-dark-border;
+  }
+
+  .dark .bg-hiplink-blue {
+    @apply bg-sky-500;
+  }
+
+  .dark .hover\:bg-gray-50:hover {
+    @apply hover:bg-dark-elevated;
+  }
+
+  /* Table styles for dark mode */
+  .dark .divide-hiplink-border > * {
+    @apply divide-dark-border;
+  }
+
+  .dark thead.bg-hiplink-background th {
+    @apply bg-dark-elevated text-dark-text-muted;
+  }
+
+  .dark tbody tr:hover {
+    @apply bg-dark-elevated;
+  }
+
+  /* Mode selector dark mode */
+  .dark .bg-gray-100 {
+    @apply bg-dark-elevated;
+  }
+
+  .dark .text-hiplink-dark {
+    @apply text-dark-text;
+  }
+
+  /* Input styles for dark mode */
+  .dark input[type="text"],
+  .dark textarea {
+    @apply bg-dark-card border-dark-border text-dark-text;
+  }
+
+  .dark input[type="text"]::placeholder,
+  .dark textarea::placeholder {
+    @apply text-dark-text-dim;
+  }
+
+  /* Scrollbar dark mode */
+  .dark ::-webkit-scrollbar-track {
+    @apply bg-dark-bg;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-dark-border;
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-600;
   }
 }
 
@@ -31,7 +122,7 @@ html {
   scroll-behavior: smooth;
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar - light mode */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -52,6 +143,10 @@ html {
 /* Focus visible styles */
 *:focus-visible {
   @apply outline-none ring-2 ring-hiplink-blue ring-offset-2;
+}
+
+.dark *:focus-visible {
+  @apply ring-sky-400 ring-offset-dark-bg;
 }
 
 /* Animation for typing indicator */
