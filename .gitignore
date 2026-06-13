@@ -101,3 +101,10 @@ coverage/
 *.zip
 .tmp/
 .temp/
+# Kimchi runtime/session files
+.kimchi/
+
+# Evaluation generated result files
+apps/backend/evaluations/results/*.json
+apps/backend/evaluations/results/*.md
+!apps/backend/evaluations/results/.gitkeep
