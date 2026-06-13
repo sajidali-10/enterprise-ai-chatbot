@@ -11,19 +11,19 @@ const DEV_USERS = [
     name: 'Admin User', 
     id: 'admin_user', 
     role: 'admin',
-    description: 'Full platform administration and debugging'
+    description: 'Full platform administration, document management, debug mode, observability, and evaluations.'
   },
   { 
     name: 'Regular User', 
     id: 'regular_user', 
     role: 'user',
-    description: 'Standard chat and document Q&A'
+    description: 'Standard user with general chat, knowledge-base access, document viewing, and document upload if enabled.'
   },
   { 
     name: 'Viewer User', 
     id: 'viewer_user', 
     role: 'viewer',
-    description: 'Read-only knowledge access'
+    description: 'Read-only user with knowledge-base answers, citations, feedback, and document viewing only.'
   },
 ]
 
@@ -225,7 +225,7 @@ export default function AuthPage() {
         {/* Development mode notice */}
         <div className="mt-4 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-lg">
           <p className="text-sm text-amber-800 dark:text-amber-300">
-            <strong>Development Mode:</strong> This is a role simulation for development purposes. Production authentication (JWT/OIDC) will be added in Phase 12.
+            <strong>Development Mode:</strong> This is a role simulation for development purposes. Production authentication and user management will be added in Phase 12.
           </p>
         </div>
 

@@ -4,6 +4,7 @@ import { useState, useRef, FormEvent, KeyboardEvent } from 'react'
 import Image from 'next/image'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { getPermissions, getDefaultChatMode, type UserRole } from '@/lib/permissions'
 import { useAuthFetch } from '@/hooks/useApi'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -38,17 +39,18 @@ interface Message {
 
 type ChatMode = 'general_chat' | 'knowledge_base' | 'debug'
 
-const modeLabels: Record<ChatMode, string> = {
-  general_chat: 'General Chat',
-  knowledge_base: 'Knowledge Base',
-  debug: 'Debug',
+interface ChatModeConfig {
+  id: ChatMode
+  label: string
+  helperText: string
+  permission?: 'canUseGeneralChat' | 'canUseKnowledgeBase' | 'canUseDebug'
 }
 
-const modeHelperText: Record<ChatMode, string> = {
-  general_chat: 'Uses general AI conversation',
-  knowledge_base: 'Answers only from uploaded documents',
-  debug: 'Shows retrieval, grounding, and citation metadata',
-}
+const allModes: ChatModeConfig[] = [
+  { id: 'general_chat', label: 'General Chat', helperText: 'Uses general AI conversation', permission: 'canUseGeneralChat' },
+  { id: 'knowledge_base', label: 'Knowledge Base', helperText: 'Answers only from uploaded documents', permission: 'canUseKnowledgeBase' },
+  { id: 'debug', label: 'Debug', helperText: 'Shows retrieval, grounding, and citation metadata', permission: 'canUseDebug' },
+]
 
 const examplePrompts = [
   'What are the components of Docker?',
@@ -62,12 +64,34 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<ChatMode>('general_chat')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const authFetch = useAuthFetch()
   const { devUser, auth } = useAuth()
   const { theme } = useTheme()
-  const isAdmin = auth?.is_admin ?? false
+  
+  // Determine effective role and permissions
+  const rawRole = auth?.role || 
+    (devUser === 'admin_user' ? 'admin' : 
+     devUser === 'regular_user' ? 'user' : 
+     devUser === 'viewer_user' ? 'viewer' : undefined)
+  const perms = getPermissions(rawRole)
+  
+  // Set default mode based on permissions (viewer only gets KB)
+  const [mode, setMode] = useState<ChatMode>(() => getDefaultChatMode(rawRole) as ChatMode)
+  
+  // Filter available modes based on permissions
+  const availableModes = allModes.filter(m => !m.permission || perms[m.permission])
+  
+  // Enforce permission check when mode changes
+  const handleModeChange = (newMode: ChatMode) => {
+    const config = allModes.find(m => m.id === newMode)
+    if (config?.permission && !perms[config.permission]) {
+      // User doesn't have permission - switch to default allowed mode
+      setMode(getDefaultChatMode(rawRole) as ChatMode)
+      return
+    }
+    setMode(newMode)
+  }
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -127,7 +151,7 @@ export default function ChatPage() {
 
   const shouldShowSources = mode !== 'general_chat'
   const isDebugMode = mode === 'debug'
-  const canShowDebug = isAdmin
+  const isViewerMode = rawRole === 'viewer'
 
   return (
     <div className="min-h-screen bg-hiplink-background dark:bg-dark-bg flex flex-col">
@@ -139,45 +163,32 @@ export default function ChatPage() {
         <div className="mb-6 p-4 bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-xl shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-1 bg-gray-100 dark:bg-dark-elevated p-1 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setMode('general_chat')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                  mode === 'general_chat'
-                    ? 'bg-hiplink-blue text-white shadow-sm'
-                    : 'bg-transparent text-hiplink-secondary dark:text-dark-text-muted hover:text-hiplink-dark dark:hover:text-dark-text'
-                }`}
-              >
-                {modeLabels.general_chat}
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('knowledge_base')}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                  mode === 'knowledge_base'
-                    ? 'bg-hiplink-blue text-white shadow-sm'
-                    : 'bg-transparent text-hiplink-secondary dark:text-dark-text-muted hover:text-hiplink-dark dark:hover:text-dark-text'
-                }`}
-              >
-                {modeLabels.knowledge_base}
-              </button>
-              {canShowDebug && (
+              {availableModes.map((modeConfig) => (
                 <button
+                  key={modeConfig.id}
                   type="button"
-                  onClick={() => setMode('debug')}
+                  onClick={() => handleModeChange(modeConfig.id)}
                   className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                    mode === 'debug'
+                    mode === modeConfig.id
                       ? 'bg-hiplink-blue text-white shadow-sm'
                       : 'bg-transparent text-hiplink-secondary dark:text-dark-text-muted hover:text-hiplink-dark dark:hover:text-dark-text'
                   }`}
                 >
-                  {modeLabels.debug}
+                  {modeConfig.label}
                 </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              {isViewerMode ? (
+                <span className="text-xs text-hiplink-secondary dark:text-dark-text-dim italic bg-blue-50 dark:bg-sky-900/20 px-2 py-1 rounded">
+                  Viewer mode: read-only answers from uploaded knowledge sources.
+                </span>
+              ) : (
+                <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim italic">
+                  {availableModes.find(m => m.id === mode)?.helperText}
+                </p>
               )}
             </div>
-            <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim italic">
-              {modeHelperText[mode]}
-            </p>
           </div>
         </div>
 

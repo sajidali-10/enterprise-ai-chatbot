@@ -5,6 +5,7 @@ import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
+import { getPermissions, type UserRole } from '@/lib/permissions'
 
 interface NavLinkProps {
   href: string
@@ -50,6 +51,20 @@ function ThemeToggle() {
   )
 }
 
+function RoleBadge({ role }: { role: UserRole }) {
+  const colors = {
+    admin: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400',
+    user: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
+    viewer: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
+  }
+  
+  return (
+    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[role]}`}>
+      {role}
+    </span>
+  )
+}
+
 interface HeaderProps {
   showAdminNav?: boolean
 }
@@ -57,7 +72,14 @@ interface HeaderProps {
 export default function Header({ showAdminNav = false }: HeaderProps) {
   const pathname = usePathname()
   const { devUser, auth } = useAuth()
-  const isAdmin = auth?.is_admin ?? false
+  
+  // Determine effective role - prefer auth.role, fall back to devUser mapping
+  const rawRole = auth?.role || 
+    (devUser === 'admin_user' ? 'admin' : 
+     devUser === 'regular_user' ? 'user' : 
+     devUser === 'viewer_user' ? 'viewer' : undefined)
+  
+  const perms = getPermissions(rawRole)
 
   const isActive = (path: string) => {
     if (path === '/chat') return pathname === '/chat'
@@ -84,14 +106,22 @@ export default function Header({ showAdminNav = false }: HeaderProps) {
             </Link>
           </div>
           <nav className="flex items-center gap-1">
+            {/* Chat - available to all roles */}
             <NavLink href="/chat" isActive={isActive('/chat')}>Chat</NavLink>
-            <NavLink href="/documents" isActive={isActive('/documents')}>Documents</NavLink>
-            {showAdminNav && isAdmin && (
+            
+            {/* Documents - available to all roles with view permission */}
+            {perms.canViewDocuments && (
+              <NavLink href="/documents" isActive={isActive('/documents')}>Documents</NavLink>
+            )}
+            
+            {/* Admin navigation - only for admin users via explicit prop */}
+            {showAdminNav && perms.canAccessObservability && (
               <>
                 <NavLink href="/admin/observability" isActive={isActive('/admin/observability')}>Observability</NavLink>
                 <NavLink href="/admin/evaluations" isActive={isActive('/admin/evaluations')}>Evaluations</NavLink>
               </>
             )}
+            
             <div className="ml-2 flex items-center space-x-2">
               <ThemeToggle />
               <Link
@@ -103,7 +133,14 @@ export default function Header({ showAdminNav = false }: HeaderProps) {
                 }`}
               >
                 <span className={`w-2 h-2 rounded-full ${devUser ? 'bg-hiplink-success' : 'bg-gray-400'}`} />
-                <span>{devUser || 'Guest'}</span>
+                <span>{devUser ? (
+                  <>
+                    {devUser === 'admin_user' ? 'Admin' : 
+                     devUser === 'regular_user' ? 'User' : 
+                     devUser === 'viewer_user' ? 'Viewer' : devUser}
+                    {rawRole && <RoleBadge role={rawRole as UserRole} />}
+                  </>
+                ) : 'Guest'}</span>
               </Link>
             </div>
           </nav>
