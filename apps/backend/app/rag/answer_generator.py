@@ -174,7 +174,21 @@ def generate_answer_with_rag(
         query=query,  # For topic relevance check
     )
     
+    # CRAG decision metadata - tracks corrective RAG flow
+    crag_decision = {
+        "retrieval_status": "insufficient",
+        "correction_attempted": False,
+        "correction_type": "none",
+        "fallback_reason": grounding_meta.get("blocked_reason"),
+        "topic_relevance_score": grounding_meta.get("keyword_overlap_ratio"),
+        "top_score": chunks[0].get("score") if chunks else None,
+        "citation_count": 0,
+        "blocked": False,
+        "crag_enabled": False,  # Deterministic mode only for now
+        "crag_decision_reason": None,
+    }
     retrieval_metadata["grounding"] = grounding_meta
+    retrieval_metadata["crag_decision"] = crag_decision
     
     if should_block:
         retrieval_metadata["blocked"] = True
@@ -222,6 +236,8 @@ def generate_answer_with_rag(
         if top_score >= min_relevance_score:
             # Retry once with strict citation prompt
             citation_repair_meta["retry_attempted"] = True
+            crag_decision["correction_attempted"] = True
+            crag_decision["correction_type"] = "retry"
             answer = _call_llm_with_citations(query, chunks, strict=True, temperature=0.0)
             citations = format_citations(chunks)
             citation_repair_meta["retry_has_citations"] = has_citations(answer)
@@ -232,6 +248,8 @@ def generate_answer_with_rag(
         if top_score >= min_relevance_score:
             # Try to attach citations based on content overlap
             citation_repair_meta["attachment_attempted"] = True
+            crag_decision["correction_attempted"] = True
+            crag_decision["correction_type"] = "attachment"
             answer_with_citations, citation_map = attach_citations_to_answer(
                 answer, chunks, query
             )
@@ -247,6 +265,7 @@ def generate_answer_with_rag(
     if final_has_citations:
         _, citation_count_meta = check_citations(answer)
         citation_repair_meta["final_citation_count"] = citation_count_meta.get("citation_count", 0)
+        crag_decision["citation_count"] = citation_count_meta.get("citation_count", 0)
     
     # Final block check only if citations still missing after ALL repair attempts
     # Reset should_block to False first - it was set by intermediate checks
@@ -348,11 +367,27 @@ def generate_answer_with_rag_audit(
         query=query,  # For topic relevance check
     )
     
+    # CRAG decision metadata - tracks corrective RAG flow
+    crag_decision = {
+        "retrieval_status": "insufficient",
+        "correction_attempted": False,
+        "correction_type": "none",
+        "fallback_reason": grounding_meta.get("blocked_reason"),
+        "topic_relevance_score": grounding_meta.get("keyword_overlap_ratio"),
+        "top_score": chunks[0].get("score") if chunks else None,
+        "citation_count": 0,
+        "blocked": False,
+        "crag_enabled": False,  # Deterministic mode only for now
+        "crag_decision_reason": None,
+    }
     retrieval_metadata["grounding"] = grounding_meta
+    retrieval_metadata["crag_decision"] = crag_decision
     
     if should_block:
         retrieval_metadata["blocked"] = True
         retrieval_metadata["block_reason"] = grounding_meta.get("blocked_reason", "unknown")
+        crag_decision["blocked"] = True
+        crag_decision["crag_decision_reason"] = "blocked_" + (grounding_meta.get("blocked_reason") or "unknown")
         
         # Log blocked retrieval
         if HAS_SECURITY and auth.is_authenticated:
@@ -414,6 +449,8 @@ def generate_answer_with_rag_audit(
         if top_score >= min_relevance_score:
             # Retry once with strict citation prompt
             citation_repair_meta["retry_attempted"] = True
+            crag_decision["correction_attempted"] = True
+            crag_decision["correction_type"] = "retry"
             strict_prompt = build_strict_citation_prompt(query, chunks)
             llm_request = ChatRequest(message=strict_prompt)
             if hasattr(provider, 'set_temperature'):
@@ -429,6 +466,8 @@ def generate_answer_with_rag_audit(
         if top_score >= min_relevance_score:
             # Try to attach citations based on content overlap
             citation_repair_meta["attachment_attempted"] = True
+            crag_decision["correction_attempted"] = True
+            crag_decision["correction_type"] = "attachment"
             answer_with_citations, citation_map = attach_citations_to_answer(
                 answer, chunks, query
             )
@@ -448,6 +487,7 @@ def generate_answer_with_rag_audit(
     retrieval_metadata["grounding"]["citation_repair"] = citation_repair_meta
     retrieval_metadata["grounding"]["final_citation_count"] = citation_repair_meta["final_citation_count"]
     retrieval_metadata["grounding"]["final_has_citations"] = final_has_citations
+    crag_decision["citation_count"] = citation_repair_meta.get("final_citation_count", 0)
     
     # Block only if citations still missing after ALL repair attempts
     if not final_has_citations:
