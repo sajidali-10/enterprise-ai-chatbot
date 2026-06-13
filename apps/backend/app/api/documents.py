@@ -3,6 +3,7 @@ import mimetypes
 import hashlib
 import io
 import os
+import logging
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -38,6 +39,8 @@ def get_auth_context(request: Request) -> AuthContext:
     return authenticate_request(request)
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_TYPES = {
     "application/pdf",
@@ -154,6 +157,12 @@ def upload_document(
         db.commit()
         raise HTTPException(status_code=500, detail=f"Text extraction failed: {str(e)}")
     
+    # Check if extracted text is empty
+    if not extracted_text or not extracted_text.strip():
+        doc.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=400, detail="No extractable text found in document.")
+    
     version = DocumentVersion(
         document_id=doc.id,
         version_number=1,
@@ -182,6 +191,20 @@ def upload_document(
             doc.status = "failed"
             db.commit()
             raise HTTPException(status_code=400, detail="No chunks generated from document")
+        
+        # Validate each chunk has non-empty content before creating records/vectors
+        valid_chunks = [c for c in chunks if c.content is not None and c.content.strip()]
+        if len(valid_chunks) != len(chunks):
+            invalid_count = len(chunks) - len(valid_chunks)
+            logger.warning(
+                f"Filtered {invalid_count} invalid chunks with empty/None content for document {doc.id}"
+            )
+        chunks = valid_chunks
+        
+        if not chunks:
+            doc.status = "failed"
+            db.commit()
+            raise HTTPException(status_code=400, detail="No chunks with valid content generated from document")
         
         # Store chunks in PostgreSQL
         chunk_ids = []
@@ -357,6 +380,20 @@ def index_document(
             doc.status = "failed"
             db.commit()
             raise HTTPException(status_code=400, detail="No chunks generated")
+        
+        # Validate each chunk has non-empty content before creating records/vectors
+        valid_chunks = [c for c in chunks if c.content is not None and c.content.strip()]
+        if len(valid_chunks) != len(chunks):
+            invalid_count = len(chunks) - len(valid_chunks)
+            logger.warning(
+                f"Filtered {invalid_count} invalid chunks with empty/None content for document {document_id}"
+            )
+        chunks = valid_chunks
+        
+        if not chunks:
+            doc.status = "failed"
+            db.commit()
+            raise HTTPException(status_code=400, detail="No chunks with valid content generated")
         
         # Store chunks in PostgreSQL
         chunk_ids = []

@@ -54,7 +54,7 @@ class User(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    permissions = relationship("DocumentPermission", back_populates="user", cascade="all, delete-orphan")
+    permissions = relationship("DocumentPermission", back_populates="user", foreign_keys="DocumentPermission.user_id", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):

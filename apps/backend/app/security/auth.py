@@ -158,11 +158,13 @@ class CompositeAuthProvider(AuthProviderBase):
         self.providers = providers
     
     def authenticate(self, request: Request) -> Optional[AuthContext]:
+        last_result = None
         for provider in self.providers:
             result = provider.authenticate(request)
             if result and result.is_authenticated:
                 return result
-        return None
+            last_result = result
+        return last_result
 
 
 def get_auth_provider() -> CompositeAuthProvider:

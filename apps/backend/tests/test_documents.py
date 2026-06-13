@@ -58,3 +58,27 @@ def test_list_documents(auth_client: TestClient):
     data = response.json()
     assert len(data) == 1
     assert data[0]["original_name"] == "a.txt"
+
+def test_upload_empty_extracted_text_returns_400(auth_client, monkeypatch):
+    """Document upload with empty extracted text returns clear 400 error."""
+    import app.api.documents as docs_mod
+    monkeypatch.setattr(docs_mod, "process_document", lambda content, mime_type: "")
+    response = auth_client.post(
+        "/api/documents/upload",
+        files={"file": ("empty.txt", io.BytesIO(b"   "), "text/plain")},
+    )
+    assert response.status_code == 400
+    assert "No extractable text found" in response.json()["detail"]
+
+
+def test_upload_none_extracted_text_returns_400(auth_client, monkeypatch):
+    """Document upload with None extracted text returns clear 400 error."""
+    import app.api.documents as docs_mod
+    monkeypatch.setattr(docs_mod, "process_document", lambda content, mime_type: None)
+    response = auth_client.post(
+        "/api/documents/upload",
+        files={"file": ("empty.txt", io.BytesIO(b"x"), "text/plain")},
+    )
+    assert response.status_code == 400
+    assert "No extractable text found" in response.json()["detail"]
+

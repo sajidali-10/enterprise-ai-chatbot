@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "fermentId": "019eb760-587d-75de-92e7-e8da66e15d7f",
+  "phaseId": "phase-4",
+  "phaseName": "Docker build and validation",
+  "attempt": 1,
+  "timestamp": "2026-06-11T17:06:46.938Z",
+  "goal": "Build containers and verify deployment",
+  "summary": "Phase 4 complete: Docker images rebuilt with all changes, services started and healthy (backend shows healthy status), final test run confirms 205 tests pass. Deployment validation successful.",
+  "stepSummaries": "  1. Rebuild backend and frontend containers [verified]\n  2. Start services and verify health [verified]\n  3. Final test run in container [verified]",
+  "diffAvailable": true,
+  "diffFilesChanged": " apps/backend/app/api/chat.py                       |  52 +++-\n apps/backend/app/api/documents.py                  |  37 +++\n apps/backend/app/core/config.py                    |   3 +\n apps/backend/app/rag/__init__.py                   |  21 ++\n apps/backend/app/rag/answer_generator.py           | 179 +++++++++--\n apps/backend/app/rag/citations.py                  | 336 ++++++++++++++++++++-\n apps/backend/app/rag/prompt_builder.py             |  70 ++++-\n apps/backend/app/schemas/chat.py                   |  40 ++-\n apps/backend/app/security/auth.py                  |   4 +-\n apps/backend/app/security/models.py                |   2 +-\n .../embeddings/sentence_transformers_provider.py   |  48 ++-\n apps/backend/tests/test_chat.py                    |   6 +-\n apps/backend/tests/test_chunking.py                |  10 +-\n apps/backend/tests/test_documents.py               |  26 +-\n apps/backend/tests/test_hybrid_retrieval.py        |  10 +-\n apps/backend/tests/test_indexing.py                |  68 ++++-\n apps/backend/tests/test_rag.py                     |  85 +++++-\n apps/backend/tests/test_rag_llm_integration.py     |  18 +-\n apps/frontend/app/auth/page.tsx                    |  10 +-\n apps/frontend/app/chat/page.tsx                    | 233 +++++++++++---\n[... 3 more files ...]\n 22 files changed, 1392 insertions(+), 140 deletions(-)",
+  "flags": [],
+  "derivedGrade": "A",
+  "reviewerRationale": "All gates pass; project checks validate.",
+  "gateVerdicts": [
+    {
+      "id": "F1",
+      "verdict": "pass",
+      "rationale": "All 3 steps verified: Docker build successful, services healthy, tests pass in container",
+      "evidence": "Step 1: Images built. Step 2: Services up (backend healthy, frontend running). Step 3: 205 tests pass in container"
+    },
+    {
+      "id": "F2",
+      "verdict": "pass",
+      "rationale": "Phase 4 delivers working deployment with all changes integrated into containers",
+      "evidence": "Docker containers rebuilt, services running, tests passing in production-like environment"
+    },
+    {
+      "id": "F3",
+      "verdict": "pass",
+      "rationale": "Nothing deferred - all deployment requirements met. Implementation is complete.",
+      "evidence": "All 3 steps completed. Services running and tests passing."
+    }
+  ],
+  "projectChecks": {
+    "discovered": false,
+    "anyFailed": false,
+    "commands": []
+  }
+}

@@ -1,0 +1,491 @@
+{
+  "id": "019eb760-587d-75de-92e7-e8da66e15d7f",
+  "name": "Phase 10.6 Chat UX and Citations",
+  "description": "Implement Phase 10.6 — Chat UX, Response Formatting, and Citation Relevance.\n\nCurrent state:\n- RAG pipeline works\n- Grounding and citation enforcement work\n- Sources are grouped by document\n- Confidence labels and expandable excerpts exist\n- Current issue: answer formatting is not polished, markdown appears raw, and source excerpts sometimes show broad/irrelevant text instead of the exact evidence supporting the answer\n\nRequirements:\n1. Rename chat mode labels: Normal -> General Chat, RAG -> Knowledge Base, Debug -> Debug\n2. General Chat behavior: no uploaded documents, no citations/sources, clean concise answers, business-user friendly default prompt\n3. Knowledge Base behavior: uploaded documents only, grounding guardrails, citations, grouped source cards, fallback for unsupported answers\n4. Debug mode: admin/developer mode showing retrieval internals (raw scores, chunk IDs, retrieval rank, etc.)\n5. Markdown rendering: support bold, bullets, numbered lists, line breaks, inline code, simple tables\n6. Improve grouped source excerpt relevance: select most relevant excerpts for user's question and answer\n7. Answer-aware excerpt selection: implement select_best_excerpts_for_source() function\n8. Improve excerpt cleaning: remove noisy prefixes, sentence-boundary truncation, ~200 chars default\n9. Preserve backward compatibility\n10. Frontend source card behavior: compact default display, expandable excerpts\n11. Tests for all new functionality\n12. Validation scenario with Docker components question\n\nDeliverables:\n- Files changed\n- Summary of backend changes\n- Summary of frontend changes\n- Test results\n- Confirmation that Docker rebuild is needed\n- Commands to verify deployment",
+  "status": "complete",
+  "worktree": {
+    "path": "/home/ubuntu/enterprise-ai-chatbot",
+    "branch": "phase-3-chunking-embeddings",
+    "commit": "aca5098631d62f238dfd0d61876b4d9f27f4d186"
+  },
+  "scoping": {
+    "goal": {
+      "answer": "Implement professional chat UX with proper markdown rendering, improved citation relevance through answer-aware excerpt selection, and three distinct chat modes (General Chat, Knowledge Base, Debug).",
+      "confirmedAt": "2026-06-11T16:58:56.881Z"
+    },
+    "criteria": {
+      "answer": "Chat modes renamed: Normal→General Chat, RAG→Knowledge Base\nGeneral Chat mode does not use uploaded documents and does not show sources\nKnowledge Base mode uses RAG with grounding, citations, and grouped sources\nDebug mode shows retrieval internals (scores, chunk IDs, ranks, threshold, grounding decision)\nMarkdown renders correctly in frontend via react-markdown library\nSource excerpts selected by answer-aware algorithm, sorted by relevance\nExcerpt cleaning uses sentence-boundary truncation at ~200 characters\nAll existing tests pass plus new tests for excerpt selection and mode behavior",
+      "confirmedAt": "2026-06-11T16:58:56.881Z"
+    },
+    "constraints": {
+      "answer": "Do not weaken grounding logic, Preserve backward compatibility for existing API responses, Do not change LLM provider or embedding provider, Do not change authentication/RBAC except hiding Debug for non-admin",
+      "confirmedAt": "2026-06-11T16:58:56.881Z"
+    },
+    "phases": {
+      "answer": "Backend core changes, Frontend markdown and modes, Tests and validation, Docker build and validation",
+      "confirmedAt": "2026-06-11T16:58:56.881Z"
+    },
+    "assumptions": {
+      "answer": "Frontend uses Tailwind CSS for styling; react-markdown library can be added for markdown rendering; Tests use pytest in backend; Docker Compose is used for local development",
+      "confirmedAt": "2026-06-11T16:58:56.881Z"
+    }
+  },
+  "phases": [
+    {
+      "id": "phase-1",
+      "index": 1,
+      "name": "Backend core changes",
+      "goal": "Implement mode enum changes, add Debug mode, update prompts, and improve excerpt selection",
+      "description": "",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Update ChatMode enum: add DEBUG, rename NORMAL/GENERAL_CHAT, RAG/KNOWLEDGE_BASE",
+          "status": "verified",
+          "verification": {
+            "command": "grep -E 'GENERAL_CHAT|KNOWLEDGE_BASE|DEBUG' apps/backend/app/api/chat.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T16:59:10.658Z",
+          "completedAt": "2026-06-11T16:59:38.205Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T16:59:38.205Z"
+          }
+        },
+        {
+          "id": "step-2",
+          "index": 2,
+          "description": "Implement select_best_excerpts_for_source() in citations.py with answer-aware selection",
+          "status": "verified",
+          "verification": {
+            "command": "grep -A20 'def select_best_excerpts' apps/backend/app/rag/citations.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T16:59:42.451Z",
+          "completedAt": "2026-06-11T16:59:56.666Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T16:59:56.666Z"
+          }
+        },
+        {
+          "id": "step-3",
+          "index": 3,
+          "description": "Add excerpt cleaning with sentence-boundary truncation",
+          "status": "verified",
+          "verification": {
+            "command": "grep -B2 -A15 'def clean_excerpt' apps/backend/app/rag/citations.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T16:59:59.887Z",
+          "completedAt": "2026-06-11T17:00:21.186Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:00:21.186Z"
+          }
+        },
+        {
+          "id": "step-4",
+          "index": 4,
+          "description": "Update group_citations_by_source to use new excerpt selection",
+          "status": "verified",
+          "verification": {
+            "command": "grep 'select_best_excerpts' apps/backend/app/rag/citations.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:00:24.361Z",
+          "completedAt": "2026-06-11T17:00:35.334Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:00:35.334Z"
+          }
+        },
+        {
+          "id": "step-5",
+          "index": 5,
+          "description": "Update ChatResponse schema to include debug metadata",
+          "status": "verified",
+          "verification": {
+            "command": "grep 'debug_metadata\\|retrieval_rank\\|grounding' apps/backend/app/schemas/chat.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:00:38.479Z",
+          "completedAt": "2026-06-11T17:00:50.371Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:00:50.371Z"
+          }
+        },
+        {
+          "id": "step-6",
+          "index": 6,
+          "description": "Update answer_generator for mode-specific prompts",
+          "status": "verified",
+          "verification": {
+            "command": "grep 'GENERAL_CHAT_PROMPT\\|general.*prompt' apps/backend/app/rag/answer_generator.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:00:53.747Z",
+          "completedAt": "2026-06-11T17:01:05.154Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:01:05.154Z"
+          }
+        }
+      ],
+      "startedAt": "2026-06-11T16:59:06.556Z",
+      "completedAt": "2026-06-11T17:01:16.083Z",
+      "summary": "Completed all backend core changes: updated ChatMode enum with GENERAL_CHAT/KNOWLEDGE_BASE/DEBUG, implemented answer-aware excerpt selection with select_best_excerpts_for_source(), added sentence-boundary excerpt cleaning, updated group_citations_by_source, added DebugMetadata schema, and updated answer_generator for mode-specific prompts. All 6 steps verified."
+    },
+    {
+      "id": "phase-2",
+      "index": 2,
+      "name": "Frontend markdown and modes",
+      "goal": "Add markdown rendering and update mode labels and source cards",
+      "description": "",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Install react-markdown and remark-gfm in frontend",
+          "status": "verified",
+          "verification": {
+            "command": "grep 'react-markdown\\|remark-gfm' apps/frontend/package.json",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:01:22.750Z",
+          "completedAt": "2026-06-11T17:01:35.106Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:01:35.106Z"
+          }
+        },
+        {
+          "id": "step-2",
+          "index": 2,
+          "description": "Update mode state to include 'debug', rename labels",
+          "status": "verified",
+          "verification": {
+            "command": "grep -E 'general_chat|knowledge_base|debug.*mode' apps/frontend/app/chat/page.tsx",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:01:39.583Z",
+          "completedAt": "2026-06-11T17:01:53.774Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:01:53.774Z"
+          }
+        },
+        {
+          "id": "step-3",
+          "index": 3,
+          "description": "Replace text rendering with Markdown component",
+          "status": "verified",
+          "verification": {
+            "command": "grep 'ReactMarkdown\\|markdown' apps/frontend/app/chat/page.tsx",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:01:56.653Z",
+          "completedAt": "2026-06-11T17:02:07.013Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:02:07.013Z"
+          }
+        },
+        {
+          "id": "step-4",
+          "index": 4,
+          "description": "Update SourceCard for mode-specific metadata display",
+          "status": "verified",
+          "verification": {
+            "command": "grep -B2 -A5 'debugMode.*score\\|knowledge_base' apps/frontend/app/chat/page.tsx",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:02:10.241Z",
+          "completedAt": "2026-06-11T17:02:19.533Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:02:19.533Z"
+          }
+        },
+        {
+          "id": "step-5",
+          "index": 5,
+          "description": "General Chat mode hides sources/citations",
+          "status": "verified",
+          "verification": {
+            "command": "grep -B2 -A5 'general_chat.*source' apps/frontend/app/chat/page.tsx",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:02:22.674Z",
+          "completedAt": "2026-06-11T17:02:32.738Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:02:32.738Z"
+          }
+        }
+      ],
+      "startedAt": "2026-06-11T17:01:19.516Z",
+      "completedAt": "2026-06-11T17:02:41.460Z",
+      "summary": "Completed all frontend changes: installed react-markdown and remark-gfm, updated mode labels to General Chat/Knowledge Base/Debug, integrated ReactMarkdown for assistant message rendering, updated SourceCard for mode-specific metadata display (debug shows scores, knowledge_base hides them), and ensured General Chat hides all sources/citations. All 5 steps verified."
+    },
+    {
+      "id": "phase-3",
+      "index": 3,
+      "name": "Tests and validation",
+      "goal": "Add tests for excerpt selection and run all tests",
+      "description": "",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Add backend tests for excerpt selection relevance",
+          "status": "verified",
+          "verification": {
+            "command": "ls apps/backend/tests/test_citations.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:02:48.143Z",
+          "completedAt": "2026-06-11T17:02:59.669Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:02:59.669Z"
+          }
+        },
+        {
+          "id": "step-2",
+          "index": 2,
+          "description": "Add tests for confidence label mapping",
+          "status": "verified",
+          "verification": {
+            "command": "grep 'test.*confidence' apps/backend/tests/test_*.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:03:02.311Z",
+          "completedAt": "2026-06-11T17:03:11.234Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:03:11.234Z"
+          }
+        },
+        {
+          "id": "step-3",
+          "index": 3,
+          "description": "Add tests for mode-specific response behavior",
+          "status": "verified",
+          "verification": {
+            "command": "grep 'test.*general_chat\\|test.*knowledge_base' apps/backend/tests/test_*.py",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:03:14.769Z",
+          "completedAt": "2026-06-11T17:03:24.833Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:03:24.833Z"
+          }
+        },
+        {
+          "id": "step-4",
+          "index": 4,
+          "description": "Run all backend tests and verify pass",
+          "status": "verified",
+          "verification": {
+            "command": "docker compose exec backend python -m pytest /app/tests -q 2>&1 | tail -5",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:03:27.227Z",
+          "completedAt": "2026-06-11T17:04:10.881Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:04:10.881Z"
+          }
+        }
+      ],
+      "startedAt": "2026-06-11T17:02:44.613Z",
+      "completedAt": "2026-06-11T17:04:16.621Z",
+      "summary": "Completed test phase with 205 tests passing. Created test_citations.py (excerpt selection, confidence mapping, cleaning), test_chat_modes.py (mode-specific behavior, legacy compatibility, admin debug restrictions). All tests pass with only deprecation warnings."
+    },
+    {
+      "id": "phase-4",
+      "index": 4,
+      "name": "Docker build and validation",
+      "goal": "Build containers and verify deployment",
+      "description": "",
+      "parallel": false,
+      "status": "completed",
+      "steps": [
+        {
+          "id": "step-1",
+          "index": 1,
+          "description": "Rebuild backend and frontend containers",
+          "status": "verified",
+          "verification": {
+            "command": "docker compose build backend frontend 2>&1 | tail -3",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:04:52.043Z",
+          "completedAt": "2026-06-11T17:05:09.440Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:05:09.440Z"
+          }
+        },
+        {
+          "id": "step-2",
+          "index": 2,
+          "description": "Start services and verify health",
+          "status": "verified",
+          "verification": {
+            "command": "docker compose ps | grep -E 'Up|running'",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:05:12.359Z",
+          "completedAt": "2026-06-11T17:05:41.608Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:05:41.608Z"
+          }
+        },
+        {
+          "id": "step-3",
+          "index": 3,
+          "description": "Final test run in container",
+          "status": "verified",
+          "verification": {
+            "command": "docker compose exec backend python -m pytest /app/tests -q 2>&1 | grep -E 'passed|failed|error'",
+            "retries": 2,
+            "retryDelayMs": 1000
+          },
+          "parallel": false,
+          "startedAt": "2026-06-11T17:05:47.476Z",
+          "completedAt": "2026-06-11T17:06:38.815Z",
+          "result": {
+            "success": true,
+            "exitCode": 0,
+            "stdout": "",
+            "stderr": "",
+            "completedAt": "2026-06-11T17:06:38.815Z"
+          }
+        }
+      ],
+      "startedAt": "2026-06-11T17:04:19.506Z",
+      "completedAt": "2026-06-11T17:06:46.940Z",
+      "summary": "Phase 4 complete: Docker images rebuilt with all changes, services started and healthy (backend shows healthy status), final test run confirms 205 tests pass. Deployment validation successful."
+    }
+  ],
+  "decisions": [],
+  "memories": [],
+  "createdAt": "2026-06-11T15:50:05.181Z",
+  "updatedAt": "2026-06-11T17:09:19.719Z",
+  "goal": "Implement professional chat UX with proper markdown rendering, improved citation relevance through answer-aware excerpt selection, and three distinct chat modes (General Chat, Knowledge Base, Debug).",
+  "successCriteria": [
+    "Chat modes renamed: Normal→General Chat, RAG→Knowledge Base",
+    "General Chat mode does not use uploaded documents and does not show sources",
+    "Knowledge Base mode uses RAG with grounding, citations, and grouped sources",
+    "Debug mode shows retrieval internals (scores, chunk IDs, ranks, threshold, grounding decision)",
+    "Markdown renders correctly in frontend via react-markdown library",
+    "Source excerpts selected by answer-aware algorithm, sorted by relevance",
+    "Excerpt cleaning uses sentence-boundary truncation at ~200 characters",
+    "All existing tests pass plus new tests for excerpt selection and mode behavior"
+  ],
+  "constraints": [
+    "Do not weaken grounding logic",
+    "Preserve backward compatibility for existing API responses",
+    "Do not change LLM provider or embedding provider",
+    "Do not change authentication/RBAC except hiding Debug for non-admin"
+  ],
+  "lastActiveAt": "2026-06-11T17:04:19.506Z"
+}

@@ -202,7 +202,7 @@ class TestRagPipeline:
             
             answer, citations, metadata = generate_answer_with_rag("Test question?")
             
-            assert "could not find" in answer.lower() or "not enough information" in answer.lower()
+            assert "don't have" in answer.lower() or "could not find" in answer.lower() or "not enough information" in answer.lower()
             assert citations == []
     
     def test_chat_endpoint_rag_mode_returns_citations(self):
@@ -237,8 +237,13 @@ class TestRagPipeline:
 class TestErrorHandling:
     """Tests for error handling in RAG pipeline."""
     
-    def test_provider_error_returns_error_message(self):
-        """Provider errors are returned as part of the response, not silently hidden."""
+    def test_provider_error_blocked_by_grounding_guardrail(self):
+        """Provider errors are blocked by Phase 10 grounding guardrail (no citations).
+        
+        Phase 10 grounding blocks answers that lack citations. This is correct production
+        behavior - internal provider errors should NOT be leaked to users. The grounding
+        guardrail returns a safe fallback message instead.
+        """
         with patch('app.rag.answer_generator.get_llm_provider') as mock_get_provider:
             mock_provider = MagicMock()
             mock_provider.chat.return_value = ChatResponse(
@@ -249,11 +254,219 @@ class TestErrorHandling:
             
             with patch('app.rag.answer_generator.retrieve_chunks_with_settings') as mock_retrieve:
                 mock_retrieve.return_value = (
-                    [{"source_file_name": "doc.txt", "content": "Content.", "score": 0.9}],
+                    [{"source_file_name": "doc.txt", "content": "This is a test document about testing.", "score": 0.9}],
                     {}
                 )
                 
-                answer, citations, metadata = generate_answer_with_rag("Test?")
+                answer, citations, metadata = generate_answer_with_rag("What is testing?")
                 
-                # Error message should be in the answer
-                assert "[OpenRouter Error]" in answer or "Error" in answer
+                # Phase 10 grounding blocks answers without citations
+                # Internal provider errors are NOT leaked to users
+                assert citations == []
+                assert metadata.get("blocked") is True
+                assert metadata.get("block_reason") == "answer_lacks_citations"
+                # Safe fallback message is returned instead of exposing internal error
+                assert "don't have enough information" in answer.lower() or "could not find enough information" in answer.lower()
+
+
+# ==============================================================================
+# Citation Repair Flow Tests (Phase 10.6)
+# ==============================================================================
+
+class TestCitationRepairFlow:
+    """Tests for Phase 10.6 citation repair flow.
+    
+    Verifies that:
+    1. Initial LLM call without citations triggers retry when retrieval is strong
+    2. Backend citation attachment runs when retry fails to produce citations
+    3. Fallback still happens when retrieval is weak (below threshold)
+    4. Citation metadata is properly tracked through the repair flow
+    """
+    
+    def test_strong_retrieval_retry_and_attachment_produces_citations(self):
+        """Backend citation attachment runs when LLM retry still lacks citations.
+        
+        Given:
+        - Strong retrieval (top_score 0.97)
+        - LLM first response WITHOUT citations
+        - LLM retry response WITHOUT citations
+        
+        Expected:
+        - backend_citations_attached = true
+        - final answer includes citations like [1], [2]
+        - blocked = false
+        - citation_count > 0
+        """
+        with patch('app.rag.answer_generator.retrieve_chunks_with_settings') as mock_retrieve:
+            with patch('app.rag.answer_generator.get_llm_provider') as mock_get_provider:
+                # Strong retrieval with high score
+                mock_retrieve.return_value = (
+                    [
+                        {"id": "chunk1", "source_file_name": "docker.txt", 
+                         "content": "Docker images are immutable packages that include the application code, dependencies, and OS libraries.", "score": 0.97},
+                        {"id": "chunk2", "source_file_name": "docker.txt", 
+                         "content": "Docker containers are runtime instances created from Docker images.", "score": 0.95},
+                    ],
+                    {}
+                )
+                
+                # Mock LLM: first call returns answer without citations,
+                # second call (retry) also returns answer without citations
+                mock_provider = MagicMock()
+                mock_provider.set_temperature = MagicMock()
+                
+                # Track number of calls
+                call_count = [0]
+                def mock_chat(request):
+                    call_count[0] += 1
+                    # Both calls return answer without citations
+                    return MagicMock(message="Docker images are immutable packages. Docker containers are runtime instances.")
+                
+                mock_provider.chat.side_effect = mock_chat
+                mock_get_provider.return_value = mock_provider
+                
+                answer, citations, metadata = generate_answer_with_rag(
+                    "what are the components of docker?",
+                    min_relevance_score=0.3
+                )
+                
+                # Citation repair flow should have been triggered
+                assert metadata.get("blocked") is False, f"Expected blocked=False but got blocked={metadata.get('blocked')}"
+                
+                # Answer should now have citations from backend attachment
+                # Citations may be [1, 2] format (multiple citations on same sentence)
+                import re
+                citation_pattern = r'\[\d+(?:,\s*\d+)*\]'
+                assert re.search(citation_pattern, answer), f"Expected citations in answer but got: {answer}"
+                
+                # Citation repair metadata should be present
+                citation_repair = metadata.get("grounding", {}).get("citation_repair", {})
+                assert citation_repair.get("retry_attempted") is True, "Retry should have been attempted"
+                assert citation_repair.get("attachment_attempted") is True, "Backend attachment should have been attempted"
+                assert citation_repair.get("final_has_citations") is True, "Final answer should have citations"
+                assert citation_repair.get("final_citation_count", 0) > 0, "Citation count should be > 0"
+    
+    def test_weak_retrieval_falls_back_regardless_of_citations(self):
+        """Fallback happens when retrieval is weak even if LLM produces something.
+        
+        Given:
+        - Weak retrieval (top_score 0.2, below threshold)
+        - LLM response without citations
+        
+        Expected:
+        - Fallback message returned
+        - blocked = true
+        - No unsupported answer returned
+        """
+        with patch('app.rag.answer_generator.retrieve_chunks_with_settings') as mock_retrieve:
+            with patch('app.rag.answer_generator.get_llm_provider') as mock_get_provider:
+                # Weak retrieval with low score (below typical threshold)
+                mock_retrieve.return_value = (
+                    [
+                        {"id": "chunk1", "source_file_name": "doc.txt", 
+                         "content": "Some content about docker.", "score": 0.2},
+                    ],
+                    {}
+                )
+                
+                mock_provider = MagicMock()
+                mock_provider.chat.return_value = MagicMock(
+                    message="Docker has several components including images and containers."
+                )
+                mock_get_provider.return_value = mock_provider
+                
+                answer, citations, metadata = generate_answer_with_rag(
+                    "what are the components of docker?",
+                    min_relevance_score=0.5  # 0.5 threshold, 0.2 is below
+                )
+                
+                # Should block because retrieval is weak
+                assert metadata.get("blocked") is True
+                assert "could not find enough information" in answer.lower() or \
+                       "relevant information" in answer.lower() or \
+                       "low relevance" in answer.lower()
+    
+    def test_no_retry_when_retrieval_is_weak(self):
+        """No retry attempted when retrieval score is below threshold.
+        
+        Given:
+        - Weak retrieval (top_score 0.25, below 0.3 threshold)
+        - LLM response without citations
+        
+        Expected:
+        - No retry attempted (because top_score < min_relevance_score)
+        - blocked = true
+        """
+        with patch('app.rag.answer_generator.retrieve_chunks_with_settings') as mock_retrieve:
+            mock_retrieve.return_value = (
+                [
+                    {"id": "chunk1", "source_file_name": "docker.txt", 
+                     "content": "Docker is a containerization platform.", "score": 0.25},
+                ],
+                {}
+            )
+            
+            with patch('app.rag.answer_generator.get_llm_provider') as mock_get_provider:
+                mock_provider = MagicMock()
+                mock_provider.chat.return_value = MagicMock(
+                    message="Docker components include images and containers."
+                )
+                mock_get_provider.return_value = mock_provider
+                
+                answer, citations, metadata = generate_answer_with_rag(
+                    "what are the components of docker?",
+                    min_relevance_score=0.3
+                )
+                
+                # When retrieval is weak, grounding blocks BEFORE citation repair flow runs
+                # So no citation_repair metadata is initialized (not False, just absent)
+                citation_repair = metadata.get("grounding", {}).get("citation_repair")
+                assert citation_repair is None, \
+                    f"Citation repair should not run when retrieval is weak, got: {citation_repair}"
+                assert metadata.get("blocked") is True
+
+    def test_initial_response_with_citations_skips_retry(self):
+        """When initial LLM response already has citations, skip retry.
+        
+        Given:
+        - Strong retrieval
+        - LLM response WITH citations
+        
+        Expected:
+        - No retry attempted
+        - blocked = false
+        - answer with citations returned
+        """
+        with patch('app.rag.answer_generator.retrieve_chunks_with_settings') as mock_retrieve:
+            with patch('app.rag.answer_generator.get_llm_provider') as mock_get_provider:
+                mock_retrieve.return_value = (
+                    [
+                        {"id": "chunk1", "source_file_name": "docker.txt", 
+                         "content": "Docker images are immutable packages.", "score": 0.97},
+                    ],
+                    {}
+                )
+                
+                mock_provider = MagicMock()
+                mock_provider.set_temperature = MagicMock()
+                call_count = [0]
+                def mock_chat(request):
+                    call_count[0] += 1
+                    # LLM already includes citation
+                    return MagicMock(message="Docker images are immutable packages that include everything needed [1].")
+                
+                mock_provider.chat.side_effect = mock_chat
+                mock_get_provider.return_value = mock_provider
+                
+                answer, citations, metadata = generate_answer_with_rag(
+                    "what are the components of docker?",
+                    min_relevance_score=0.3
+                )
+                
+                # Should only be called once (no retry needed)
+                assert call_count[0] == 1, f"Expected 1 LLM call but got {call_count[0]}"
+                
+                citation_repair = metadata.get("grounding", {}).get("citation_repair", {})
+                assert citation_repair.get("retry_attempted") is False
+                assert citation_repair.get("final_has_citations") is True
+                assert metadata.get("blocked") is False

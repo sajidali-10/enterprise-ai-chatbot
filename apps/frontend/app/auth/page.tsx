@@ -37,6 +37,11 @@ export default function AuthPage() {
       })
   }
 
+  // Refetch auth info when selectedUser changes
+  useEffect(() => {
+    fetchAuthInfo()
+  }, [selectedUser])
+
   function handleSelectUser(userId: string) {
     setSelectedUser(userId)
     // Set in localStorage for persistence
@@ -49,10 +54,13 @@ export default function AuthPage() {
   }
 
   useEffect(() => {
-    // Check localStorage on mount
+    // Check localStorage on mount and set selectedUser if found
     const stored = localStorage.getItem('dev_user')
     if (stored && !selectedUser) {
       setSelectedUser(stored)
+    } else if (!stored && !selectedUser) {
+      // No stored user, fetch auth info with no dev user
+      fetchAuthInfo()
     }
   }, [])
 

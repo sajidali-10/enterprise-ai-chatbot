@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Admin/debug mode for showing retrieval details
     RETRIEVAL_SHOW_DEBUG: bool = os.getenv("RETRIEVAL_SHOW_DEBUG", "false").lower() in ("true", "1", "yes")
 
+    # Phase 10 - Answer Grounding & Hallucination Prevention
+    RAG_MIN_RELEVANCE_SCORE: float = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.3"))
+
     # Security settings (Phase 6 - Authentication & Authorization)
     AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
     DEV_AUTH_ENABLED: bool = os.getenv("DEV_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")

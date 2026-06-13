@@ -17,6 +17,8 @@ COPY app/ ./app/
 COPY tests/ ./tests/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
+COPY evaluations/ ./evaluations/
+COPY scripts/ ./scripts/
 
 RUN chown -R appuser:appgroup /app
 

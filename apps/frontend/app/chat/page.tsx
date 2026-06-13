@@ -31,6 +31,7 @@ interface Message {
   citations?: Citation[]
   grouped_sources?: GroupedSource[]
   debug_info?: Record<string, unknown>
+  observation_id?: number
 }
 
 type ChatMode = 'general_chat' | 'knowledge_base' | 'debug'
@@ -85,6 +86,7 @@ export default function ChatPage() {
         citations: data.citations,
         grouped_sources: data.grouped_sources,
         debug_info: data.debug_info,
+        observation_id: data.observation_id,
       }
       
       setMessages((prev) => [...prev, assistantMessage])
@@ -208,7 +210,7 @@ export default function ChatPage() {
                   <p className="font-semibold text-gray-700 mb-2 text-sm">Sources:</p>
                   <div className="space-y-2">
                     {msg.grouped_sources.map((source: GroupedSource, idx: number) => (
-                      <SourceCard key={idx} source={source} isDebugMode={mode === 'debug'} />
+                      <SourceCard key={idx} source={source} isDebugMode={source.show_debug_details} />
                     ))}
                   </div>
                 </div>
@@ -217,6 +219,11 @@ export default function ChatPage() {
               {/* Debug info for Debug mode */}
               {msg.role === 'assistant' && mode === 'debug' && msg.debug_info && (
                 <DebugInfoPanel debugInfo={msg.debug_info} />
+              )}
+              
+              {/* Feedback buttons for assistant messages */}
+              {msg.role === 'assistant' && msg.observation_id && (
+                <FeedbackButtons observationId={msg.observation_id} />
               )}
             </div>
           </div>
@@ -334,6 +341,157 @@ function DebugInfoPanel({ debugInfo }: { debugInfo: Record<string, unknown> }) {
           {JSON.stringify(debugInfo, null, 2)}
         </pre>
       )}
+    </div>
+  )
+}
+
+// Feedback buttons component
+function FeedbackButtons({ observationId }: { observationId: number }) {
+  const [feedbackState, setFeedbackState] = useState<'none' | 'submitted' | 'reason'>('none')
+  const [selectedReason, setSelectedReason] = useState<string>('')
+  const [comment, setComment] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const authFetch = useAuthFetch()
+
+  const feedbackReasons = [
+    { id: 'wrong_answer', label: 'Wrong answer' },
+    { id: 'wrong_source', label: 'Wrong source' },
+    { id: 'missing_information', label: 'Missing information' },
+    { id: 'too_long', label: 'Too long' },
+    { id: 'unclear', label: 'Unclear' },
+    { id: 'other', label: 'Other' },
+  ]
+
+  const handleFeedback = async (rating: 'helpful' | 'not_helpful') => {
+    if (rating === 'not_helpful') {
+      setFeedbackState('reason')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+
+    try {
+      const res = await authFetch(`/api/chat/${observationId}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating }),
+      })
+
+      if (!res.ok) {
+        throw new Error('Failed to submit feedback')
+      }
+
+      setFeedbackState('submitted')
+    } catch (err) {
+      setError('Failed to submit feedback')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleReasonSubmit = async () => {
+    setSubmitting(true)
+    setError(null)
+
+    try {
+      const res = await authFetch(`/api/chat/${observationId}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rating: 'not_helpful',
+          reason: selectedReason,
+          comment: comment || undefined,
+        }),
+      })
+
+      if (!res.ok) {
+        throw new Error('Failed to submit feedback')
+      }
+
+      setFeedbackState('submitted')
+    } catch (err) {
+      setError('Failed to submit feedback')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (feedbackState === 'submitted') {
+    return (
+      <div className="mt-3 text-xs text-green-600 font-medium">
+        Thank you for your feedback!
+      </div>
+    )
+  }
+
+  if (feedbackState === 'reason') {
+    return (
+      <div className="mt-3 bg-white border border-gray-200 rounded p-3">
+        <p className="text-sm text-gray-700 mb-2">Why was this not helpful?</p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {feedbackReasons.map((reason) => (
+            <button
+              key={reason.id}
+              onClick={() => setSelectedReason(reason.id)}
+              className={`px-2 py-1 text-xs rounded ${
+                selectedReason === reason.id
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {reason.label}
+            </button>
+          ))}
+        </div>
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Optional comment..."
+          className="w-full border border-gray-300 rounded p-2 text-xs mb-2 resize-none"
+          rows={2}
+        />
+        <div className="flex space-x-2">
+          <button
+            onClick={handleReasonSubmit}
+            disabled={!selectedReason || submitting}
+            className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 disabled:bg-blue-300"
+          >
+            {submitting ? 'Submitting...' : 'Submit'}
+          </button>
+          <button
+            onClick={() => setFeedbackState('none')}
+            className="px-3 py-1 bg-gray-100 text-gray-700 text-xs rounded hover:bg-gray-200"
+          >
+            Cancel
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 flex items-center space-x-2">
+      <span className="text-xs text-gray-500">Was this helpful?</span>
+      <button
+        onClick={() => handleFeedback('helpful')}
+        disabled={submitting}
+        className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-green-100 hover:text-green-700"
+        title="Helpful"
+      >
+        👍 Helpful
+      </button>
+      <button
+        onClick={() => handleFeedback('not_helpful')}
+        disabled={submitting}
+        className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-red-100 hover:text-red-700"
+        title="Not helpful"
+      >
+        👎 Not helpful
+      </button>
+      {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
   )
 }

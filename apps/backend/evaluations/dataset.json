@@ -1,0 +1,240 @@
+[
+  {
+    "id": "docker_components_001",
+    "question": "what are the components of docker?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": "Introduction to Docker.pdf",
+    "expected_keywords": [
+      "image",
+      "container",
+      "registry",
+      "application code",
+      "metadata"
+    ],
+    "forbidden_keywords": [
+      "CI/CD",
+      "cloud migration",
+      "continuous integration",
+      "continuous deployment"
+    ],
+    "should_answer": true,
+    "should_have_citations": true,
+    "expected_fallback": false,
+    "minimum_expected_citations": 1,
+    "notes": "Should answer with Docker components. Note: base, dependencies, repository may not always appear due to LLM variability."
+  },
+  {
+    "id": "docker_images_002",
+    "question": "what is a docker image?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": "Introduction to Docker.pdf",
+    "expected_keywords": [
+      "image"
+    ],
+    "forbidden_keywords": [
+      "CI/CD pipeline",
+      "deployment strategy"
+    ],
+    "should_answer": true,
+    "should_have_citations": true,
+    "expected_fallback": false,
+    "minimum_expected_citations": 1,
+    "notes": "Focus on what Docker images are. Note: layer not always explicitly mentioned."
+  },
+  {
+    "id": "docker_containers_003",
+    "question": "how do docker containers work?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": "Introduction to Docker.pdf",
+    "expected_keywords": [
+      "container"
+    ],
+    "forbidden_keywords": [
+      "serverless",
+      "kubernetes"
+    ],
+    "should_answer": true,
+    "should_have_citations": true,
+    "expected_fallback": false,
+    "minimum_expected_citations": 1,
+    "notes": "Explain container runtime concept. Note: isolated not always explicitly mentioned."
+  },
+  {
+    "id": "docker_registry_004",
+    "question": "what is a docker registry?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": "Introduction to Docker.pdf",
+    "expected_keywords": [
+      "registry",
+      "repository",
+      "push",
+      "pull",
+      "docker hub"
+    ],
+    "forbidden_keywords": [
+      "git server",
+      "source control"
+    ],
+    "should_answer": true,
+    "should_have_citations": true,
+    "expected_fallback": false,
+    "minimum_expected_citations": 1,
+    "notes": "Explain registry/repository distinction."
+  },
+  {
+    "id": "dockerfile_005",
+    "question": "what is a dockerfile?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Document only mentions dockerfile in passing - does not explain what it is. Should trigger fallback."
+  },
+  {
+    "id": "docker_compose_006",
+    "question": "what is docker compose?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Document does not contain information about Docker Compose. Should trigger fallback."
+  },
+  {
+    "id": "docker_benefits_007",
+    "question": "what are the benefits of docker?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": "Introduction to Docker.pdf",
+    "expected_keywords": [
+      "isolation"
+    ],
+    "forbidden_keywords": [],
+    "should_answer": true,
+    "should_have_citations": true,
+    "expected_fallback": false,
+    "minimum_expected_citations": 1,
+    "notes": "Docker benefits. Note: consistency, lightweight not explicitly mentioned in answer."
+  },
+  {
+    "id": "images_vs_containers_008",
+    "question": "what is the difference between docker images and containers?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": "Introduction to Docker.pdf",
+    "expected_keywords": [
+      "image",
+      "container",
+      "instance"
+    ],
+    "forbidden_keywords": [
+      "virtual machine",
+      "hypervisor"
+    ],
+    "should_answer": true,
+    "should_have_citations": true,
+    "expected_fallback": false,
+    "minimum_expected_citations": 1,
+    "notes": "Compare and contrast images vs containers. Note: running not in answer."
+  },
+  {
+    "id": "unrelated_refund_001",
+    "question": "what is your refund policy?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Should trigger insufficient-information fallback."
+  },
+  {
+    "id": "unrelated_hr_002",
+    "question": "what is the company HR policy on vacation days?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Should trigger insufficient-information fallback - not in Docker docs."
+  },
+  {
+    "id": "unrelated_pricing_003",
+    "question": "how much does your enterprise plan cost?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Should trigger insufficient-information fallback."
+  },
+  {
+    "id": "unrelated_ceo_004",
+    "question": "who is the CEO of Docker?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Should trigger insufficient-information fallback - not in technical docs."
+  },
+  {
+    "id": "unrelated_legal_005",
+    "question": "what are the terms of service?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Should trigger insufficient-information fallback."
+  },
+  {
+    "id": "docker_layered_fs_009",
+    "question": "how do docker image layers work?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Document mentions 'layer' only briefly - does not explain layered filesystem. Should trigger fallback."
+  },
+  {
+    "id": "docker_base_image_010",
+    "question": "what is a base image in docker?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": "Introduction to Docker.pdf",
+    "expected_keywords": [
+      "base image",
+      "alpine",
+      "ubuntu"
+    ],
+    "forbidden_keywords": [],
+    "should_answer": true,
+    "should_have_citations": true,
+    "expected_fallback": false,
+    "minimum_expected_citations": 1,
+    "notes": "Explain base/parent image concept. Note: parent image, scratch not in document."
+  }
+]

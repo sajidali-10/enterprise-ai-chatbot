@@ -105,10 +105,11 @@ class TestFuseScores:
     def test_fuse_respects_weights(self):
         vector_results = [
             {"chunk_id": "v1", "document_id": "1", "chunk_index": 0, "content": "test1", "source_file_name": "a.txt", "title": "A", "score": 1.0},
+            {"chunk_id": "v2", "document_id": "1", "chunk_index": 1, "content": "test2", "source_file_name": "b.txt", "title": "B", "score": 0.5},
         ]
         result = _fuse_scores(vector_results, [], vector_weight=0.8, keyword_weight=0.2)
-        assert len(result) == 1
-        # With normalized vector score of 1.0 and weight 0.8, fused should be 0.8
+        assert len(result) == 2
+        # v1 has normalized score 1.0, fused = 1.0 * 0.8 = 0.8
         assert result[0].fused_score == pytest.approx(0.8)
 
 
@@ -135,12 +136,13 @@ class TestMockReranker:
 
     def test_rerank_sorts_by_rerank_score(self):
         chunks = [
-            {"chunk_id": "c1", "document_id": "1", "chunk_index": 0, "content": "python programming language", "source_file_name": "a.txt", "title": "Python", "score": 0.3},
+            {"chunk_id": "c1", "document_id": "1", "chunk_index": 0, "content": "python programming language", "source_file_name": "a.txt", "title": "Programming Guide", "score": 0.3},
             {"chunk_id": "c2", "document_id": "1", "chunk_index": 1, "content": "python is a great language", "source_file_name": "b.txt", "title": "Python Intro", "score": 0.3},
         ]
         reranker = MockReranker()
         results = reranker.rerank("python", chunks)
-        # c2 should rank higher because query term appears in title too
+        # c2 should rank higher because query term appears in title (title_boost=0.1)
+        # c1 has no title boost since "python" is not in "Programming Guide"
         assert results[0].chunk_id == "c2"
         assert results[0].rerank_score >= results[1].rerank_score
 

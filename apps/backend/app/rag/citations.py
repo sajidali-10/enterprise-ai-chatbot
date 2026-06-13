@@ -354,15 +354,25 @@ def attach_citations_to_answer(
             for sentence in sentences:
                 sentence_lower = sentence.lower()
                 sentence_has_match = any(term in sentence_lower for term in matching_terms)
-                sentence_has_citation = re.search(r'\[[\d,\s]+\]', sentence)
+                # Check if this specific citation index is already present
+                sentence_has_this_citation = re.search(rf'\[{idx}(?:,|\s|\])', sentence)
                 
-                if sentence_has_match and not sentence_has_citation:
-                    # Check if this sentence already has a different citation
+                if sentence_has_match and not sentence_has_this_citation:
                     # Append citation at the end of sentence
                     sentence = sentence.rstrip()
-                    if sentence.endswith('.') or sentence.endswith('!') or sentence.endswith('?'):
-                        sentence = sentence[:-1]  # Remove trailing punctuation
-                    sentence = f"{sentence} [{idx}]."
+                    # Check if sentence already has other citations - append to them
+                    existing_citations = re.search(r'\[(\d+(?:,\s*\d+)*)\]', sentence)
+                    if existing_citations:
+                        # Append this citation to existing bracketed list
+                        # Period is preserved because we check existing_citations before stripping punctuation
+                        old_list = existing_citations.group(1)
+                        new_list = f"{old_list}, {idx}"
+                        sentence = sentence[:existing_citations.start()] + '[' + new_list + ']' + sentence[existing_citations.end():]
+                    else:
+                        # No existing citations - strip punctuation then add new citation with period
+                        if sentence.endswith('.') or sentence.endswith('!') or sentence.endswith('?'):
+                            sentence = sentence[:-1]  # Remove trailing punctuation
+                        sentence = f"{sentence} [{idx}]."
                 
                 new_sentences.append(sentence)
             

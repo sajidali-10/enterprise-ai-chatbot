@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import chat as chat_router
 from app.api import documents as documents_router
+from app.api import evaluation as evaluation_router
 from app.db.base import Base, engine
 
 app = FastAPI(
@@ -20,6 +21,7 @@ app.add_middleware(
 
 app.include_router(chat_router.router)
 app.include_router(documents_router.router)
+app.include_router(evaluation_router.router)
 
 
 @app.on_event("startup")

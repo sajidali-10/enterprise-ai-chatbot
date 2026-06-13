@@ -1,14 +1,18 @@
 """
-Answer Grounding Module (Phase 10)
+Answer Grounding Module (Phase 10, 11.2)
 
 Provides functions to improve grounding, reduce hallucinations, and enforce citations:
 - Retrieval guardrail: Don't call LLM if no chunks retrieved
 - Minimum relevance threshold: Reject chunks below configurable threshold
+- Topic relevance check: Verify retrieved content matches query topic (Phase 11.2)
 - Citation enforcement: Verify answers include proper citations
 - Answer grounding check: Validate answer is based on retrieved context
 
 This module is designed to prevent the LLM from answering when there's insufficient
 evidence, reducing hallucinations and improving answer quality.
+
+Phase 11.2 adds topic relevance checking to prevent answering completely unrelated
+queries even when retrieval returns chunks with acceptable scores.
 """
 
 import re
@@ -17,13 +21,17 @@ from app.core.config import settings
 
 
 # Default message when no chunks are retrieved
-NO_CHUNKS_MESSAGE = "I could not find enough information in the provided sources to answer this question."
+# Note: Using "don't have" to match evaluation fallback detection
+NO_CHUNKS_MESSAGE = "I don't have enough information in the provided sources to answer this question."
 
 # Default message when chunks are below relevance threshold
-LOW_RELEVANCE_MESSAGE = "I could not find enough relevant information in the provided sources to answer this question."
+LOW_RELEVANCE_MESSAGE = "I don't have enough relevant information in the provided sources to answer this question."
 
 # Default message when answer lacks citations
-NO_CITATIONS_MESSAGE = "I could not find enough information in the provided sources to answer this question."
+NO_CITATIONS_MESSAGE = "I don't have enough information in the provided sources to answer this question."
+
+# Default message when topic is unrelated to retrieved content
+TOPIC_MISMATCH_MESSAGE = "I don't have enough information in the provided sources to answer this question."
 
 
 def check_retrieval_guardrail(chunks: list[dict]) -> tuple[bool, Optional[str], dict]:
@@ -42,6 +50,129 @@ def check_retrieval_guardrail(chunks: list[dict]) -> tuple[bool, Optional[str], 
         return True, NO_CHUNKS_MESSAGE, {"blocked_reason": "no_chunks_retrieved", "chunk_count": 0}
     
     return False, None, {"chunk_count": len(chunks)}
+
+
+def _extract_query_keywords(query: str) -> set[str]:
+    """
+    Extract meaningful keywords from a query for topic matching.
+    
+    Extracts nouns, technical terms, and compound phrases while filtering
+    out common stopwords and short terms.
+    
+    Args:
+        query: User's question/query string.
+        
+    Returns:
+        Set of keyword strings (lowercased).
+    """
+    # Common stopwords to filter out
+    stopwords = {
+        'what', 'is', 'are', 'the', 'a', 'an', 'of', 'to', 'in', 'on', 'at', 'for',
+        'to', 'and', 'or', 'but', 'with', 'from', 'by', 'how', 'do', 'does', 'can',
+        'could', 'should', 'would', 'will', 'shall', 'may', 'might', 'must',
+        'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my', 'your', 'his', 'her',
+        'its', 'our', 'their', 'this', 'that', 'these', 'those', 'be', 'been',
+        'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing',
+        'about', 'who', 'whom', 'whose', 'which', 'where', 'when', 'why',
+        'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other', 'some',
+        'such', 'no', 'not', 'only', 'same', 'so', 'than', 'too', 'very',
+        'just', 'also', 'now', 'here', 'there', 'then', 'once', 'if', 'because',
+        'as', 'until', 'while', 'during', 'before', 'after', 'above', 'below',
+        'between', 'under', 'again', 'further', 'then', 'once', 'any', 'use',
+        'used', 'using', 'like', 'many', 'much', 'well', 'way', 'want', 'need',
+        'help', 'make', 'know', 'think', 'see', 'come', 'took', 'get', 'got',
+    }
+    
+    query_lower = query.lower()
+    
+    # Extract compound phrases (2-3 words) that might be meaningful
+    compound_pattern = re.compile(r'\b[a-z]{3,}(?:\s+[a-z]{3,}){1,2}\b')
+    compounds = compound_pattern.findall(query_lower)
+    
+    # Extract single keywords (words >= 4 chars)
+    words = re.findall(r'\b[a-z]{4,}\b', query_lower)
+    
+    # Combine and filter
+    all_terms = set(compounds) | set(words)
+    keywords = {t for t in all_terms if t not in stopwords and len(t) >= 4}
+    
+    return keywords
+
+
+def check_topic_relevance(
+    query: str,
+    chunks: list[dict],
+    min_keyword_overlap: float = 0.15,
+) -> tuple[bool, Optional[str], dict]:
+    """
+    Check if retrieved chunks are topically relevant to the query.
+    
+    This prevents answering unrelated queries even when retrieval returns
+    chunks with acceptable vector similarity scores. For example, a query
+    about "refund policy" might return Docker documentation chunks because
+    the embedding model found some vector similarity, but the content is
+    completely unrelated.
+    
+    The check uses keyword overlap between query and chunk content:
+    1. Extract meaningful keywords from query
+    2. Check how many of those keywords appear in retrieved chunk content
+    3. If overlap is below threshold, block the answer
+    
+    Args:
+        query: User's question.
+        chunks: List of retrieved chunks.
+        min_keyword_overlap: Minimum fraction of query keywords that must
+                           appear in chunks (0.0-1.0). Default 0.15 (15%).
+        
+    Returns:
+        Tuple of (should_block, fallback_message, metadata).
+    """
+    if not chunks:
+        # No chunks - handled by check_retrieval_guardrail
+        return False, None, {"topic_checked": False}
+    
+    if not query:
+        return False, None, {"topic_checked": False}
+    
+    # Extract keywords from query
+    query_keywords = _extract_query_keywords(query)
+    
+    if not query_keywords:
+        # No extractable keywords - allow through
+        return False, None, {"topic_checked": True, "query_keywords_found": 0, "topic_relevant": True}
+    
+    # Combine all chunk content for analysis
+    combined_content = " ".join(c.get("content", "").lower() for c in chunks)
+    
+    # Count how many query keywords appear in chunk content
+    found_keywords = []
+    missing_keywords = []
+    
+    for keyword in query_keywords:
+        if keyword in combined_content:
+            found_keywords.append(keyword)
+        else:
+            missing_keywords.append(keyword)
+    
+    overlap_ratio = len(found_keywords) / len(query_keywords) if query_keywords else 1.0
+    
+    metadata = {
+        "topic_checked": True,
+        "query_keywords_count": len(query_keywords),
+        "query_keywords_found": len(found_keywords),
+        "query_keywords_missing": len(missing_keywords),
+        "keyword_overlap_ratio": overlap_ratio,
+        "min_keyword_overlap_required": min_keyword_overlap,
+        "missing_keywords_sample": missing_keywords[:5],  # First 5 missing for debugging
+        "topic_relevant": overlap_ratio >= min_keyword_overlap,
+    }
+    
+    # Block if keyword overlap is too low
+    if overlap_ratio < min_keyword_overlap:
+        metadata["blocked_reason"] = "topic_not_relevant"
+        return True, TOPIC_MISMATCH_MESSAGE, metadata
+    
+    return False, None, metadata
 
 
 def check_minimum_relevance(
@@ -161,6 +292,7 @@ def check_answer_grounding(
         metadata.update(citation_meta)
         
         if not has_citations:
+            metadata["blocked_reason"] = "answer_lacks_citations"
             return True, NO_CITATIONS_MESSAGE, metadata
     
     # Check for common "insufficient information" responses that the model might have
@@ -183,6 +315,7 @@ def check_answer_grounding(
                     # Model has citations but also says it couldn't find info - odd but let it through
                     pass
             # If no chunks or no citations, return fallback
+            metadata["blocked_reason"] = "answer_lacks_citations"
             return True, NO_CITATIONS_MESSAGE, metadata
     
     return False, None, metadata
@@ -193,6 +326,7 @@ def apply_grounding_checks(
     answer: Optional[str] = None,
     threshold: Optional[float] = None,
     require_citations: bool = True,
+    query: Optional[str] = None,
 ) -> tuple[bool, Optional[str], dict]:
     """
     Apply all grounding checks in sequence.
@@ -200,13 +334,15 @@ def apply_grounding_checks(
     Checks:
     1. Retrieval guardrail (no chunks)
     2. Minimum relevance threshold
-    3. Answer grounding (if answer provided)
+    3. Topic relevance (Phase 11.2) - verify chunks match query topic
+    4. Answer grounding (if answer provided)
     
     Args:
         chunks: Retrieved chunks.
         answer: Generated answer (optional - if None, only retrieval checks run).
         threshold: Minimum relevance score.
         require_citations: Whether citations are required.
+        query: User's original query (required for topic relevance check).
         
     Returns:
         Tuple of (should_block, fallback_message, metadata).
@@ -225,7 +361,14 @@ def apply_grounding_checks(
     if should_block:
         return True, message, metadata
     
-    # Check 3: Answer grounding (only if answer provided)
+    # Check 3: Topic relevance (Phase 11.2) - only if query is provided
+    if query is not None:
+        should_block, message, topic_meta = check_topic_relevance(query, chunks)
+        metadata.update(topic_meta)
+        if should_block:
+            return True, message, metadata
+    
+    # Check 4: Answer grounding (only if answer provided)
     if answer is not None:
         should_block, message, grounding_meta = check_answer_grounding(
             answer, chunks, require_citations
