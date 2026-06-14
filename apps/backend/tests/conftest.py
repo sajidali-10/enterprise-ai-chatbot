@@ -57,6 +57,8 @@ def db_session():
 @pytest.fixture(scope="function")
 def client(db_session):
     def override_get_db():
+        # Expire any cached objects so each request sees fresh data from the DB
+        db_session.expire_all()
         try:
             yield db_session
         finally:

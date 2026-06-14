@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 interface ProtectedRouteProps {
   children: React.ReactNode
   /** Optional required permission — if set, user must have this permission */
-  requirePermission?: 'canAccessObservability' | 'canAccessEvaluations' | 'canUseDebug' | 'canViewDocuments'
+  requirePermission?: 'canAccessObservability' | 'canAccessEvaluations' | 'canUseDebug' | 'canViewDocuments' | 'canManageUsers'
 }
 
 /**

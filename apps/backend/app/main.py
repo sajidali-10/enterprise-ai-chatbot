@@ -6,6 +6,7 @@ from app.api import chat as chat_router
 from app.api import documents as documents_router
 from app.api import evaluation as evaluation_router
 from app.api import auth as auth_router
+from app.api import admin as admin_router
 from app.db.base import Base, engine
 from app.core.config import settings
 
@@ -29,6 +30,7 @@ app.include_router(chat_router.router)
 app.include_router(documents_router.router)
 app.include_router(evaluation_router.router)
 app.include_router(auth_router.router)
+app.include_router(admin_router.router)
 
 
 @app.on_event("startup")

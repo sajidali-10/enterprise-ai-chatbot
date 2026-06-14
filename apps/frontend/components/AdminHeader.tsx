@@ -95,6 +95,16 @@ export default function AdminHeader() {
             >
               Documents
             </Link>
+            <Link
+              href="/admin/users"
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                isActive('/admin/users')
+                  ? 'bg-hiplink-blue text-white'
+                  : 'text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted'
+              }`}
+            >
+              Users
+            </Link>
             <div className="ml-2 flex items-center space-x-2">
               <ThemeToggle />
               {auth?.authenticated && (

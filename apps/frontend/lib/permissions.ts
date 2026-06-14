@@ -43,6 +43,7 @@ export interface RolePermissions {
   // Admin capabilities
   canAccessObservability: boolean
   canAccessEvaluations: boolean
+  canManageUsers: boolean
 
   // Feedback
   canSubmitFeedback: boolean
@@ -85,6 +86,7 @@ export function normalizePermissions(
       canDeleteDocuments: p.can_delete_documents ?? false,
       canAccessObservability: p.can_access_observability ?? false,
       canAccessEvaluations: p.can_access_evaluations ?? false,
+      canManageUsers: p.can_manage_users ?? false,
       canSubmitFeedback: p.can_submit_feedback ?? false,
       canViewDebugMetadata: p.can_use_debug ?? false,
     }
@@ -101,6 +103,7 @@ export function normalizePermissions(
     canDeleteDocuments: p.canDeleteDocuments ?? false,
     canAccessObservability: p.canAccessObservability ?? false,
     canAccessEvaluations: p.canAccessEvaluations ?? false,
+    canManageUsers: p.canManageUsers ?? false,
     canSubmitFeedback: p.canSubmitFeedback ?? false,
     canViewDebugMetadata: p.canViewDebugMetadata ?? false,
   }
@@ -117,6 +120,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canDeleteDocuments: true,
     canAccessObservability: true,
     canAccessEvaluations: true,
+    canManageUsers: true,
     canSubmitFeedback: true,
     canViewDebugMetadata: true,
   },
@@ -130,6 +134,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canDeleteDocuments: false,
     canAccessObservability: false,
     canAccessEvaluations: false,
+    canManageUsers: false,
     canSubmitFeedback: true,
     canViewDebugMetadata: false,
   },
@@ -143,6 +148,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     canDeleteDocuments: false,
     canAccessObservability: false,
     canAccessEvaluations: false,
+    canManageUsers: false,
     canSubmitFeedback: true,
     canViewDebugMetadata: false,
   },
