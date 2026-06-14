@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useAuthFetch } from '@/hooks/useApi'
 import { useAuth } from '@/contexts/AuthContext'
-import { getPermissions, type UserRole } from '@/lib/permissions'
+import { normalizePermissions, type UserRole, type PermissionFlags } from '@/lib/permissions'
 
 interface Document {
   id: string
@@ -37,7 +37,7 @@ export default function DocumentsPage() {
     (devUser === 'admin_user' ? 'admin' : 
      devUser === 'regular_user' ? 'user' : 
      devUser === 'viewer_user' ? 'viewer' : undefined)
-  const perms = getPermissions(rawRole)
+  const perms: PermissionFlags = normalizePermissions(auth?.permissions, rawRole)
 
   useEffect(() => {
     fetchDocuments()

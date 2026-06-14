@@ -4,7 +4,7 @@ import { useState, useRef, FormEvent, KeyboardEvent } from 'react'
 import Image from 'next/image'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { getPermissions, getDefaultChatMode, type UserRole } from '@/lib/permissions'
+import { getPermissions, getDefaultChatMode, normalizePermissions, type UserRole, type PermissionFlags } from '@/lib/permissions'
 import { useAuthFetch } from '@/hooks/useApi'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -74,11 +74,11 @@ export default function ChatPage() {
     (devUser === 'admin_user' ? 'admin' : 
      devUser === 'regular_user' ? 'user' : 
      devUser === 'viewer_user' ? 'viewer' : undefined)
-  const perms = getPermissions(rawRole)
-  
+  const perms: PermissionFlags = normalizePermissions(auth?.permissions, rawRole)
+
   // Set default mode based on permissions (viewer only gets KB)
   const [mode, setMode] = useState<ChatMode>(() => getDefaultChatMode(rawRole) as ChatMode)
-  
+
   // Filter available modes based on permissions
   const availableModes = allModes.filter(m => !m.permission || perms[m.permission])
   

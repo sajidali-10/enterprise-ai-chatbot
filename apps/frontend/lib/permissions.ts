@@ -33,22 +33,77 @@ export interface RolePermissions {
   canUseGeneralChat: boolean
   canUseKnowledgeBase: boolean
   canUseDebug: boolean
-  
+
   // Document capabilities
   canViewDocuments: boolean
   canUploadDocuments: boolean
   canReindexDocuments: boolean
   canDeleteDocuments: boolean
-  
+
   // Admin capabilities
   canAccessObservability: boolean
   canAccessEvaluations: boolean
-  
+
   // Feedback
   canSubmitFeedback: boolean
-  
+
   // Debug metadata visibility
   canViewDebugMetadata: boolean
+}
+
+/**
+ * Normalized permission flags used across the frontend UI.
+ * All keys are camelCase for consistent consumption by components.
+ */
+export type PermissionFlags = RolePermissions
+
+/**
+ * Normalize backend snake_case permissions or camelCase permissions
+ * into a single PermissionFlags object.
+ *
+ * Falls back to role-derived permissions when no permission object is provided.
+ */
+export function normalizePermissions(
+  permissions: unknown,
+  role?: string
+): PermissionFlags {
+  if (!permissions || typeof permissions !== 'object') {
+    return getPermissions(role)
+  }
+
+  const p = permissions as Record<string, boolean>
+
+  // Detect snake_case backend format
+  if ('can_use_general_chat' in p) {
+    return {
+      canUseGeneralChat: p.can_use_general_chat ?? false,
+      canUseKnowledgeBase: p.can_use_knowledge_base ?? false,
+      canUseDebug: p.can_use_debug ?? false,
+      canViewDocuments: p.can_view_documents ?? false,
+      canUploadDocuments: p.can_upload_documents ?? false,
+      canReindexDocuments: p.can_reindex_documents ?? false,
+      canDeleteDocuments: p.can_delete_documents ?? false,
+      canAccessObservability: p.can_access_observability ?? false,
+      canAccessEvaluations: p.can_access_evaluations ?? false,
+      canSubmitFeedback: p.can_submit_feedback ?? false,
+      canViewDebugMetadata: p.can_use_debug ?? false,
+    }
+  }
+
+  // Assume camelCase (already normalized or role permissions)
+  return {
+    canUseGeneralChat: p.canUseGeneralChat ?? false,
+    canUseKnowledgeBase: p.canUseKnowledgeBase ?? false,
+    canUseDebug: p.canUseDebug ?? false,
+    canViewDocuments: p.canViewDocuments ?? false,
+    canUploadDocuments: p.canUploadDocuments ?? false,
+    canReindexDocuments: p.canReindexDocuments ?? false,
+    canDeleteDocuments: p.canDeleteDocuments ?? false,
+    canAccessObservability: p.canAccessObservability ?? false,
+    canAccessEvaluations: p.canAccessEvaluations ?? false,
+    canSubmitFeedback: p.canSubmitFeedback ?? false,
+    canViewDebugMetadata: p.canViewDebugMetadata ?? false,
+  }
 }
 
 export const rolePermissions: Record<UserRole, RolePermissions> = {

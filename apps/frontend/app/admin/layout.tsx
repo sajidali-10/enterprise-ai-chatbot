@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { normalizePermissions } from '@/lib/permissions'
 import AdminHeader from '@/components/AdminHeader'
 
 export default function AdminLayout({
@@ -10,9 +11,10 @@ export default function AdminLayout({
   children: React.ReactNode
 }) {
   const { auth } = useAuth()
-  const isAdmin = auth?.is_admin ?? false
+  const perms = normalizePermissions(auth?.permissions, auth?.role)
+  const hasAdminAccess = (auth?.is_admin ?? false) || perms.canAccessObservability
 
-  if (!isAdmin) {
+  if (!hasAdminAccess) {
     return (
       <div className="min-h-screen bg-hiplink-background dark:bg-dark-bg flex items-center justify-center p-4">
         <div className="card dark:bg-dark-card p-8 text-center max-w-md">
