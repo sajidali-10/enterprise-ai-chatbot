@@ -28,6 +28,8 @@ export interface UserInfo {
   permissions: UserPermissions
 }
 
+export type AuthMode = 'local' | 'dev'
+
 interface AuthInfo {
   authenticated: boolean
   username: string
@@ -42,7 +44,14 @@ interface AuthContextType {
   auth: AuthInfo | null
   user: UserInfo | null
   loading: boolean
+  /** Whether the auth config has been loaded from the backend */
+  configLoaded: boolean
+  /** Backend auth mode ('local' = production JWT login, 'dev' = dev header fallback) */
+  authMode: AuthMode
+  /** Whether dev-mode user switching is enabled (only true when AUTH_MODE=dev) */
+  devAuthEnabled: boolean
   refreshAuth: () => Promise<void>
+  loginWithToken: (token: string) => Promise<void>
   logout: () => void
   devUser: string | null
   setDevUser: (userId: string | null) => void
@@ -66,12 +75,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState<AuthInfo | null>(null)
   const [user, setUser] = useState<UserInfo | null>(null)
   const [loading, setLoading] = useState(true)
+  const [configLoaded, setConfigLoaded] = useState(false)
+  const [authMode, setAuthMode] = useState<AuthMode>('local')
+  const [devAuthEnabled, setDevAuthEnabled] = useState(false)
   const [devUser, setDevUserState] = useState<string | null>(null)
+
+  // Fetch auth config from backend on mount
+  useEffect(() => {
+    let cancelled = false
+    async function loadConfig() {
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/auth/config`)
+        if (res.ok) {
+          const data = await res.json()
+          if (cancelled) return
+          setAuthMode(data.auth_mode === 'dev' ? 'dev' : 'local')
+          setDevAuthEnabled(Boolean(data.dev_auth_enabled))
+        }
+      } catch {
+        // Default to local if config endpoint unreachable
+      } finally {
+        if (!cancelled) setConfigLoaded(true)
+      }
+    }
+    loadConfig()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const refreshAuth = useCallback(async () => {
     try {
       const token = localStorage.getItem('access_token')
-      const devUserLocal = localStorage.getItem('dev_user')
 
       if (token) {
         // Try JWT auth first
@@ -85,6 +120,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const data: UserInfo = await res.json()
           setUser(data)
           setAuth(buildAuthInfoFromUser(data))
+          // Clear any stale dev_user when JWT auth succeeds
+          localStorage.removeItem('dev_user')
+          setDevUserState(null)
           setLoading(false)
           return
         }
@@ -92,36 +130,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem('access_token')
       }
 
-      // Fall back to dev mode auth
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (devUserLocal) {
-        headers['X-Dev-User'] = devUserLocal
-      }
-      const res = await fetch(`${getApiBaseUrl()}/api/chat/auth-info`, { headers })
-      if (res.ok) {
-        const data = await res.json()
-        setAuth(data)
-        if (devUserLocal && !devUser) {
-          setDevUserState(devUserLocal)
-        }
-      }
+      // No valid JWT — clear auth state
+      setUser(null)
+      setAuth(null)
     } catch (err) {
       console.error('Failed to fetch auth info:', err)
     } finally {
       setLoading(false)
     }
-  }, [devUser])
+  }, [])
 
-  useEffect(() => {
-    refreshAuth()
-  }, [refreshAuth])
-
-  useEffect(() => {
-    // Sync devUser state with localStorage on mount
-    const storedDev = localStorage.getItem('dev_user')
-    if (storedDev && !devUser) {
-      setDevUserState(storedDev)
+  const loginWithToken = useCallback(async (token: string) => {
+    localStorage.setItem('access_token', token)
+    localStorage.removeItem('dev_user')
+    setDevUserState(null)
+    // Fetch /me with the new token to populate auth state
+    const res = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    })
+    if (!res.ok) {
+      localStorage.removeItem('access_token')
+      throw new Error('Failed to validate token')
     }
+    const data: UserInfo = await res.json()
+    setUser(data)
+    setAuth(buildAuthInfoFromUser(data))
+    setLoading(false)
+  }, [])
+
+  // Sync devUser from localStorage on mount (dev mode only)
+  useEffect(() => {
+    const storedDev = localStorage.getItem('dev_user')
+    if (storedDev) setDevUserState(storedDev)
   }, [])
 
   const setDevUser = useCallback((userId: string | null) => {
@@ -145,7 +188,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ auth, user, loading, refreshAuth, logout, devUser, setDevUser }}>
+    <AuthContext.Provider value={{
+      auth,
+      user,
+      loading,
+      configLoaded,
+      authMode,
+      devAuthEnabled,
+      refreshAuth,
+      loginWithToken,
+      logout,
+      devUser,
+      setDevUser,
+    }}>
       {children}
     </AuthContext.Provider>
   )

@@ -6,6 +6,8 @@ import Image from 'next/image'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { getApiBaseUrl } from '@/lib/api'
+import ProtectedRoute from '@/components/ProtectedRoute'
+import { normalizePermissions, type PermissionFlags } from '@/lib/permissions'
 
 interface HealthStatus {
   backend: 'healthy' | 'unhealthy' | 'unknown'
@@ -51,7 +53,7 @@ function ServiceCard({ title, description, href, icon, iconBg, iconColor, button
 
 function ThemeToggle() {
   const { theme, toggleTheme } = useTheme()
-  
+
   return (
     <button
       onClick={toggleTheme}
@@ -71,7 +73,7 @@ function ThemeToggle() {
   )
 }
 
-export default function Home() {
+function DashboardContent() {
   const [health, setHealth] = useState<{ status: string; service: string } | null>(null)
   const [healthStatus, setHealthStatus] = useState<HealthStatus>({
     backend: 'unknown',
@@ -81,8 +83,9 @@ export default function Home() {
     minio: 'unknown',
   })
   const [error, setError] = useState<string | null>(null)
-  const { devUser, auth } = useAuth()
-  const isAdmin = auth?.is_admin ?? false
+  const { auth, user, logout, authMode } = useAuth()
+  const rawRole = (auth?.role ?? 'viewer') as string
+  const perms: PermissionFlags = normalizePermissions(auth?.permissions, rawRole)
 
   useEffect(() => {
     checkBackendHealth()
@@ -109,17 +112,17 @@ export default function Home() {
   }
 
   async function checkServiceHealth() {
-    const services: (keyof Pick<HealthStatus, 'postgres' | 'redis' | 'qdrant' | 'minio'>)[] = ['postgres', 'redis', 'qdrant', 'minio']
-    for (const service of services) {
-      try {
-        if (healthStatus.backend === 'healthy' || health === null) {
-          setHealthStatus(prev => ({ ...prev, [service]: 'healthy' }))
-        }
-      } catch {
-        setHealthStatus(prev => ({ ...prev, [service]: 'unhealthy' }))
-      }
-    }
+    setHealthStatus(prev => ({
+      ...prev,
+      postgres: 'healthy',
+      redis: 'healthy',
+      qdrant: 'healthy',
+      minio: 'healthy',
+    }))
   }
+
+  const displayName = user?.full_name || user?.username || user?.email || auth?.username || ''
+  const isAdmin = perms.canAccessObservability
 
   return (
     <main className="min-h-screen">
@@ -144,9 +147,11 @@ export default function Home() {
               <Link href="/chat" className="px-4 py-2 text-sm font-medium rounded-lg bg-hiplink-blue text-white hover:bg-hiplink-blue-dark transition-colors">
                 Chat
               </Link>
-              <Link href="/documents" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted transition-colors">
-                Documents
-              </Link>
+              {perms.canViewDocuments && (
+                <Link href="/documents" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted transition-colors">
+                  Documents
+                </Link>
+              )}
               {isAdmin && (
                 <>
                   <Link href="/admin/observability" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted transition-colors">
@@ -159,10 +164,28 @@ export default function Home() {
               )}
               <div className="ml-2 flex items-center space-x-2">
                 <ThemeToggle />
-                <Link href="/auth" className="flex items-center space-x-2 px-3 py-2 rounded-lg text-sm bg-gray-100 text-hiplink-secondary hover:bg-gray-200 dark:bg-dark-elevated dark:text-dark-text-muted dark:hover:bg-slate-700">
-                  <span className={`w-2 h-2 rounded-full ${devUser ? 'bg-hiplink-success' : 'bg-gray-400'}`} />
-                  <span>{devUser || 'Guest'}</span>
-                </Link>
+                {auth?.authenticated && (
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-hiplink-dark dark:text-dark-text">
+                      {displayName}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                      rawRole === 'admin'
+                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400'
+                        : rawRole === 'user'
+                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                    }`}>
+                      {rawRole}
+                    </span>
+                    <button
+                      onClick={logout}
+                      className="px-3 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-dark-elevated text-hiplink-secondary dark:text-dark-text-muted hover:bg-gray-200 dark:hover:bg-dark-border transition-colors"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -192,7 +215,7 @@ export default function Home() {
         <div className="card p-6 mb-8">
           <div className="flex items-center gap-2 mb-4">
             <div className={`w-3 h-3 rounded-full ${
-              healthStatus.backend === 'healthy' ? 'bg-hiplink-success' : 
+              healthStatus.backend === 'healthy' ? 'bg-hiplink-success' :
               healthStatus.backend === 'unhealthy' ? 'bg-hiplink-error' : 'bg-yellow-500'
             }`} />
             <h3 className="text-lg font-semibold text-hiplink-dark dark:text-dark-text">System Status</h3>
@@ -208,7 +231,7 @@ export default function Home() {
               <div key={name} className="text-center p-3 bg-hiplink-background dark:bg-dark-elevated rounded-lg">
                 <p className="text-sm text-hiplink-secondary dark:text-dark-text-muted mb-1">{name}</p>
                 <p className={`font-semibold ${
-                  status === 'healthy' ? 'text-hiplink-success' : 
+                  status === 'healthy' ? 'text-hiplink-success' :
                   status === 'unhealthy' ? 'text-hiplink-error' : 'text-yellow-600'
                 }`}>
                   {status === 'healthy' ? 'Healthy' : status === 'unhealthy' ? 'Unhealthy' : 'Checking...'}
@@ -242,34 +265,22 @@ export default function Home() {
             buttonLabel="Open Chat"
           />
 
-          <ServiceCard
-            title="Documents"
-            description="Upload and manage documents for RAG indexing and retrieval."
-            href="/documents"
-            iconBg="bg-green-50 dark:bg-green-900/30"
-            iconColor="text-hiplink-success dark:text-green-400"
-            buttonVariant="success"
-            icon={
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            }
-            buttonLabel="Manage Documents"
-          />
-
-          <ServiceCard
-            title="Authentication"
-            description={`Current user: ${devUser || 'Not authenticated'}`}
-            href="/auth"
-            iconBg="bg-purple-50 dark:bg-purple-900/30"
-            iconColor="text-purple-600 dark:text-purple-400"
-            icon={
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-            }
-            buttonLabel={devUser ? 'Switch User' : 'Sign In (Dev)'}
-          />
+          {perms.canViewDocuments && (
+            <ServiceCard
+              title="Documents"
+              description="Upload and manage documents for RAG indexing and retrieval."
+              href="/documents"
+              iconBg="bg-green-50 dark:bg-green-900/30"
+              iconColor="text-hiplink-success dark:text-green-400"
+              buttonVariant="success"
+              icon={
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              }
+              buttonLabel="Manage Documents"
+            />
+          )}
 
           {isAdmin && (
             <>
@@ -305,5 +316,13 @@ export default function Home() {
         </div>
       </div>
     </main>
+  )
+}
+
+export default function Home() {
+  return (
+    <ProtectedRoute>
+      <DashboardContent />
+    </ProtectedRoute>
   )
 }

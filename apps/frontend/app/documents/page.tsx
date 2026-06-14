@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useAuthFetch } from '@/hooks/useApi'
 import { useAuth } from '@/contexts/AuthContext'
 import { normalizePermissions, type UserRole, type PermissionFlags } from '@/lib/permissions'
+import ProtectedRoute from '@/components/ProtectedRoute'
 
 interface Document {
   id: string
@@ -24,6 +25,14 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DocumentsPage() {
+  return (
+    <ProtectedRoute requirePermission="canViewDocuments">
+      <DocumentsPageInner />
+    </ProtectedRoute>
+  )
+}
+
+function DocumentsPageInner() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

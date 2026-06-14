@@ -9,6 +9,7 @@ import { useAuthFetch } from '@/hooks/useApi'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import Header from '@/components/Header'
+import ProtectedRoute from '@/components/ProtectedRoute'
 
 interface Citation {
   index: number
@@ -60,6 +61,14 @@ const examplePrompts = [
 ]
 
 export default function ChatPage() {
+  return (
+    <ProtectedRoute>
+      <ChatPageInner />
+    </ProtectedRoute>
+  )
+}
+
+function ChatPageInner() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)

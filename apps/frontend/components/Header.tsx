@@ -5,7 +5,7 @@ import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
-import { normalizePermissions, type UserRole, type PermissionFlags } from '@/lib/permissions'
+import { normalizePermissions, type PermissionFlags } from '@/lib/permissions'
 
 interface NavLinkProps {
   href: string
@@ -51,15 +51,15 @@ function ThemeToggle() {
   )
 }
 
-function RoleBadge({ role }: { role: UserRole }) {
-  const colors = {
+function RoleBadge({ role }: { role: string }) {
+  const colors: Record<string, string> = {
     admin: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400',
     user: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
     viewer: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
   }
 
   return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[role]}`}>
+    <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[role] ?? colors.viewer}`}>
       {role}
     </span>
   )
@@ -74,8 +74,9 @@ export default function Header({ showAdminNav = false }: HeaderProps) {
   const { auth, user, logout } = useAuth()
 
   // Determine effective role and permissions
-  const rawRole = (auth?.role ?? 'viewer') as UserRole
+  const rawRole = (auth?.role ?? 'viewer') as string
   const perms: PermissionFlags = normalizePermissions(auth?.permissions, rawRole)
+  const isAuthenticated = auth?.authenticated === true
 
   const isActive = (path: string) => {
     if (path === '/chat') return pathname === '/chat'
@@ -84,6 +85,8 @@ export default function Header({ showAdminNav = false }: HeaderProps) {
     if (path === '/admin/evaluations') return pathname === '/admin/evaluations'
     return pathname === path
   }
+
+  const displayName = user?.full_name || user?.username || user?.email || auth?.username || ''
 
   return (
     <header className="brand-header flex-shrink-0">
@@ -101,29 +104,29 @@ export default function Header({ showAdminNav = false }: HeaderProps) {
               <span className="text-lg font-semibold text-hiplink-dark dark:text-dark-text">HipLink AI Assistant</span>
             </Link>
           </div>
-          <nav className="flex items-center gap-1">
-            {/* Chat - available to all authenticated roles */}
-            <NavLink href="/chat" isActive={isActive('/chat')}>Chat</NavLink>
+          {isAuthenticated && (
+            <nav className="flex items-center gap-1">
+              {/* Chat - available to all authenticated roles */}
+              <NavLink href="/chat" isActive={isActive('/chat')}>Chat</NavLink>
 
-            {/* Documents - available if permission allows */}
-            {perms.canViewDocuments && (
-              <NavLink href="/documents" isActive={isActive('/documents')}>Documents</NavLink>
-            )}
+              {/* Documents - available if permission allows */}
+              {perms.canViewDocuments && (
+                <NavLink href="/documents" isActive={isActive('/documents')}>Documents</NavLink>
+              )}
 
-            {/* Admin navigation - only for admin users via explicit prop */}
-            {showAdminNav && perms.canAccessObservability && (
-              <>
-                <NavLink href="/admin/observability" isActive={isActive('/admin/observability')}>Observability</NavLink>
-                <NavLink href="/admin/evaluations" isActive={isActive('/admin/evaluations')}>Evaluations</NavLink>
-              </>
-            )}
+              {/* Admin navigation - only for admin users via explicit prop */}
+              {showAdminNav && perms.canAccessObservability && (
+                <>
+                  <NavLink href="/admin/observability" isActive={isActive('/admin/observability')}>Observability</NavLink>
+                  <NavLink href="/admin/evaluations" isActive={isActive('/admin/evaluations')}>Evaluations</NavLink>
+                </>
+              )}
 
-            <div className="ml-2 flex items-center space-x-2">
-              <ThemeToggle />
-              {auth?.authenticated ? (
+              <div className="ml-2 flex items-center space-x-2">
+                <ThemeToggle />
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-hiplink-dark dark:text-dark-text">
-                    {user?.full_name || user?.username || auth?.username || 'User'}
+                    {displayName}
                   </span>
                   <RoleBadge role={rawRole} />
                   <button
@@ -133,16 +136,20 @@ export default function Header({ showAdminNav = false }: HeaderProps) {
                     Logout
                   </button>
                 </div>
-              ) : (
-                <Link
-                  href="/auth"
-                  className="px-3 py-2 rounded-lg text-sm bg-hiplink-blue text-white hover:bg-hiplink-blue-dark transition-colors"
-                >
-                  Sign In
-                </Link>
-              )}
+              </div>
+            </nav>
+          )}
+          {!isAuthenticated && (
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <Link
+                href="/auth"
+                className="px-4 py-2 rounded-lg text-sm bg-hiplink-blue text-white hover:bg-hiplink-blue-dark transition-colors"
+              >
+                Sign In
+              </Link>
             </div>
-          </nav>
+          )}
         </div>
       </div>
     </header>
