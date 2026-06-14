@@ -5,6 +5,8 @@ import io
 import os
 import logging
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Request
+
+from app.security.dependencies import require_permission
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.minio_client import get_minio_client, ensure_bucket_exists
@@ -72,13 +74,13 @@ def upload_document(
     request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("can_upload_documents")),
 ):
     """
     Upload a document, extract text, and auto-index for RAG.
     
     **Authentication Required:** Yes
-    **Roles Allowed:** admin (other roles get 403)
+    **Permission Required:** can_upload_documents
     
     Status flow:
     - "pending" - Initial state after upload
@@ -88,29 +90,6 @@ def upload_document(
     - "indexed" - Fully indexed and ready for RAG retrieval
     - "failed" - Something went wrong (check error message)
     """
-    # Phase 6: Enforce authentication and role-based access
-    if not auth or not auth.is_authenticated:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    if not auth.is_admin():
-        # Log permission denied
-        if HAS_SECURITY:
-            try:
-                audit_logger = get_audit_logger()
-                from app.security.audit import AuditEvent
-                event = AuditEvent(
-                    action=AuditAction.DOCUMENT_UPLOAD,
-                    username=auth.username,
-                    user_id=auth.user_id,
-                    status="failure",
-                    error_message="Permission denied: admin role required",
-                    request_ip=get_client_ip(request),
-                    request_user_agent=request.headers.get("user-agent", "")[:500],
-                )
-                audit_logger.log(event)
-            except Exception:
-                pass  # Don't fail the request if audit logging fails
-        raise HTTPException(status_code=403, detail="Permission denied: admin role required")
     max_size = settings.UPLOAD_MAX_SIZE_MB * 1024 * 1024
     content = file.file.read()
     if len(content) > max_size:
@@ -294,7 +273,10 @@ def upload_document(
     }
 
 @router.get("")
-def list_documents(db: Session = Depends(get_db)):
+def list_documents(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("can_view_documents")),
+):
     docs = db.query(Document).order_by(Document.created_at.desc()).all()
     return [
         {
@@ -315,43 +297,19 @@ def index_document(
     request: Request,
     document_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("can_reindex_documents")),
 ):
     """
     Manually re-index a document that has extracted text but needs chunking/embedding.
     
     **Authentication Required:** Yes
-    **Roles Allowed:** admin (other roles get 403)
+    **Permission Required:** can_reindex_documents
     
     This is useful if:
     - A previous indexing attempt failed
     - The document was uploaded with extraction only (status="extracted")
     - You want to re-chunk with different settings
     """
-    # Phase 6: Enforce authentication and role-based access
-    if not auth or not auth.is_authenticated:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    if not auth.is_admin():
-        # Log permission denied
-        if HAS_SECURITY:
-            try:
-                audit_logger = get_audit_logger()
-                from app.security.audit import AuditEvent
-                event = AuditEvent(
-                    action=AuditAction.DOCUMENT_INDEX,
-                    username=auth.username,
-                    user_id=auth.user_id,
-                    status="failure",
-                    error_message="Permission denied: admin role required",
-                    request_ip=get_client_ip(request),
-                    request_user_agent=request.headers.get("user-agent", "")[:500],
-                    details={"document_id": document_id},
-                )
-                audit_logger.log(event)
-            except Exception:
-                pass  # Don't fail the request if audit logging fails
-        raise HTTPException(status_code=403, detail="Permission denied: admin role required")
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -484,7 +442,7 @@ def delete_document(
     request: Request,
     document_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("can_delete_documents")),
 ):
     """
     Delete a document and all its associated data.
@@ -496,14 +454,8 @@ def delete_document(
     - File from MinIO
 
     **Authentication Required:** Yes
-    **Roles Allowed:** admin
+    **Permission Required:** can_delete_documents
     """
-    if not auth or not auth.is_authenticated:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    if not auth.is_admin():
-        raise HTTPException(status_code=403, detail="Permission denied: admin role required")
-
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -542,7 +494,7 @@ def delete_document(
 def reindex_all_documents(
     request: Request,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("can_reindex_documents")),
 ):
     """
     Re-index all documents with the current embedding provider.
@@ -551,14 +503,8 @@ def reindex_all_documents(
     Use this after changing the embedding provider.
 
     **Authentication Required:** Yes
-    **Roles Allowed:** admin
+    **Permission Required:** can_reindex_documents
     """
-    if not auth or not auth.is_authenticated:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    if not auth.is_admin():
-        raise HTTPException(status_code=403, detail="Permission denied: admin role required")
-
     # Get all indexed documents
     docs = db.query(Document).filter(Document.status == "indexed").all()
 

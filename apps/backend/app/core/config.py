@@ -48,4 +48,15 @@ class Settings(BaseSettings):
     OIDC_CLIENT_ID: str = os.getenv("OIDC_CLIENT_ID", "")
     OIDC_CLIENT_SECRET: str = os.getenv("OIDC_CLIENT_SECRET", "")
 
+    # Phase 12 - Production JWT Authentication & Authorization
+    AUTH_MODE: str = os.getenv("AUTH_MODE", "dev")  # dev | local | oidc
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+
+    # Bootstrap admin user (used only when AUTH_MODE=local and no admin exists)
+    BOOTSTRAP_ADMIN_EMAIL: str = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
+    BOOTSTRAP_ADMIN_USERNAME: str = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "admin")
+    BOOTSTRAP_ADMIN_PASSWORD: str = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+
 settings = Settings()

@@ -11,6 +11,8 @@ from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 
 from app.db.session import get_db
+from app.security.dependencies import require_admin
+from app.security.auth import AuthContext
 from app.schemas.evaluation import (
     EvaluationRunSummary,
     EvaluationResultDetail,
@@ -25,13 +27,6 @@ from app.schemas.evaluation import (
 )
 
 router = APIRouter(prefix="/api", tags=["Evaluation & Observability"])
-
-
-def require_admin(auth) -> bool:
-    """Check if user is admin, raise 403 if not."""
-    if not auth or not auth.get("is_admin", False):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return True
 
 
 def observation_to_summary(obs) -> ObservationSummary:
@@ -61,7 +56,7 @@ def observation_to_summary(obs) -> ObservationSummary:
 @router.get("/admin/observability/summary", response_model=ObservabilitySummary)
 def get_observability_summary(
     days: int = Query(default=7, ge=1, le=90, description="Number of days to look back"),
-    auth: dict = Depends(lambda: {"is_admin": True}),  # Simplified for dev mode
+    auth: AuthContext = Depends(require_admin),  # Simplified for dev mode
     db: Session = Depends(get_db),
 ):
     """
@@ -148,7 +143,7 @@ def get_observability_summary(
 def get_recent_observations(
     limit: int = Query(default=50, ge=1, le=200),
     mode: Optional[str] = None,
-    auth: dict = Depends(lambda: {"is_admin": True}),
+    auth: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -172,7 +167,7 @@ def get_recent_observations(
 @router.get("/admin/observability/blocked", response_model=List[BlockedObservation])
 def get_blocked_observations(
     limit: int = Query(default=50, ge=1, le=200),
-    auth: dict = Depends(lambda: {"is_admin": True}),
+    auth: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -205,7 +200,7 @@ def get_blocked_observations(
 def get_low_confidence_observations(
     limit: int = Query(default=50, ge=1, le=200),
     min_latency: int = Query(default=5000, ge=0, description="Minimum latency in ms"),
-    auth: dict = Depends(lambda: {"is_admin": True}),
+    auth: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -286,7 +281,7 @@ def submit_feedback(
 
 @router.get("/admin/evaluations/latest", response_model=EvaluationLatestResponse)
 def get_latest_evaluation(
-    auth: dict = Depends(lambda: {"is_admin": True}),
+    auth: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -361,7 +356,7 @@ def get_latest_evaluation(
 @router.get("/admin/evaluations/runs", response_model=EvaluationRunsListResponse)
 def get_evaluation_runs(
     limit: int = Query(default=20, ge=1, le=100),
-    auth: dict = Depends(lambda: {"is_admin": True}),
+    auth: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -396,7 +391,7 @@ def get_evaluation_runs(
 @router.get("/admin/evaluations/{run_id}", response_model=EvaluationRunDetail)
 def get_evaluation_run(
     run_id: int,
-    auth: dict = Depends(lambda: {"is_admin": True}),
+    auth: AuthContext = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """
@@ -477,7 +472,7 @@ def get_evaluation_run(
 
 @router.post("/admin/evaluations/run")
 def trigger_evaluation_run(
-    auth: dict = Depends(lambda: {"is_admin": True}),
+    auth: AuthContext = Depends(require_admin),
 ):
     """
     Trigger a new evaluation run.

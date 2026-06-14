@@ -108,3 +108,11 @@ coverage/
 apps/backend/evaluations/results/*.json
 apps/backend/evaluations/results/*.md
 !apps/backend/evaluations/results/.gitkeep
+
+# Local environment / secrets
+.env
+.env.*
+*.env
+*.env.*
+.env-bk
+.env.bak*

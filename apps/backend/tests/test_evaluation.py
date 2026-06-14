@@ -313,13 +313,13 @@ class TestAdminObservabilityEndpoints:
     def test_observability_summary_endpoint_requires_admin(self, client):
         """Test that observability summary requires admin access."""
         response = client.get("/api/admin/observability/summary")
-        # Should return 403 if not admin, or work in dev mode
-        assert response.status_code in [200, 403]
+        # Should return 401 if unauthenticated, 403 if not admin
+        assert response.status_code in [401, 403]
 
     def test_evaluations_latest_endpoint_requires_admin(self, client):
         """Test that evaluations latest requires admin access."""
         response = client.get("/api/admin/evaluations/latest")
-        assert response.status_code in [200, 403]
+        assert response.status_code in [401, 403]
 
     def test_feedback_endpoint_structure(self, client):
         """Test feedback submission endpoint exists."""

@@ -4,7 +4,7 @@ os.environ["LLM_PROVIDER"] = "mock"
 from fastapi.testclient import TestClient
 from app.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Dev-User": "admin_user"})
 
 def test_chat_with_mock_provider_hello():
     response = client.post("/api/chat", json={"message": "hello"})

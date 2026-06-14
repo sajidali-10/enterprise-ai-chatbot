@@ -182,7 +182,7 @@ def test_mock_provider_handles_greeting():
 def test_chat_endpoint_works_with_mock_provider():
     """Chat endpoint works when mock provider is configured."""
     # Mock provider is default in tests
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dev-User": "admin_user"})
     response = client.post("/api/chat", json={"message": "test"})
     assert response.status_code == 200
     data = response.json()
@@ -192,14 +192,14 @@ def test_chat_endpoint_works_with_mock_provider():
 
 def test_chat_endpoint_rejects_empty_message():
     """Chat endpoint validates empty message."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dev-User": "admin_user"})
     response = client.post("/api/chat", json={"message": ""})
     assert response.status_code == 422
 
 
 def test_chat_endpoint_rag_mode():
     """Chat endpoint works in RAG mode."""
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-Dev-User": "admin_user"})
     response = client.post("/api/chat", json={
         "message": "What topics are covered?",
         "mode": "rag"

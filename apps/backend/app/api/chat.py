@@ -6,7 +6,7 @@ Supports authentication and audit logging (Phase 6).
 """
 
 import time
-from fastapi import APIRouter, Query, Request, Depends
+from fastapi import APIRouter, Query, Request, Depends, HTTPException
 from enum import Enum
 from typing import Optional
 
@@ -21,19 +21,36 @@ from app.rag.answer_generator import (
 from app.rag.citations import format_citations, group_citations_by_source
 from app.services.observability import log_chat_observation
 
-# Import security modules for Phase 6
+# Import security modules for Phase 6 / Phase 12
 try:
     from app.security.auth import (
         AuthContext,
         authenticate_request,
         DEV_USER_HEADER,
+        get_role_permissions,
     )
     from app.security.models import UserRole
+    from app.security.dependencies import get_auth_context as _get_auth_context_dep
     HAS_SECURITY = True
 except ImportError:
     HAS_SECURITY = False
     AuthContext = None
     UserRole = None
+
+
+def _require_permission_for_mode(auth: AuthContext, mode: str) -> None:
+    """Raise 403 if auth lacks permission for the requested chat mode."""
+    if not HAS_SECURITY or not auth:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not auth.is_authenticated:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    perms = get_role_permissions(auth.role)
+    if mode == ChatMode.GENERAL_CHAT and not perms["can_use_general_chat"]:
+        raise HTTPException(status_code=403, detail="General Chat is not allowed for this user")
+    if mode == ChatMode.KNOWLEDGE_BASE and not perms["can_use_knowledge_base"]:
+        raise HTTPException(status_code=403, detail="Knowledge Base is not allowed for this user")
+    if mode == ChatMode.DEBUG and not perms["can_use_debug"]:
+        raise HTTPException(status_code=403, detail="Debug mode is not allowed for this user")
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
@@ -66,12 +83,15 @@ def get_auth_context(request: Request) -> Optional[AuthContext]:
     """
     Extract authentication context from request.
     
-    In production, this would validate JWT tokens, sessions, etc.
-    In development, it supports dev user headers.
+    In production, validates JWT tokens.
+    In development, supports dev user headers.
     """
     if not HAS_SECURITY:
         return None
-    return authenticate_request(request)
+    try:
+        return _get_auth_context_dep(request)
+    except Exception:
+        return authenticate_request(request)
 
 
 @router.post("", response_model=ChatResponse)
@@ -115,13 +135,9 @@ def post_chat(
     elif mode == "rag":
         mode = ChatMode.KNOWLEDGE_BASE
     
-    # Check if debug mode is allowed (admin only)
+    # Enforce authentication and mode permissions (Phase 12)
+    _require_permission_for_mode(auth, mode)
     is_debug_mode = mode == ChatMode.DEBUG
-    if is_debug_mode:
-        if not HAS_SECURITY or not auth or not auth.is_authenticated or not auth.is_admin():
-            # Non-admin trying to use debug mode - fall back to knowledge_base
-            mode = ChatMode.KNOWLEDGE_BASE
-            is_debug_mode = False
     
     latency_ms = None
     observation_id = None
@@ -231,15 +247,21 @@ def get_auth_info(request: Request):
     This endpoint is useful for debugging and for the frontend
     to determine what UI to show (admin vs user).
     """
+    from app.core.config import settings
+
     if not HAS_SECURITY:
         return {
             "authenticated": False,
             "username": "anonymous",
             "role": "viewer",
-            "dev_mode_available": False,
+            "user_id": None,
+            "is_admin": False,
+            "dev_mode": False,
+            "permissions": get_role_permissions(UserRole.VIEWER),
         }
     
     auth = authenticate_request(request)
+    perms = get_role_permissions(auth.role)
     
     return {
         "authenticated": auth.is_authenticated,
@@ -247,5 +269,6 @@ def get_auth_info(request: Request):
         "role": auth.role.value if hasattr(auth.role, 'value') else str(auth.role),
         "user_id": auth.user_id,
         "is_admin": auth.is_admin(),
-        "dev_mode": True,  # Dev headers are available
+        "dev_mode": settings.AUTH_MODE == "dev" and settings.DEV_AUTH_ENABLED,
+        "permissions": perms,
     }

@@ -21,6 +21,9 @@ from sqlalchemy.orm import Session
 
 from app.security.models import User, UserRole
 from app.db.session import SessionLocal
+from app.core.config import settings
+from app.security.jwt import decode_token
+from jwt import PyJWTError
 
 
 # Dev mode: Secret header value for local development authentication bypass
@@ -112,6 +115,56 @@ class DevAuthProvider(AuthProviderBase):
         )
 
 
+class JWTAuthProvider(AuthProviderBase):
+    """
+    JWT Bearer token authentication provider.
+
+    Validates Authorization: Bearer <token> header, decodes the JWT,
+    and looks up the user in the database.
+    """
+
+    def authenticate(self, request: Request) -> Optional[AuthContext]:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.lower().startswith("bearer "):
+            return None
+
+        token = auth_header[7:]  # Remove "Bearer " prefix
+        if not token:
+            return None
+
+        if not settings.JWT_SECRET_KEY:
+            return None
+
+        try:
+            payload = decode_token(token)
+        except PyJWTError:
+            return None
+
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+
+        try:
+            user_id = int(user_id_str)
+        except ValueError:
+            return None
+
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or not user.is_active:
+                return None
+            return AuthContext(
+                user_id=user.id,
+                username=user.username,
+                role=user.role if isinstance(user.role, UserRole) else UserRole(user.role),
+                is_authenticated=True,
+                is_external=False,
+            )
+        finally:
+            db.close()
+
+
 class DatabaseAuthProvider(AuthProviderBase):
     """
     Database-backed authentication provider.
@@ -125,8 +178,7 @@ class DatabaseAuthProvider(AuthProviderBase):
         Authenticate using database user lookup.
         This is a placeholder that would verify JWT tokens, sessions, etc.
         """
-        # TODO: Implement JWT/session validation
-        # For now, return None to fall through to dev auth or anonymous
+        # Placeholder — JWT now handled by JWTAuthProvider
         return None
 
 
@@ -171,14 +223,26 @@ def get_auth_provider() -> CompositeAuthProvider:
     """
     Get the configured auth provider composition.
     
-    In production, this would include OIDC/JWT validation.
-    In development, it includes dev header bypass.
+    Order depends on AUTH_MODE:
+    - local: JWT first, then anonymous
+    - dev: dev headers first, then JWT, then anonymous
     """
-    return CompositeAuthProvider([
-        DevAuthProvider(),      # Try dev headers first (local dev)
-        DatabaseAuthProvider(), # Then try DB-backed auth (placeholder)
-        AnonymousAuthProvider(), # Finally fall back to anonymous
-    ])
+    providers: list[AuthProviderBase] = []
+
+    if settings.AUTH_MODE == "dev":
+        providers.append(DevAuthProvider())
+        providers.append(JWTAuthProvider())
+    else:
+        # Default to local auth (JWT-based)
+        providers.append(JWTAuthProvider())
+        # Only include dev auth as last resort if explicitly enabled
+        if settings.DEV_AUTH_ENABLED:
+            providers.append(DevAuthProvider())
+
+    providers.append(DatabaseAuthProvider())
+    providers.append(AnonymousAuthProvider())
+
+    return CompositeAuthProvider(providers)
 
 
 def authenticate_request(request: Request) -> AuthContext:
@@ -262,3 +326,63 @@ def require_role(required_role: UserRole):
             return func(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def get_role_permissions(role: UserRole) -> dict:
+    """Return a permission map for a given user role."""
+    perms = {
+        "can_use_general_chat": False,
+        "can_use_knowledge_base": False,
+        "can_use_debug": False,
+        "can_view_documents": False,
+        "can_upload_documents": False,
+        "can_reindex_documents": False,
+        "can_delete_documents": False,
+        "can_access_observability": False,
+        "can_access_evaluations": False,
+        "can_submit_feedback": False,
+        "can_manage_users": False,
+    }
+    if role == UserRole.ADMIN:
+        perms.update({
+            "can_use_general_chat": True,
+            "can_use_knowledge_base": True,
+            "can_use_debug": True,
+            "can_view_documents": True,
+            "can_upload_documents": True,
+            "can_reindex_documents": True,
+            "can_delete_documents": True,
+            "can_access_observability": True,
+            "can_access_evaluations": True,
+            "can_submit_feedback": True,
+            "can_manage_users": True,
+        })
+    elif role == UserRole.USER:
+        perms.update({
+            "can_use_general_chat": True,
+            "can_use_knowledge_base": True,
+            "can_use_debug": False,
+            "can_view_documents": True,
+            "can_upload_documents": True,
+            "can_reindex_documents": False,
+            "can_delete_documents": False,
+            "can_access_observability": False,
+            "can_access_evaluations": False,
+            "can_submit_feedback": True,
+            "can_manage_users": False,
+        })
+    elif role == UserRole.VIEWER:
+        perms.update({
+            "can_use_general_chat": False,
+            "can_use_knowledge_base": True,
+            "can_use_debug": False,
+            "can_view_documents": True,
+            "can_upload_documents": False,
+            "can_reindex_documents": False,
+            "can_delete_documents": False,
+            "can_access_observability": False,
+            "can_access_evaluations": False,
+            "can_submit_feedback": True,
+            "can_manage_users": False,
+        })
+    return perms

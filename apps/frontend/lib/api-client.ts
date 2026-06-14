@@ -19,11 +19,16 @@ export async function apiRequest<T>(
     ...(fetchOptions.headers as Record<string, string> || {}),
   }
   
-  // Add dev auth header if available and requested
+  // Add JWT Bearer token or dev auth header if available and requested
   if (useAuth) {
-    const devUser = localStorage.getItem('dev_user')
-    if (devUser) {
-      headers['X-Dev-User'] = devUser
+    const token = localStorage.getItem('access_token')
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    } else {
+      const devUser = localStorage.getItem('dev_user')
+      if (devUser) {
+        headers['X-Dev-User'] = devUser
+      }
     }
   }
   

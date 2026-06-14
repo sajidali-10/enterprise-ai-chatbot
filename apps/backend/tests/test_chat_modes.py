@@ -5,15 +5,17 @@ Tests for chat mode behavior.
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
+from app.security.models import UserRole
+
+
+@pytest.fixture
+def client():
+    from app.main import app
+    return TestClient(app, headers={"X-Dev-User": "admin_user"})
 
 
 class TestChatModes:
     """Tests for different chat modes: general_chat, knowledge_base, debug."""
-    
-    @pytest.fixture
-    def client(self):
-        from app.main import app
-        return TestClient(app)
     
     def test_general_chat_no_sources(self, client):
         """General Chat mode should not return citations or sources."""
@@ -48,7 +50,7 @@ class TestChatModes:
     
     def test_knowledge_base_has_sources(self, client):
         """Knowledge Base mode should return citations and grouped sources."""
-        with patch('app.api.chat.generate_answer_with_rag') as mock_generate:
+        with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
             mock_generate.return_value = (
                 "This is a RAG answer.",
                 [{"index": 1, "source_file_name": "doc.pdf", "content_snippet": "Snippet", "relevance_score": 0.8}],
@@ -68,7 +70,7 @@ class TestChatModes:
     
     def test_knowledge_base_legacy_rag_mode(self, client):
         """Legacy 'rag' mode should map to knowledge_base."""
-        with patch('app.api.chat.generate_answer_with_rag') as mock_generate:
+        with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
             mock_generate.return_value = (
                 "RAG answer.",
                 [{"index": 1, "source_file_name": "doc.pdf", "content_snippet": "Snippet", "relevance_score": 0.8}],
@@ -86,7 +88,7 @@ class TestChatModes:
     
     def test_knowledge_base_no_debug_info_default(self, client):
         """Knowledge Base mode without debug flag should not return debug info."""
-        with patch('app.api.chat.generate_answer_with_rag') as mock_generate:
+        with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
             mock_generate.return_value = (
                 "RAG answer.",
                 [{"index": 1, "source_file_name": "doc.pdf", "content_snippet": "Snippet", "relevance_score": 0.8}],
@@ -103,12 +105,13 @@ class TestChatModes:
             assert data.get("debug_info") is None
     
     def test_debug_mode_requires_admin(self, client):
-        """Debug mode should fall back to knowledge_base for non-admin users."""
+        """Debug mode should return 403 for non-admin users."""
         with patch('app.api.chat.HAS_SECURITY', True):
             with patch('app.api.chat.authenticate_request') as mock_auth:
                 mock_auth_context = MagicMock()
                 mock_auth_context.is_authenticated = True
                 mock_auth_context.is_admin.return_value = False
+                mock_auth_context.role = UserRole.USER
                 mock_auth.return_value = mock_auth_context
                 
                 with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
@@ -123,10 +126,8 @@ class TestChatModes:
                         "mode": "debug"
                     }, headers={"X-Dev-User": "regular_user"})
                     
-                    assert response.status_code == 200
-                    # Should get answer but debug_info should be None (fallback to knowledge_base)
-                    data = response.json()
-                    assert data.get("debug_info") is None
+                    assert response.status_code == 403
+                    assert "Debug mode is not allowed" in response.json()["detail"]
     
     def test_debug_mode_returns_debug_info_for_admin(self, client):
         """Debug mode should return debug info for admin users."""
@@ -135,6 +136,7 @@ class TestChatModes:
                 mock_auth_context = MagicMock()
                 mock_auth_context.is_authenticated = True
                 mock_auth_context.is_admin.return_value = True
+                mock_auth_context.role = UserRole.ADMIN
                 mock_auth.return_value = mock_auth_context
                 
                 with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
@@ -179,7 +181,7 @@ class TestKnowledgeBaseModeDisplay:
     
     def test_knowledge_base_hides_debug_details(self, client):
         """Knowledge Base mode should hide debug details (indices) but keep score internal."""
-        with patch('app.api.chat.generate_answer_with_rag') as mock_generate:
+        with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
             mock_generate.return_value = (
                 "Docker images contain base images, application code, and dependencies.",
                 [{"index": 1, "source_file_name": "docker.pdf", "content_snippet": "Base image content", "relevance_score": 0.85}],
@@ -299,7 +301,7 @@ class TestExcerptRelevanceSelection:
 
     def test_sections_used_shows_total_but_excerpts_limited(self, client):
         """sections_used should show total chunks, but excerpts should be limited to best 3."""
-        with patch('app.api.chat.generate_answer_with_rag') as mock_generate:
+        with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
             # More than 3 citations from same source
             mock_generate.return_value = (
                 "Answer text.",

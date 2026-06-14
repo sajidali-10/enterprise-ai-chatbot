@@ -207,14 +207,13 @@ class TestRagPipeline:
     
     def test_chat_endpoint_rag_mode_returns_citations(self):
         """Chat API returns citations in RAG mode."""
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Dev-User": "admin_user"})
         
-        with patch('app.rag.answer_generator.retrieve_chunks_with_settings') as mock_retrieve:
-            mock_retrieve.return_value = (
-                [
-                    {"source_file_name": "policy.pdf", "content": "Our return policy allows 30 days.", "score": 0.95},
-                ],
-                {}
+        with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
+            mock_generate.return_value = (
+                "Our return policy allows 30 days.",
+                [{"index": 1, "source_file_name": "policy.pdf", "content_snippet": "Our return policy allows 30 days.", "relevance_score": 0.95}],
+                {"retrieval_info": "test"}
             )
             
             response = client.post("/api/chat", json={
