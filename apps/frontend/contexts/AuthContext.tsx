@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import { getApiBaseUrl } from '@/lib/api'
 import { normalizePermissions, type PermissionFlags } from '@/lib/permissions'
 
@@ -59,6 +59,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
+/** Timeout for /api/auth/me — fail gracefully if backend is unreachable */
+const ME_TIMEOUT_MS = 8000
+
 function buildAuthInfoFromUser(user: UserInfo): AuthInfo {
   return {
     authenticated: true,
@@ -71,6 +74,18 @@ function buildAuthInfoFromUser(user: UserInfo): AuthInfo {
   }
 }
 
+/** Fetch with a timeout that rejects instead of hanging forever */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = ME_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    return res
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState<AuthInfo | null>(null)
   const [user, setUser] = useState<UserInfo | null>(null)
@@ -79,20 +94,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authMode, setAuthMode] = useState<AuthMode>('local')
   const [devAuthEnabled, setDevAuthEnabled] = useState(false)
   const [devUser, setDevUserState] = useState<string | null>(null)
+  const initRanRef = useRef(false)
 
   // Fetch auth config from backend on mount
   useEffect(() => {
     let cancelled = false
     async function loadConfig() {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/auth/config`)
+        console.debug('[auth] config: loading')
+        const res = await fetchWithTimeout(`${getApiBaseUrl()}/api/auth/config`, {}, 5000)
         if (res.ok) {
           const data = await res.json()
           if (cancelled) return
           setAuthMode(data.auth_mode === 'dev' ? 'dev' : 'local')
           setDevAuthEnabled(Boolean(data.dev_auth_enabled))
+          console.debug('[auth] config: loaded', { authMode: data.auth_mode })
+        } else {
+          console.debug('[auth] config: non-ok response', res.status)
         }
-      } catch {
+      } catch (err) {
+        console.debug('[auth] config: failed, defaulting to local', err)
         // Default to local if config endpoint unreachable
       } finally {
         if (!cancelled) setConfigLoaded(true)
@@ -106,11 +127,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshAuth = useCallback(async () => {
     try {
+      console.debug('[auth] init: started')
       const token = localStorage.getItem('access_token')
+      console.debug('[auth] init: token found', Boolean(token))
 
       if (token) {
         // Try JWT auth first
-        const res = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
+        const res = await fetchWithTimeout(`${getApiBaseUrl()}/api/auth/me`, {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
@@ -123,9 +146,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Clear any stale dev_user when JWT auth succeeds
           localStorage.removeItem('dev_user')
           setDevUserState(null)
-          setLoading(false)
+          console.debug('[auth] init: /me success', { username: data.username, role: data.role })
           return
         }
+        console.debug('[auth] init: /me failed, clearing token', res.status)
         // Token invalid/expired — clear it
         localStorage.removeItem('access_token')
       }
@@ -134,18 +158,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null)
       setAuth(null)
     } catch (err) {
-      console.error('Failed to fetch auth info:', err)
+      console.debug('[auth] init: /me error, clearing token', err)
+      // Backend unreachable or timeout — clear token to avoid infinite loading
+      localStorage.removeItem('access_token')
+      setUser(null)
+      setAuth(null)
     } finally {
+      console.debug('[auth] init: complete, loading=false')
       setLoading(false)
     }
   }, [])
+
+  // Run initial auth validation on mount — this is critical for the session restore flow
+  useEffect(() => {
+    if (initRanRef.current) return
+    initRanRef.current = true
+    refreshAuth()
+  }, [refreshAuth])
 
   const loginWithToken = useCallback(async (token: string) => {
     localStorage.setItem('access_token', token)
     localStorage.removeItem('dev_user')
     setDevUserState(null)
     // Fetch /me with the new token to populate auth state
-    const res = await fetch(`${getApiBaseUrl()}/api/auth/me`, {
+    const res = await fetchWithTimeout(`${getApiBaseUrl()}/api/auth/me`, {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
@@ -184,7 +220,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setDevUserState(null)
     // Notify backend logout (best-effort)
     fetch(`${getApiBaseUrl()}/api/auth/logout`, { method: 'POST' }).catch(() => {})
-    window.location.href = '/auth'
+    if (typeof window !== 'undefined') {
+      window.location.href = '/auth'
+    }
   }, [])
 
   return (
