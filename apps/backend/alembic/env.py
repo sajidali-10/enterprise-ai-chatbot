@@ -24,6 +24,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 from app.db.base import Base
 from app.models.document import Document, DocumentVersion  # noqa: E402
+from app.security.models import User, DocumentPermission, DocumentRoleAccess  # noqa: E402
 
 target_metadata = Base.metadata
 

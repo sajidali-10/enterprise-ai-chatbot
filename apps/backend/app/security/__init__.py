@@ -44,6 +44,7 @@ from app.security.models import (
     User,
     UserRole,
     DocumentPermission,
+    DocumentRoleAccess,
     AuditLog as AuditLogModel,
     AuditAction,
 )
@@ -78,6 +79,7 @@ __all__ = [
     "User",
     "UserRole",
     "DocumentPermission",
+    "DocumentRoleAccess",
     "AuditLogModel",
     "AuditAction",
 ]

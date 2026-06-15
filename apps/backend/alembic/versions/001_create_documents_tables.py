@@ -1,6 +1,6 @@
 """create documents tables
 
-Revision ID: 001_create_documents_tables
+Revision ID: 001
 Revises: 
 Create Date: 2026-06-07 00:00:00.000000
 

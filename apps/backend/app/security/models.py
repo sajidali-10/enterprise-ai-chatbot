@@ -6,7 +6,7 @@ SQLAlchemy models for authentication, authorization, and audit logging.
 
 from sqlalchemy import (
     Column, Integer, String, DateTime, Boolean, ForeignKey, 
-    Enum as SQLEnum, Text, func
+    Enum as SQLEnum, Text, func, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from enum import Enum as PyEnum
@@ -76,6 +76,7 @@ class DocumentPermission(Base):
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
     can_read = Column(Boolean, default=True, nullable=False)
     can_write = Column(Boolean, default=False, nullable=False)
+    access_level = Column(String(20), nullable=False, server_default="view")  # view | manage
     granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -87,6 +88,32 @@ class DocumentPermission(Base):
 
     def __repr__(self):
         return f"<DocumentPermission(user_id={self.user_id}, document_id={self.document_id}, can_read={self.can_read})>"
+
+
+class DocumentRoleAccess(Base):
+    """
+    Role-based document access.
+    
+    Defines default access levels for roles per document.
+    """
+    __tablename__ = "document_role_access"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    role = Column(String(20), nullable=False, index=True)  # admin | user | viewer
+    access_level = Column(String(20), nullable=False, server_default="view")  # view | manage
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # Composite uniqueness: one role-access row per (document, role, access_level)
+    __table_args__ = (
+        UniqueConstraint("document_id", "role", "access_level", name="uq_doc_role_access"),
+    )
+
+    # Relationships
+    document = relationship("Document")
+    grantor = relationship("User", foreign_keys=[granted_by])
 
 
 class AuditLog(Base):

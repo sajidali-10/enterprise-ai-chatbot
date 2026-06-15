@@ -2,18 +2,29 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
+
 class Document(Base):
     __tablename__ = "documents"
+
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String, nullable=False)
     original_name = Column(String, nullable=False)
     mime_type = Column(String, nullable=False)
     size_bytes = Column(Integer, nullable=False)
     status = Column(String, default="pending")
+    # Phase 13: visibility (private | shared | global) and ownership.
+    visibility = Column(String(20), nullable=False, server_default="global")
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # Relationships
     versions = relationship("DocumentVersion", back_populates="document", cascade="all, delete-orphan")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+    # Owner relationship is resolved lazily via string reference to avoid circular imports
+    # (app.security.models.User is imported elsewhere; SQLAlchemy resolves at mapper-config time).
+    owner = relationship("User", foreign_keys=[owner_user_id], lazy="joined")
+
 
 class DocumentVersion(Base):
     __tablename__ = "document_versions"
