@@ -22,6 +22,9 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 import importlib
 _auth_mod = importlib.import_module("app.security.auth")
 _auth_mod.SessionLocal = TestingSessionLocal
+# Also patch the permissions module's SessionLocal so the resolver uses the test DB
+_perms_mod = importlib.import_module("app.security.permissions")
+_perms_mod.SessionLocal = TestingSessionLocal
 
 
 def _create_test_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.USER, is_active: bool = True) -> User:

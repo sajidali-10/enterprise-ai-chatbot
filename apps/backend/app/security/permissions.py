@@ -478,16 +478,23 @@ def check_document_access(
 def filter_documents_by_permission(
     auth: AuthContext,
     document_ids: list[int],
+    db: Optional[Session] = None,
 ) -> list[int]:
-    """Convenience function to filter document IDs by permission. Creates its own DB session."""
+    """Convenience function to filter document IDs by permission.
+
+    Creates its own DB session unless one is provided (used in tests and by
+    request handlers that already have a session open).
+    """
     if auth is None or not getattr(auth, "is_authenticated", False):
         return []
     if _is_admin(auth) or _dev_bypass_active(auth):
         return list(document_ids)
 
-    db = SessionLocal()
+    owns_session = db is None
+    session = db or SessionLocal()
     try:
-        checker = PermissionChecker(db)
+        checker = PermissionChecker(session)
         return checker.filter_accessible_documents(auth, document_ids)
     finally:
-        db.close()
+        if owns_session:
+            session.close()
