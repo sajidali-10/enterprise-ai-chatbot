@@ -4,7 +4,8 @@ import hashlib
 import io
 import os
 import logging
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Request
+from typing import Optional
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, Request
 
 from app.security.dependencies import require_permission
 from sqlalchemy.orm import Session
@@ -20,7 +21,7 @@ from app.services.vector.qdrant_service import ensure_collection, upsert_chunks
 # Import security modules for Phase 6
 try:
     from app.security.auth import AuthContext, authenticate_request
-    from app.security.models import UserRole, AuditAction
+    from app.security.models import UserRole, AuditAction, User
     from app.security.audit import get_audit_logger
     HAS_SECURITY = True
 except ImportError:
@@ -73,15 +74,26 @@ def _ext_from_filename(filename: str) -> str:
 def upload_document(
     request: Request,
     file: UploadFile = File(...),
+    visibility: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("can_upload_documents")),
 ):
     """
     Upload a document, extract text, and auto-index for RAG.
-    
+
     **Authentication Required:** Yes
     **Permission Required:** can_upload_documents
-    
+
+    Phase 13 visibility rules:
+      - Admin upload defaults to visibility='global'. The optional form field
+        'visibility' (private|shared|global) overrides the default.
+      - Regular user upload defaults to visibility='private'. The 'visibility'
+        form field is IGNORED for non-admins to enforce least-privilege.
+      - Viewer upload is blocked at the can_upload_documents permission layer
+        (viewer role does not have this permission; returns 403).
+
+    The document's owner_user_id is set to the current authenticated user.
+
     Status flow:
     - "pending" - Initial state after upload
     - "extracting" - Text extraction in progress
@@ -113,12 +125,28 @@ def upload_document(
     )
     
     # Create document with pending status
+    # Phase 13: capture owner_user_id and apply role-aware visibility default.
+    is_admin = bool(getattr(auth, "is_admin", lambda: False)())
+    if is_admin:
+        # Admin: default to 'global', allow override via form field.
+        chosen_visibility = (visibility or "global").lower()
+    else:
+        # Regular user: ALWAYS private (ignore any client-supplied visibility).
+        chosen_visibility = "private"
+    if chosen_visibility not in ("private", "shared", "global"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid visibility '{chosen_visibility}'. Must be one of: private, shared, global.",
+        )
+
     doc = Document(
         filename=storage_key,
         original_name=file.filename,
         mime_type=mime_type,
         size_bytes=len(content),
         status="pending",
+        visibility=chosen_visibility,
+        owner_user_id=auth.user_id,
     )
     db.add(doc)
     db.commit()
@@ -268,6 +296,8 @@ def upload_document(
         "mime_type": doc.mime_type,
         "size_bytes": doc.size_bytes,
         "status": doc.status,
+        "visibility": doc.visibility,
+        "owner_user_id": doc.owner_user_id,
         "storage_key": storage_key,
         "chunks_created": len(chunks) if 'chunks' in dir() else 0,
     }
@@ -277,7 +307,33 @@ def list_documents(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("can_view_documents")),
 ):
-    docs = db.query(Document).order_by(Document.created_at.desc()).all()
+    """
+    List documents the caller is authorized to view.
+
+    Visibility rules (Phase 13):
+      - Admin: sees every document.
+      - User: sees global + owned + user-shared + role-shared docs.
+      - Viewer: sees global + user-shared + role-shared docs.
+
+    Each payload item now includes `visibility`, `owner_user_id`, and
+    `owner_username` so the frontend can render badges and the access panel.
+    """
+    # Resolve the set of document IDs the caller can access.
+    from app.security.permissions import get_accessible_document_ids
+    accessible_ids = set(get_accessible_document_ids(auth, db=db))
+
+    if not accessible_ids:
+        return []
+
+    # Pull only the authorized docs, with owner joined in a single query.
+    rows = (
+        db.query(Document, User.username)
+        .outerjoin(User, Document.owner_user_id == User.id)
+        .filter(Document.id.in_(accessible_ids))
+        .order_by(Document.created_at.desc())
+        .all()
+    )
+
     return [
         {
             "id": d.id,
@@ -287,8 +343,11 @@ def list_documents(
             "status": d.status,
             "chunk_count": len(d.chunks) if d.chunks else 0,
             "created_at": d.created_at.isoformat() if d.created_at else None,
+            "visibility": d.visibility,
+            "owner_user_id": d.owner_user_id,
+            "owner_username": owner_username,
         }
-        for d in docs
+        for d, owner_username in rows
     ]
 
 
@@ -301,19 +360,33 @@ def index_document(
 ):
     """
     Manually re-index a document that has extracted text but needs chunking/embedding.
-    
+
     **Authentication Required:** Yes
-    **Permission Required:** can_reindex_documents
-    
+    **Permission Required:** can_reindex_documents (overall) + Phase 13 per-doc manage.
+
+    Phase 13: same per-doc manage check as delete_document. The caller must
+    satisfy ``can_manage_document(auth, document_id)``.
+
     This is useful if:
     - A previous indexing attempt failed
     - The document was uploaded with extraction only (status="extracted")
     - You want to re-chunk with different settings
     """
+    from app.security.permissions import can_manage_document, can_access_document
+
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
+
+    # Phase 13: enforce per-doc manage permission (404 to avoid enumeration when caller can't view).
+    if not can_manage_document(auth, document_id, db=db):
+        if not can_access_document(auth, document_id, db=db):
+            raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to reindex this document",
+        )
+
     # Get latest version
     latest_version = db.query(DocumentVersion).filter(
         DocumentVersion.document_id == document_id
@@ -454,11 +527,34 @@ def delete_document(
     - File from MinIO
 
     **Authentication Required:** Yes
-    **Permission Required:** can_delete_documents
+    **Permission Required:** can_delete_documents (overall) + Phase 13 per-doc manage.
+
+    Phase 13: in addition to the role-level permission, the caller must satisfy
+    ``can_manage_document(auth, document_id)``:
+      - admin (any) → always allowed
+      - owner (owner_user_id == auth.user_id) → allowed
+      - user-share with access_level='manage' → allowed
+      - role-share with access_level='manage' → allowed
+      - otherwise → 403
+
+    The document is hidden behind a 404 (not 403) when the caller can neither view
+    nor manage it, to avoid enumeration of private document IDs.
     """
+    from app.security.permissions import can_manage_document, can_access_document
+
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # Phase 13: enforce per-doc manage permission.
+    if not can_manage_document(auth, document_id, db=db):
+        # If the caller can't even view this doc, return 404 to avoid enumeration.
+        if not can_access_document(auth, document_id, db=db):
+            raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to delete this document",
+        )
 
     # Get storage key before deleting
     storage_key = doc.filename

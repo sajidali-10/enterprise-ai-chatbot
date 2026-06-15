@@ -26,6 +26,7 @@ class AuditAction(str, PyEnum):
     DOCUMENT_UPLOAD = "document_upload"
     DOCUMENT_INDEX = "document_index"
     DOCUMENT_DELETE = "document_delete"
+    DOCUMENT_ACCESS_CHANGE = "document_access_change"
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
     PERMISSION_GRANT = "permission_grant"
