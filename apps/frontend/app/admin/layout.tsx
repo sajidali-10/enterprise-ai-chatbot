@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { normalizePermissions } from '@/lib/permissions'
-import AdminHeader from '@/components/AdminHeader'
+import AppHeader from '@/components/AppHeader'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
 export default function AdminLayout({
@@ -39,7 +39,7 @@ export default function AdminLayout({
   return (
     <ProtectedRoute requirePermission="canAccessObservability">
       <div className="min-h-screen bg-hiplink-background dark:bg-dark-bg flex flex-col">
-        <AdminHeader />
+        <AppHeader />
         <div className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
           {children}
         </div>

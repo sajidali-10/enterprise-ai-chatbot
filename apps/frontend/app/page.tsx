@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useAuth } from '@/contexts/AuthContext'
-import { useTheme } from '@/contexts/ThemeContext'
 import { getApiBaseUrl } from '@/lib/api'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import AppHeader from '@/components/AppHeader'
 import { normalizePermissions, type PermissionFlags } from '@/lib/permissions'
 
 interface HealthStatus {
@@ -51,28 +51,6 @@ function ServiceCard({ title, description, href, icon, iconBg, iconColor, button
   )
 }
 
-function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme()
-
-  return (
-    <button
-      onClick={toggleTheme}
-      className="p-2 rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted transition-colors"
-      title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-    >
-      {theme === 'light' ? (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-        </svg>
-      ) : (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      )}
-    </button>
-  )
-}
-
 function DashboardContent() {
   const [health, setHealth] = useState<{ status: string; service: string } | null>(null)
   const [healthStatus, setHealthStatus] = useState<HealthStatus>({
@@ -83,7 +61,7 @@ function DashboardContent() {
     minio: 'unknown',
   })
   const [error, setError] = useState<string | null>(null)
-  const { auth, user, logout, authMode } = useAuth()
+  const { auth } = useAuth()
   const rawRole = (auth?.role ?? 'viewer') as string
   const perms: PermissionFlags = normalizePermissions(auth?.permissions, rawRole)
 
@@ -121,76 +99,11 @@ function DashboardContent() {
     }))
   }
 
-  const displayName = user?.full_name || user?.username || user?.email || auth?.username || ''
   const isAdmin = perms.canAccessObservability
 
   return (
     <main className="min-h-screen">
-      {/* Navigation Bar */}
-      <nav className="brand-header">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Image
-                src="/hiplink-logo.png"
-                alt="HipLink"
-                width={40}
-                height={40}
-                className="object-contain"
-              />
-              <div>
-                <h1 className="text-xl font-bold text-hiplink-dark dark:text-dark-text">HipLink AI Assistant</h1>
-                <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim">Enterprise Knowledge Assistant</p>
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Link href="/chat" className="px-4 py-2 text-sm font-medium rounded-lg bg-hiplink-blue text-white hover:bg-hiplink-blue-dark transition-colors">
-                Chat
-              </Link>
-              {perms.canViewDocuments && (
-                <Link href="/documents" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted transition-colors">
-                  Documents
-                </Link>
-              )}
-              {isAdmin && (
-                <>
-                  <Link href="/admin/observability" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted transition-colors">
-                    Observability
-                  </Link>
-                  <Link href="/admin/evaluations" className="px-4 py-2 text-sm font-medium rounded-lg text-hiplink-secondary hover:text-hiplink-blue hover:bg-blue-50 dark:hover:bg-dark-elevated dark:text-dark-text-muted transition-colors">
-                    Evaluations
-                  </Link>
-                </>
-              )}
-              <div className="ml-2 flex items-center space-x-2">
-                <ThemeToggle />
-                {auth?.authenticated && (
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm text-hiplink-dark dark:text-dark-text">
-                      {displayName}
-                    </span>
-                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                      rawRole === 'admin'
-                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400'
-                        : rawRole === 'user'
-                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                    }`}>
-                      {rawRole}
-                    </span>
-                    <button
-                      onClick={logout}
-                      className="px-3 py-1.5 rounded-lg text-sm bg-gray-100 dark:bg-dark-elevated text-hiplink-secondary dark:text-dark-text-muted hover:bg-gray-200 dark:hover:bg-dark-border transition-colors"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <AppHeader />
 
       {/* Main Content */}
       <div className="max-w-6xl mx-auto px-4 py-10">

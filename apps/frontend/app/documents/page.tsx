@@ -6,6 +6,7 @@ import { useAuthFetch } from '@/hooks/useApi'
 import { useAuth } from '@/contexts/AuthContext'
 import { normalizePermissions, type UserRole, type PermissionFlags } from '@/lib/permissions'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import AppHeader from '@/components/AppHeader'
 
 interface Document {
   id: string
@@ -121,7 +122,9 @@ function DocumentsPageInner() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-8">
+    <div className="min-h-screen bg-hiplink-background dark:bg-dark-bg flex flex-col">
+      <AppHeader />
+      <main className="flex flex-1 flex-col items-center p-8">
       <div className="w-full max-w-5xl">
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -368,14 +371,8 @@ function DocumentsPageInner() {
             )}
           </div>
         )}
-
-        <Link
-          href="/chat"
-          className="block mt-6 text-center text-hiplink-blue dark:text-sky-400 hover:text-hiplink-blue-dark dark:hover:text-sky-300 font-medium"
-        >
-          ← Back to Chat
-        </Link>
       </div>
-    </main>
+      </main>
+    </div>
   )
 }
