@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { normalizePermissions, type UserRole, type PermissionFlags } from '@/lib/permissions'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AppHeader from '@/components/AppHeader'
+import AccessPanel from '@/components/AccessPanel'
 
 interface Document {
   id: string
@@ -15,6 +16,47 @@ interface Document {
   size_bytes: number
   status: string
   created_at: string
+  // Phase 13
+  visibility: 'private' | 'shared' | 'global'
+  owner_user_id: number | null
+  owner_username: string | null
+  can_manage?: boolean
+}
+
+function VisibilityBadge({ visibility, ownedByMe }: { visibility: string; ownedByMe: boolean }) {
+  if (ownedByMe) {
+    return (
+      <span className="inline-flex px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
+        Owned by me
+      </span>
+    )
+  }
+  switch (visibility) {
+    case 'global':
+      return (
+        <span className="inline-flex px-2 py-0.5 text-xs font-semibold rounded-full bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400">
+          Global
+        </span>
+      )
+    case 'shared':
+      return (
+        <span className="inline-flex px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+          Shared
+        </span>
+      )
+    case 'private':
+      return (
+        <span className="inline-flex px-2 py-0.5 text-xs font-semibold rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+          Private
+        </span>
+      )
+    default:
+      return (
+        <span className="inline-flex px-2 py-0.5 text-xs font-semibold rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+          {visibility}
+        </span>
+      )
+  }
 }
 
 function formatBytes(bytes: number): string {
@@ -35,6 +77,7 @@ export default function DocumentsPage() {
 
 function DocumentsPageInner() {
   const [documents, setDocuments] = useState<Document[]>([])
+  const [accessPanelDoc, setAccessPanelDoc] = useState<Document | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -297,6 +340,12 @@ function DocumentsPageInner() {
                         Status
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-dim uppercase tracking-wider">
+                        Visibility
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-dim uppercase tracking-wider">
+                        Owner
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-dark-text-dim uppercase tracking-wider">
                         Created
                       </th>
                       {perms.canDeleteDocuments && (
@@ -304,10 +353,17 @@ function DocumentsPageInner() {
                           Actions
                         </th>
                       )}
+                      {perms.canManageUsers && (
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-dark-text-dim uppercase tracking-wider">
+                          Access
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="bg-white dark:bg-dark-card divide-y divide-gray-200 dark:divide-dark-border">
-                    {documents.map((doc) => (
+                    {documents.map((doc) => {
+                      const ownedByMe = doc.owner_user_id != null && doc.owner_user_id === auth?.user_id
+                      return (
                       <tr key={doc.id} className="hover:bg-gray-50 dark:hover:bg-dark-elevated transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-hiplink-dark dark:text-dark-text">
@@ -338,11 +394,23 @@ function DocumentsPageInner() {
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
+                          <VisibilityBadge visibility={doc.visibility} ownedByMe={ownedByMe} />
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-hiplink-secondary dark:text-dark-text-dim">
+                            {doc.owner_username ? (
+                              <span className="font-mono text-xs">{doc.owner_username}</span>
+                            ) : (
+                              <span className="italic text-gray-400 dark:text-dark-text-dim">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-hiplink-secondary dark:text-dark-text-dim">
                             {new Date(doc.created_at).toLocaleString()}
                           </div>
                         </td>
-                        {perms.canDeleteDocuments && (
+                        {perms.canDeleteDocuments && doc.can_manage && (
                           <td className="px-6 py-4 whitespace-nowrap text-right">
                             <button
                               onClick={() => handleDelete(doc.id, doc.original_name)}
@@ -363,8 +431,23 @@ function DocumentsPageInner() {
                             </button>
                           </td>
                         )}
+                        {perms.canManageUsers && (
+                          <td className="px-6 py-4 whitespace-nowrap text-right">
+                            <button
+                              onClick={() => setAccessPanelDoc(doc)}
+                              data-testid={`access-button-${doc.id}`}
+                              className="text-hiplink-blue dark:text-sky-400 hover:text-hiplink-blue-dark dark:hover:text-sky-300 font-medium text-sm disabled:opacity-50 flex items-center gap-1 ml-auto"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                              </svg>
+                              Access
+                            </button>
+                          </td>
+                        )}
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -373,6 +456,16 @@ function DocumentsPageInner() {
         )}
       </div>
       </main>
+
+      {accessPanelDoc && perms.canManageUsers && (
+        <AccessPanel
+          documentId={Number(accessPanelDoc.id)}
+          documentName={accessPanelDoc.original_name}
+          token={typeof window !== 'undefined' ? localStorage.getItem('access_token') || '' : ''}
+          onClose={() => setAccessPanelDoc(null)}
+          onSaved={() => fetchDocuments()}
+        />
+      )}
     </div>
   )
 }

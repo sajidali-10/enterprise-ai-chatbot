@@ -319,7 +319,7 @@ def list_documents(
     `owner_username` so the frontend can render badges and the access panel.
     """
     # Resolve the set of document IDs the caller can access.
-    from app.security.permissions import get_accessible_document_ids
+    from app.security.permissions import get_accessible_document_ids, can_manage_document
     accessible_ids = set(get_accessible_document_ids(auth, db=db))
 
     if not accessible_ids:
@@ -346,6 +346,10 @@ def list_documents(
             "visibility": d.visibility,
             "owner_user_id": d.owner_user_id,
             "owner_username": owner_username,
+            # Per-doc manage flag so the UI can hide Delete/Reindex for rows
+            # the caller can't actually manage (even if can_delete_documents /
+            # can_reindex_documents are true at the role level).
+            "can_manage": can_manage_document(auth, d.id, db=db),
         }
         for d, owner_username in rows
     ]
