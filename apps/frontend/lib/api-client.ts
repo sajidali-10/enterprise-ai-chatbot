@@ -40,6 +40,14 @@ export async function apiRequest<T>(
   })
   
   if (!response.ok) {
+    if (response.status === 401) {
+      // Token expired or invalidated — clear and redirect to login
+      localStorage.removeItem('access_token')
+      if (typeof window !== 'undefined') {
+        window.location.href = '/auth'
+      }
+      throw new Error('Session expired. Please log in again.')
+    }
     const error = await response.json().catch(() => ({ detail: 'Request failed' }))
     throw new Error(error.detail || `HTTP ${response.status}`)
   }

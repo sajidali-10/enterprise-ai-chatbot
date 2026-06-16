@@ -17,6 +17,7 @@ def create_access_token(
     subject: str,
     extra_claims: Optional[dict[str, Any]] = None,
     expires_delta: Optional[timedelta] = None,
+    token_version: Optional[int] = None,
 ) -> str:
     """
     Create a JWT access token.
@@ -25,6 +26,7 @@ def create_access_token(
         subject: The subject claim (typically user_id as string).
         extra_claims: Additional claims to include in the payload.
         expires_delta: Override default token expiry.
+        token_version: User's current token_version for session invalidation.
 
     Returns:
         Encoded JWT string.
@@ -39,6 +41,8 @@ def create_access_token(
         "iat": datetime.now(timezone.utc),
         "type": "access",
     }
+    if token_version is not None:
+        payload["tv"] = token_version
     if extra_claims:
         payload.update(extra_claims)
 

@@ -52,7 +52,7 @@ def _login(client, username_or_email, password) -> str:
 
 @pytest.fixture
 def admin_user(db_session):
-    return _make_user(db_session, "admin1", "admin1@test.com", "adminpass123", role=UserRole.ADMIN)
+    return _make_user(db_session, "admin1", "admin1@test.com", "AdminPass123!", role=UserRole.ADMIN)
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def viewer_user(db_session):
 @pytest.fixture
 def admin_client(client, admin_user, db_session):
     """Separate TestClient with admin JWT headers — shares DB session via dependency overrides."""
-    token = _login(client, "admin1", "adminpass123")
+    token = _login(client, "admin1", "AdminPass123!")
     # Ensure dependency overrides are set (client fixture already set them, but be safe)
     from app.db.session import get_db
     def override_get_db():
@@ -128,7 +128,7 @@ class TestAuthorization:
 
     def test_unauthenticated_create_returns_401(self, client):
         res = client.post("/api/admin/users", json={
-            "username": "x", "email": "x@x.com", "password": "longenough123"
+            "username": "x", "email": "x@x.com", "password": "LongEnough123!"
         })
         assert res.status_code == 401
 
@@ -138,7 +138,7 @@ class TestAuthorization:
 
     def test_regular_user_create_returns_403(self, user_client):
         res = user_client.post("/api/admin/users", json={
-            "username": "x", "email": "x@x.com", "password": "longenough123"
+            "username": "x", "email": "x@x.com", "password": "LongEnough123!"
         })
         assert res.status_code == 403
 
@@ -148,7 +148,7 @@ class TestAuthorization:
 
     def test_viewer_create_returns_403(self, viewer_client):
         res = viewer_client.post("/api/admin/users", json={
-            "username": "x", "email": "x@x.com", "password": "longenough123"
+            "username": "x", "email": "x@x.com", "password": "LongEnough123!"
         })
         assert res.status_code == 403
 
@@ -156,11 +156,11 @@ class TestAuthorization:
         # Deactivate admin directly in DB
         admin_user.is_active = False
         db_session.commit()
-        token = _login.__wrapped__(client, "admin1", "adminpass123") if False else None
+        token = _login.__wrapped__(client, "admin1", "AdminPass123!") if False else None
         # Login should fail for inactive user
         res = client.post("/api/auth/login", json={
             "username_or_email": "admin1",
-            "password": "adminpass123",
+            "password": "AdminPass123!",
         })
         assert res.status_code == 401
 
@@ -207,7 +207,7 @@ class TestCreateUser:
         res = admin_client.post("/api/admin/users", json={
             "username": "newuser",
             "email": "newuser@test.com",
-            "password": "validpass123",
+            "password": "ValidPass123!",
             "full_name": "New User",
             "role": "user",
         })
@@ -223,7 +223,7 @@ class TestCreateUser:
         res = admin_client.post("/api/admin/users", json={
             "username": "newviewer",
             "email": "newviewer@test.com",
-            "password": "validpass123",
+            "password": "ValidPass123!",
             "role": "viewer",
         })
         assert res.status_code == 201
@@ -233,7 +233,7 @@ class TestCreateUser:
         res = admin_client.post("/api/admin/users", json={
             "username": "newadmin",
             "email": "newadmin@test.com",
-            "password": "validpass123",
+            "password": "ValidPass123!",
             "role": "admin",
         })
         assert res.status_code == 201
@@ -243,20 +243,20 @@ class TestCreateUser:
         admin_client.post("/api/admin/users", json={
             "username": "hashcheck",
             "email": "hashcheck@test.com",
-            "password": "plaintext_password_123",
+            "password": "Plain_Pass123!",
             "role": "user",
         })
         user = db_session.query(User).filter(User.username == "hashcheck").first()
         assert user is not None
-        assert user.hashed_password != "plaintext_password_123"
+        assert user.hashed_password != "Plain_Pass123!"
         assert user.hashed_password.startswith("$2")
-        assert verify_password("plaintext_password_123", user.hashed_password)
+        assert verify_password("Plain_Pass123!", user.hashed_password)
 
     def test_duplicate_username_rejected(self, admin_client, regular_user):
         res = admin_client.post("/api/admin/users", json={
             "username": "user1",
             "email": "different@test.com",
-            "password": "validpass123",
+            "password": "ValidPass123!",
             "role": "user",
         })
         assert res.status_code == 409
@@ -265,7 +265,7 @@ class TestCreateUser:
         res = admin_client.post("/api/admin/users", json={
             "username": "different",
             "email": "user1@test.com",
-            "password": "validpass123",
+            "password": "ValidPass123!",
             "role": "user",
         })
         assert res.status_code == 409
@@ -283,7 +283,7 @@ class TestCreateUser:
         res = admin_client.post("/api/admin/users", json={
             "username": "bademail",
             "email": "not-an-email",
-            "password": "validpass123",
+            "password": "ValidPass123!",
             "role": "user",
         })
         assert res.status_code == 422
@@ -342,7 +342,7 @@ class TestUpdateUser:
         admin_client.post("/api/admin/users", json={
             "username": "admin2",
             "email": "admin2@test.com",
-            "password": "admin2pass123",
+            "password": "Admin2Pass123!",
             "role": "admin",
         })
         # Now demoting admin1 should succeed (admin2 still active)
@@ -387,15 +387,15 @@ class TestDeactivateUser:
 class TestPasswordReset:
     def test_admin_resets_password(self, admin_client, regular_user, client):
         res = admin_client.post(f"/api/admin/users/{regular_user.id}/reset-password", json={
-            "new_password": "newpassword123",
+            "new_password": "NewPassword123!",
         })
         assert res.status_code == 200
         assert res.json()["success"] is True
-        assert "newpassword123" not in res.text
+        assert "NewPassword123!" not in res.text
 
     def test_user_can_login_with_reset_password(self, admin_client, regular_user, client):
         admin_client.post(f"/api/admin/users/{regular_user.id}/reset-password", json={
-            "new_password": "resetpass123",
+            "new_password": "ResetPass123!",
         })
         # Old password should fail
         old_login = client.post("/api/auth/login", json={
@@ -406,7 +406,7 @@ class TestPasswordReset:
         # New password should work
         new_login = client.post("/api/auth/login", json={
             "username_or_email": "user1",
-            "password": "resetpass123",
+            "password": "ResetPass123!",
         })
         assert new_login.status_code == 200
 
@@ -425,7 +425,7 @@ class TestPasswordReset:
 
     def test_password_reset_nonexistent_user_returns_404(self, admin_client):
         res = admin_client.post("/api/admin/users/99999/reset-password", json={
-            "new_password": "validpass123",
+            "new_password": "ValidPass123!",
         })
         assert res.status_code == 404
 

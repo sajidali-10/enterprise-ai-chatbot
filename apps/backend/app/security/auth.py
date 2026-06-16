@@ -154,6 +154,12 @@ class JWTAuthProvider(AuthProviderBase):
             user = db.query(User).filter(User.id == user_id).first()
             if not user or not user.is_active:
                 return None
+
+            # Check token_version for session invalidation
+            token_version_in_jwt = payload.get("tv")
+            if token_version_in_jwt is not None and token_version_in_jwt != user.token_version:
+                return None
+
             return AuthContext(
                 user_id=user.id,
                 username=user.username,

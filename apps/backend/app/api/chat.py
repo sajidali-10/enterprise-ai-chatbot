@@ -20,6 +20,7 @@ from app.rag.answer_generator import (
 )
 from app.rag.citations import format_citations, group_citations_by_source
 from app.services.observability import log_chat_observation
+from app.core.rate_limit import rate_limit
 
 # Import security modules for Phase 6 / Phase 12
 try:
@@ -101,6 +102,7 @@ def post_chat(
     use_hybrid: bool = Query(default=True, description="Use hybrid retrieval (vector + keyword) for RAG"),
     debug: bool = Query(default=False, description="Return debug info about retrieval scores"),
     auth: Optional[AuthContext] = Depends(get_auth_context),
+    _=Depends(rate_limit(max_requests=30, window=60)),
 ) -> ChatResponse:
     """
     Process a chat message and return a response.

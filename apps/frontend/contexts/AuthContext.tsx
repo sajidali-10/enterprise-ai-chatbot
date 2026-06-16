@@ -152,6 +152,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.debug('[auth] init: /me failed, clearing token', res.status)
         // Token invalid/expired — clear it
         localStorage.removeItem('access_token')
+        if (res.status === 401) {
+          window.location.href = '/auth'
+        }
       }
 
       // No valid JWT — clear auth state
@@ -163,6 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('access_token')
       setUser(null)
       setAuth(null)
+      window.location.href = '/auth'
     } finally {
       console.debug('[auth] init: complete, loading=false')
       setLoading(false)
@@ -222,6 +226,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetch(`${getApiBaseUrl()}/api/auth/logout`, { method: 'POST' }).catch(() => {})
     if (typeof window !== 'undefined') {
       window.location.href = '/auth'
+    }
+  }, [])
+
+  // Global 401 handler — any API call returning 401 triggers logout
+  useEffect(() => {
+    const originalFetch = window.fetch
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args)
+      if (response.status === 401) {
+        // Only handle 401 for API calls, not static assets
+        const url = typeof args[0] === 'string' ? args[0] : args[0].toString()
+        if (url.includes(getApiBaseUrl())) {
+          localStorage.removeItem('access_token')
+          window.location.href = '/auth'
+        }
+      }
+      return response
+    }
+    return () => {
+      window.fetch = originalFetch
     }
   }, [])
 

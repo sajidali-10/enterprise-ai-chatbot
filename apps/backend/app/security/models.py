@@ -21,16 +21,37 @@ class UserRole(str, PyEnum):
 
 
 class AuditAction(str, PyEnum):
+    # Chat / RAG
     CHAT_MESSAGE = "chat_message"
     CHAT_RAG = "chat_rag"
+    RAG_ACCESS_DENIED = "rag_access_denied"
+
+    # Document lifecycle
     DOCUMENT_UPLOAD = "document_upload"
     DOCUMENT_INDEX = "document_index"
+    DOCUMENT_REINDEX = "document_reindex"
     DOCUMENT_DELETE = "document_delete"
     DOCUMENT_ACCESS_CHANGE = "document_access_change"
+
+    # Authentication
     USER_LOGIN = "user_login"
+    LOGIN_SUCCESS = "login_success"
+    LOGIN_FAILURE = "login_failure"
     USER_LOGOUT = "user_logout"
+    PASSWORD_RESET = "password_reset"
+
+    # User management
+    USER_CREATED = "user_created"
+    USER_UPDATED = "user_updated"
+    USER_DEACTIVATED = "user_deactivated"
+    ROLE_CHANGED = "role_changed"
+
+    # Permissions
     PERMISSION_GRANT = "permission_grant"
     PERMISSION_REVOKE = "permission_revoke"
+
+    # Admin / security
+    ADMIN_ACCESS_DENIED = "admin_access_denied"
 
 
 class User(Base):
@@ -51,6 +72,8 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     is_external = Column(Boolean, default=False, nullable=False)  # True for SSO users
     external_id = Column(String(255), nullable=True)  # SSO subject claim
+    # Token version for session invalidation on password reset/deactivation
+    token_version = Column(Integer, default=1, nullable=False)
     last_login = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.minio_client import get_minio_client, ensure_bucket_exists
 from app.core.config import settings
+from app.core.rate_limit import rate_limit
 from app.models.document import Document, DocumentVersion, DocumentChunk
 from app.ingestion.pipeline import process_document, get_parser
 from app.ingestion.chunkers.recursive_chunker import RecursiveChunker
@@ -45,13 +46,60 @@ router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
 logger = logging.getLogger(__name__)
 
+# Allowed MIME types for document uploads
+# PDF, DOCX, TXT, MD, CSV
 ALLOWED_TYPES = {
     "application/pdf",
     "text/plain",
     "text/markdown",
     "text/x-markdown",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/csv",
+    "application/csv",
 }
+
+# Allowed file extensions (for additional security validation)
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".csv"}
+
+
+def _sanitize_filename(filename: str) -> str:
+    """
+    Sanitize a filename to prevent path traversal and unsafe characters.
+
+    - Strips path components (takes basename only)
+    - Removes control characters
+    - Limits length
+    - Returns a safe filename string
+    """
+    import re
+    # Take basename only (prevents path traversal like ../../etc/passwd)
+    safe = os.path.basename(filename)
+    # Remove control characters and potentially dangerous chars
+    safe = re.sub(r'[<>:"|?*\x00-\x1f]', '', safe)
+    # Limit to 255 chars (common filesystem limit)
+    safe = safe[:255]
+    # Strip leading/trailing whitespace and dots
+    safe = safe.strip(' .')
+    if not safe:
+        safe = "unnamed_file"
+    return safe
+
+
+def _validate_filename(filename: str) -> None:
+    """
+    Validate a filename for security issues.
+
+    Raises HTTPException if the filename contains path traversal or is empty.
+    """
+    if not filename or not filename.strip():
+        raise HTTPException(status_code=400, detail="Filename is required")
+    # Check for path traversal attempts
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename: path traversal detected")
+    # Check extension
+    ext = _ext_from_filename(filename).lower()
+    if ext and ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Unsupported file extension: {ext}")
 
 def get_client_ip(request: Request) -> str:
     """Extract client IP from request, handling proxies."""
@@ -77,6 +125,7 @@ def upload_document(
     visibility: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("can_upload_documents")),
+    _=Depends(rate_limit(max_requests=10, window=60)),
 ):
     """
     Upload a document, extract text, and auto-index for RAG.
@@ -107,11 +156,15 @@ def upload_document(
     if len(content) > max_size:
         raise HTTPException(status_code=413, detail="File too large")
     
+    # Validate and sanitize filename
+    _validate_filename(file.filename)
+    safe_original_name = _sanitize_filename(file.filename)
+
     mime_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
     if mime_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported file type")
-    
-    ext = _ext_from_filename(file.filename)
+
+    ext = _ext_from_filename(safe_original_name)
     storage_key = f"{uuid.uuid4().hex}{ext}"
     
     ensure_bucket_exists()
@@ -141,7 +194,7 @@ def upload_document(
 
     doc = Document(
         filename=storage_key,
-        original_name=file.filename,
+        original_name=safe_original_name,
         mime_type=mime_type,
         size_bytes=len(content),
         status="pending",

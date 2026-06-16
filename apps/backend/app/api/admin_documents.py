@@ -21,6 +21,7 @@ from app.models.document import Document
 from app.security.auth import AuthContext
 from app.security.audit import AuditEvent, get_audit_logger
 from app.security.dependencies import require_permission
+from app.core.rate_limit import rate_limit
 from app.security.models import (
     AuditAction,
     DocumentPermission,
@@ -163,6 +164,7 @@ def update_document_access(
     payload: AccessUpdateRequest,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("can_manage_users")),
+    _=Depends(rate_limit(max_requests=20, window=60)),
 ):
     """
     Admin-only: update visibility, ownership, and/or shares in a single transaction.

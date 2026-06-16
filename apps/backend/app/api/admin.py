@@ -29,8 +29,10 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.security.dependencies import require_admin
 from app.security.auth import AuthContext, get_role_permissions
-from app.security.models import User, UserRole
-from app.security.password import hash_password
+from app.security.models import User, UserRole, AuditAction
+from app.security.password import hash_password, validate_password_policy
+from app.security.audit import AuditEvent, get_audit_logger
+from app.core.rate_limit import rate_limit
 from app.schemas.admin import (
     CreateUserRequest,
     MessageResponse,
@@ -150,8 +152,14 @@ def create_user(
     payload: CreateUserRequest,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
+    _=Depends(rate_limit(max_requests=20, window=60)),
 ):
     """Create a new user (admin only). Password is bcrypt-hashed."""
+    # Validate password policy
+    policy_error = validate_password_policy(payload.password)
+    if policy_error:
+        raise HTTPException(status_code=400, detail=policy_error)
+
     username = payload.username.strip()
     email = payload.email.strip().lower()
 
@@ -173,6 +181,21 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Audit log: user created
+    try:
+        audit = get_audit_logger()
+        event = AuditEvent(
+            action=AuditAction.USER_CREATED,
+            username=auth.username,
+            user_id=auth.user_id,
+            status="success",
+            details={"created_user_id": user.id, "created_username": user.username, "role": user.role.value},
+        )
+        audit.log(event)
+    except Exception:
+        pass
+
     return _to_safe_user(user)
 
 
@@ -182,6 +205,7 @@ def update_user(
     payload: UpdateUserRequest,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
+    _=Depends(rate_limit(max_requests=20, window=60)),
 ):
     """Update email / full_name / role / is_active (admin only).
 
@@ -216,9 +240,27 @@ def update_user(
 
     if payload.is_active is not None:
         user.is_active = payload.is_active
+        # Invalidate sessions on deactivation
+        if not payload.is_active:
+            user.token_version += 1
 
     db.commit()
     db.refresh(user)
+
+    # Audit log: user updated
+    try:
+        audit = get_audit_logger()
+        event = AuditEvent(
+            action=AuditAction.USER_UPDATED,
+            username=auth.username,
+            user_id=auth.user_id,
+            status="success",
+            details={"target_user_id": user_id, "target_username": user.username},
+        )
+        audit.log(event)
+    except Exception:
+        pass
+
     return _to_safe_user(user)
 
 
@@ -228,14 +270,36 @@ def reset_password(
     payload: ResetPasswordRequest,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
+    _=Depends(rate_limit(max_requests=20, window=60)),
 ):
     """Reset a user's password (admin only). Returns success without echoing the password."""
+    # Validate password policy
+    policy_error = validate_password_policy(payload.new_password)
+    if policy_error:
+        raise HTTPException(status_code=400, detail=policy_error)
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     user.hashed_password = hash_password(payload.new_password)
+    user.token_version += 1
     db.commit()
+
+    # Audit log: password reset
+    try:
+        audit = get_audit_logger()
+        event = AuditEvent(
+            action=AuditAction.PASSWORD_RESET,
+            username=auth.username,
+            user_id=auth.user_id,
+            status="success",
+            details={"target_user_id": user_id, "target_username": user.username},
+        )
+        audit.log(event)
+    except Exception:
+        pass
+
     return MessageResponse(success=True, detail="Password reset successfully")
 
 
@@ -244,6 +308,7 @@ def deactivate_user(
     user_id: int,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
+    _=Depends(rate_limit(max_requests=20, window=60)),
 ):
     """Soft-delete a user by deactivating them (admin only).
 
@@ -256,6 +321,22 @@ def deactivate_user(
     _ensure_not_last_admin(db, user, new_is_active=False)
 
     user.is_active = False
+    user.token_version += 1
     db.commit()
     db.refresh(user)
+
+    # Audit log: user deactivated
+    try:
+        audit = get_audit_logger()
+        event = AuditEvent(
+            action=AuditAction.USER_DEACTIVATED,
+            username=auth.username,
+            user_id=auth.user_id,
+            status="success",
+            details={"target_user_id": user_id, "target_username": user.username},
+        )
+        audit.log(event)
+    except Exception:
+        pass
+
     return _to_safe_user(user)

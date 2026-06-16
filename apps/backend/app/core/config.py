@@ -54,6 +54,31 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
+    # Phase 14 - CORS hardening
+    CORS_ALLOWED_ORIGINS: str = os.getenv("CORS_ALLOWED_ORIGINS", "")
+
+    # Phase 14 - Rate limiting
+    RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() in ("true", "1", "yes")
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "redis")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+
+    def get_cors_origins(self) -> list[str]:
+        """Return the list of allowed CORS origins based on configuration."""
+        if self.AUTH_MODE == "dev":
+            # Dev mode: allow localhost + any configured origins
+            origins = ["http://localhost:3000", "http://localhost:8000"]
+            if self.CORS_ALLOWED_ORIGINS:
+                origins.extend(
+                    [o.strip() for o in self.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
+                )
+            return origins
+        # Production/local mode: only configured origins (no wildcard)
+        if self.CORS_ALLOWED_ORIGINS:
+            return [o.strip() for o in self.CORS_ALLOWED_ORIGINS.split(",") if o.strip()]
+        # Fallback: if no origins configured in production, use empty list
+        # which effectively blocks cross-origin requests (safe default)
+        return []
+
     # Bootstrap admin user (used only when AUTH_MODE=local and no admin exists)
     BOOTSTRAP_ADMIN_EMAIL: str = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com")
     BOOTSTRAP_ADMIN_USERNAME: str = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "admin")

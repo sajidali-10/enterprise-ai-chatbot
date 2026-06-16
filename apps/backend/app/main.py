@@ -1,15 +1,19 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.api import chat as chat_router
 from app.api import documents as documents_router
 from app.api import evaluation as evaluation_router
 from app.api import auth as auth_router
 from app.api import admin as admin_router
 from app.api import admin_documents as admin_documents_router
+from app.api import admin_audit as admin_audit_router
 from app.db.base import Base, engine
 from app.core.config import settings
+from app.core.startup_validation import validate_startup
+from app.core.security_headers import SecurityHeadersMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +23,23 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Global exception handler — prevents stack traces from leaking to clients
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger = logging.getLogger(__name__)
+    logger.exception("Unhandled exception: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred. Please try again later."},
+    )
+
+# Security headers middleware — injects X-Content-Type-Options, X-Frame-Options,
+# Referrer-Policy, Permissions-Policy, CSP, and Cache-Control for auth endpoints.
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,10 +51,12 @@ app.include_router(evaluation_router.router)
 app.include_router(auth_router.router)
 app.include_router(admin_router.router)
 app.include_router(admin_documents_router.router)
+app.include_router(admin_audit_router.router)
 
 
 @app.on_event("startup")
 def startup():
+    validate_startup()
     Base.metadata.create_all(bind=engine)
     _bootstrap_admin_user()
 

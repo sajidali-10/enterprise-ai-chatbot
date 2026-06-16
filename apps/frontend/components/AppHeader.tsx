@@ -110,6 +110,12 @@ const NAV_ITEMS: NavItem[] = [
     permission: 'canManageUsers',
     matchPath: (p) => p === '/admin/users' || p.startsWith('/admin/users/'),
   },
+  {
+    href: '/admin/audit-logs',
+    label: 'Audit Logs',
+    permission: 'canAccessObservability',
+    matchPath: (p) => p === '/admin/audit-logs',
+  },
 ]
 
 export default function AppHeader() {

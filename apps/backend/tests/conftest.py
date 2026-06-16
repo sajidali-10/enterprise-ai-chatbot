@@ -14,6 +14,12 @@ settings.JWT_SECRET_KEY = "test-secret-key-for-pytest"
 settings.JWT_ALGORITHM = "HS256"
 settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
+# Disable rate limiting in tests to avoid false failures from shared test IPs
+settings.RATE_LIMIT_ENABLED = False
+
+# Set CORS origins for tests so CORS preflight/header tests work
+settings.CORS_ALLOWED_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+
 TEST_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -25,6 +31,12 @@ _auth_mod.SessionLocal = TestingSessionLocal
 # Also patch the permissions module's SessionLocal so the resolver uses the test DB
 _perms_mod = importlib.import_module("app.security.permissions")
 _perms_mod.SessionLocal = TestingSessionLocal
+# Patch api.auth's SessionLocal so audit logging writes to the test DB
+_auth_api_mod = importlib.import_module("app.api.auth")
+_auth_api_mod.SessionLocal = TestingSessionLocal
+# Patch security.audit's SessionLocal so audit logger writes to the test DB
+_audit_mod = importlib.import_module("app.security.audit")
+_audit_mod.SessionLocal = TestingSessionLocal
 
 
 def _create_test_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.USER, is_active: bool = True) -> User:

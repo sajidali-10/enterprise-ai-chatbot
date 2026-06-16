@@ -109,10 +109,63 @@ apps/backend/evaluations/results/*.json
 apps/backend/evaluations/results/*.md
 !apps/backend/evaluations/results/.gitkeep
 
-# Local environment / secrets
+# ---------------------------------------------------------------------------
+# Secrets & Credentials (NEVER commit these)
+# ---------------------------------------------------------------------------
+# Environment files
 .env
 .env.*
 *.env
 *.env.*
 .env-bk
 .env.bak*
+
+# Secret directories and files
+secrets/
+secret/
+credentials/
+*.secret
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.der
+
+# SSH keys
+id_*
+!id_*.pub
+*.pub.key
+
+# Kubernetes secrets
+*secret*.yaml
+*secret*.yml
+
+# AWS credentials
+.aws/
+
+# GCP / Service account keys (common filenames)
+credentials.json
+credentials.yml
+*service-account*.json
+*service_account*.json
+
+# Local SSL/TLS certs
+certs/
+*.ssl
+*.tls
+
+# -----------------------------------------------------------------------------
+# Local Backup Files (never commit backups)
+# -----------------------------------------------------------------------------
+*.bak
+*.backup
+*-backup*
+*-bk
+*.old
+*.orig
+*-old
+*-orig
