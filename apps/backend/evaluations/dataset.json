@@ -236,5 +236,70 @@
     "expected_fallback": false,
     "minimum_expected_citations": 1,
     "notes": "Explain base/parent image concept. Note: parent image, scratch not in document."
+  },
+  {
+    "id": "unrelated_medical_011",
+    "question": "what are the side effects of ibuprofen?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Medical question not in knowledge base - must trigger fallback."
+  },
+  {
+    "id": "unrelated_financial_012",
+    "question": "should I invest in the stock market right now?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Financial advice question not in knowledge base - must trigger fallback."
+  },
+  {
+    "id": "unrelated_world_knowledge_013",
+    "question": "what is the capital of france?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "General world knowledge not in knowledge base - must trigger fallback."
+  },
+  {
+    "id": "weakly_similar_014",
+    "question": "how do i push code to a docker registry?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "Mentions docker and registry but docs don't explain pushing code - must trigger fallback."
+  },
+  {
+    "id": "chunks_retrieved_but_not_answerable_015",
+    "question": "what programming languages can be used with docker?",
+    "expected_mode": "knowledge_base",
+    "expected_source_file": null,
+    "expected_keywords": [],
+    "forbidden_keywords": [],
+    "should_answer": false,
+    "should_have_citations": false,
+    "expected_fallback": true,
+    "minimum_expected_citations": 0,
+    "notes": "May retrieve chunks mentioning 'application code' but not listing specific languages - must trigger fallback."
   }
 ]

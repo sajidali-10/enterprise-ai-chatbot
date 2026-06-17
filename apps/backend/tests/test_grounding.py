@@ -349,3 +349,261 @@ class TestEdgeCases:
         
         assert should_block_default is False
         assert should_block_custom is True
+
+
+class TestTopicRelevanceImproved:
+    """Test improved topic relevance check with higher threshold and single-keyword guard."""
+
+    def test_unrelated_legal_query_blocks(self):
+        """unrelated_legal_005 'what are the terms of service' should block.
+        
+        Keywords: {terms, what are the, service}
+        Only 'service' matches in Docker doc content.
+        With 3 keywords and only 1 match AND top_score < 0.75, should block.
+        """
+        from app.rag.grounding import _extract_query_keywords, check_topic_relevance
+        
+        query = "what are the terms of service?"
+        chunks = [
+            {"content": "Each service can be developed, updated, and deployed independently.", "score": 0.7},
+        ]
+        
+        should_block, message, meta = check_topic_relevance(query, chunks)
+        
+        assert should_block is True
+        assert meta["blocked_reason"] == "topic_not_relevant_single_keyword"
+
+    def test_single_keyword_match_high_score_allows(self):
+        """Single keyword match with very high score should allow (strong context match)."""
+        from app.rag.grounding import check_topic_relevance
+        
+        query = "what are the terms of service?"
+        chunks = [
+            {"content": "Each service can be developed, updated, and deployed.", "score": 0.95},
+        ]
+        
+        should_block, message, meta = check_topic_relevance(query, chunks)
+        
+        assert should_block is False
+
+    def test_two_keyword_matches_allows(self):
+        """Two keyword matches with moderate score should allow."""
+        from app.rag.grounding import _extract_query_keywords, check_topic_relevance
+        
+        query = "what is your refund policy?"
+        # refund and policy should be extracted as keywords
+        chunks = [
+            {"content": "The refund policy is described in detail here.", "score": 0.6},
+        ]
+        
+        should_block, message, meta = check_topic_relevance(query, chunks)
+        
+        assert should_block is False
+
+    def test_no_keyword_match_blocks(self):
+        """No keyword matches should always block."""
+        from app.rag.grounding import _extract_query_keywords, check_topic_relevance
+        
+        query = "who is the CEO of Docker?"
+        # CEO may not appear in Docker docs
+        chunks = [
+            {"content": "Docker containers are isolated environments.", "score": 0.5},
+        ]
+        
+        should_block, message, meta = check_topic_relevance(query, chunks)
+        
+        assert should_block is True
+
+    def test_higher_min_keyword_overlap_threshold(self):
+        """Default min_keyword_overlap should now be 0.30, not 0.15."""
+        from app.rag.grounding import check_topic_relevance
+        
+        query = "how much does your enterprise plan cost?"
+        # enterprise and plan might both appear in Docker context
+        chunks = [
+            {"content": "Enterprise plans can use docker in their plan.", "score": 0.5},
+        ]
+        
+        should_block, message, meta = check_topic_relevance(query, chunks)
+        
+        # 2 keywords found out of 3+ means 0.5+ overlap which is > 0.30
+        # So this should not be blocked purely by overlap ratio
+        assert meta["min_keyword_overlap_required"] == 0.30
+
+    def test_topic_relevance_with_no_query_keywords(self):
+        """Query with no extractable keywords should allow through."""
+        from app.rag.grounding import check_topic_relevance
+        
+        query = "hi"
+        chunks = [{"content": "Some content", "score": 0.5}]
+        
+        should_block, message, meta = check_topic_relevance(query, chunks)
+        
+        assert should_block is False
+        assert meta["topic_relevant"] is True
+
+
+class TestHighRiskDomainCheck:
+    """Test high-risk domain classification and blocking."""
+
+    def test_legal_query_without_legal_content_blocks(self):
+        """Legal query (terms of service) without legal indicators should block."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "what are the terms of service?"
+        chunks = [
+            {"content": "Each service can be developed, updated, and deployed independently.", "score": 0.7},
+        ]
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        assert should_block is True
+        assert "legal" in meta["domains_found"]
+        assert meta["blocked_reason"] == "legal_query_no_legal_content"
+
+    def test_legal_query_with_strong_legal_terms_allows(self):
+        """Legal query with strong legal terms (e.g., 'terms of service' in content) should allow."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "what are the terms of service?"
+        chunks = [
+            {"content": "The terms of service describe your rights and obligations. Privacy policy is also included.", "score": 0.9},
+        ]
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        assert should_block is False
+        assert "legal_strong_found" in meta
+        assert len(meta.get("legal_strong_found", [])) > 0
+
+    def test_legal_query_with_multiple_weak_terms_allows(self):
+        """Legal query with multiple weak legal terms (3+) should allow."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "what are the terms of service?"
+        chunks = [
+            {"content": "This contract includes liability, warranty, and indemnification clauses.", "score": 0.8},
+        ]
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        # 3 weak terms should allow (liability, warranty, contract)
+        assert should_block is False
+
+    def test_medical_query_blocks_without_medical_content(self):
+        """Medical query without medical indicators should block."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "what are the side effects of ibuprofen?"
+        chunks = [
+            {"content": "Docker containers provide isolation and resource management.", "score": 0.7},
+        ]
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        assert should_block is True
+        assert "medical" in meta["domains_found"]
+        assert meta["blocked_reason"] == "medical_query_no_medical_content"
+
+    def test_financial_query_blocks_without_financial_content(self):
+        """Financial query without financial indicators should block."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "should I invest in the stock market right now?"
+        chunks = [
+            {"content": "Each service can be developed, updated, and deployed independently.", "score": 0.7},
+        ]
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        assert should_block is True
+        assert "financial" in meta["domains_found"]
+        assert meta["blocked_reason"] == "financial_query_no_financial_content"
+
+    def test_offtopic_query_blocks(self):
+        """Offtopic queries (CEO, executive questions) should block."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "who is the CEO of Docker?"
+        chunks = [
+            {"content": "Docker containers are great for deployment.", "score": 0.8},
+        ]
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        assert should_block is True
+        assert "offtopic" in meta["domains_found"]
+        assert meta["blocked_reason"] == "offtopic_query"
+
+    def test_non_risky_query_allows(self):
+        """Normal technical queries should not be blocked by domain check."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "what is a docker image?"
+        chunks = [
+            {"content": "A Docker image is a read-only template with instructions for creating containers.", "score": 0.9},
+        ]
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        assert should_block is False
+        assert meta["high_risk"] is False
+
+    def test_empty_chunks_returns_no_block(self):
+        """Empty chunks should not trigger domain check blocking."""
+        from app.rag.grounding import check_high_risk_domain
+        
+        query = "what are the terms of service?"
+        chunks = []
+        
+        should_block, message, meta = check_high_risk_domain(query, chunks)
+        
+        assert should_block is False
+        assert meta["domain_checked"] is False
+
+    def test_apply_grounding_checks_includes_high_risk_domain(self):
+        """apply_grounding_checks should call check_high_risk_domain."""
+        from app.rag.grounding import apply_grounding_checks
+        
+        query = "what are the terms of service?"
+        chunks = [
+            {"content": "Each service can be developed.", "score": 0.7},
+        ]
+        
+        should_block, message, meta = apply_grounding_checks(
+            chunks=chunks, answer=None, threshold=0.3,
+            require_citations=False, query=query,
+        )
+        
+        # Should block at domain check before topic relevance
+        assert should_block is True
+        assert meta["domain_checked"] is True
+        assert meta["high_risk"] is True
+        assert meta["blocked_reason"] == "legal_query_no_legal_content"
+
+    def test_refund_policy_classified_as_legal(self):
+        """'refund policy' query should be classified as legal domain."""
+        from app.rag.grounding import _classify_query_domain
+        
+        query = "what is your refund policy?"
+        domains = _classify_query_domain(query)
+        
+        assert "legal" in domains
+
+    def test_side_effects_ibuprofen_classified_as_medical(self):
+        """'side effects of ibuprofen' should be classified as medical domain."""
+        from app.rag.grounding import _classify_query_domain
+        
+        query = "what are the side effects of ibuprofen?"
+        domains = _classify_query_domain(query)
+        
+        assert "medical" in domains
+
+    def test_stock_market_classified_as_financial(self):
+        """'invest in the stock market' should be classified as financial domain."""
+        from app.rag.grounding import _classify_query_domain
+        
+        query = "should I invest in the stock market right now?"
+        domains = _classify_query_domain(query)
+        
+        assert "financial" in domains

@@ -33,6 +33,117 @@ NO_CITATIONS_MESSAGE = "I don't have enough information in the provided sources 
 # Default message when topic is unrelated to retrieved content
 TOPIC_MISMATCH_MESSAGE = "I don't have enough information in the provided sources to answer this question."
 
+# High-risk domain patterns that require domain-specific knowledge base content.
+LEGAL_PATTERNS = [
+    re.compile(r'\bterms?\s+(of|for)\s+(service|use|privacy|liability)\b', re.I),
+    re.compile(r'\b(privacy|service|usage|refund)\s+policy\b', re.I),
+    re.compile(r'\blegal\b', re.I),
+    re.compile(r'\b(contract|agreement|waiver|liability|indemnif)\b', re.I),
+]
+
+MEDICAL_PATTERNS = [
+    re.compile(r'\b(side effects?|dosage|prescription|diagnosis|treatment)\b', re.I),
+    re.compile(r'\b(medicine|drug|pharma|therapy)\b', re.I),
+]
+
+FINANCIAL_PATTERNS = [
+    re.compile(r'\b(invest|stock\s+market|portfolio|dividend)\b', re.I),
+    re.compile(r'\b(buy|sell|trade)\s+(stock|bond|crypto)\b', re.I),
+]
+
+OFFTOPIC_PATTERNS = [
+    re.compile(r'\bhow\s+much\b.*\b(cost|plan|price|enterprise)\b', re.I),
+    re.compile(r'\b(ceo|cto|founder|executive)\b.*\b(of|for)\b', re.I),
+    re.compile(r'\bwho\s+(is|was|are)\b.*\b(ceo|cto|founder)\b', re.I),
+]
+
+
+def _classify_query_domain(query: str) -> list[str]:
+    domains = []
+    if any(p.search(query) for p in LEGAL_PATTERNS):
+        domains.append('legal')
+    if any(p.search(query) for p in MEDICAL_PATTERNS):
+        domains.append('medical')
+    if any(p.search(query) for p in FINANCIAL_PATTERNS):
+        domains.append('financial')
+    if any(p.search(query) for p in OFFTOPIC_PATTERNS):
+        domains.append('offtopic')
+    return domains
+
+
+def check_high_risk_domain(
+    query: str,
+    chunks: list[dict],
+) -> tuple[bool, Optional[str], dict]:
+    if not chunks:
+        return False, None, {"domain_checked": False}
+
+    domains = _classify_query_domain(query)
+    if not domains:
+        return False, None, {"domain_checked": True, "domains_found": [], "high_risk": False}
+
+    combined = " ".join(c.get("content", "").lower() for c in chunks)
+    meta = {"domain_checked": True, "domains_found": domains, "high_risk": True}
+
+    SAFE_MESSAGE = NO_CHUNKS_MESSAGE
+
+    if 'legal' in domains:
+        # Strong indicators: specific legal phrases that must appear as complete units
+        strong_terms = ['terms of service', 'privacy policy', 'service agreement',
+                        'terms and conditions', 'acceptable use', 'data processing',
+                        'return policy', 'refund policy']
+        strong_found = [t for t in strong_terms if t in combined]
+        
+        # Weak indicators: single words that may appear in unrelated technical docs
+        # Require at least 3 weak terms to compensate for lack of strong terms
+        weak_terms = ['liability', 'indemnification', 'warranty', 'contract',
+                      'legal', 'jurisdiction', 'arbitration', 'waiver']
+        weak_found = [t for t in weak_terms if t in combined]
+        
+        meta["legal_strong_found"] = strong_found
+        meta["legal_weak_found"] = weak_found
+        
+        # Block if no strong terms, OR fewer than 3 weak terms
+        # This prevents false positives from single weak words like 'liability'
+        # appearing in unrelated technical documentation
+        if not strong_found and len(weak_found) < 3:
+            meta["blocked_reason"] = "legal_query_no_legal_content"
+            return True, SAFE_MESSAGE, meta
+
+    if 'medical' in domains:
+        # Strong: specific medical phrases
+        strong_med = ['diagnosis', 'treatment', 'prescription', 'side effect',
+                      'clinical', 'patient', 'dosage', 'medication']
+        strong_found = [t for t in strong_med if re.search(t, combined)]
+        
+        # Weak: general health terms
+        weak_med = ['medical', 'health', 'therapy', 'pharma', 'doctor']
+        weak_found = [t for t in weak_med if t in combined]
+        
+        meta["medical_strong_found"] = strong_found
+        meta["medical_weak_found"] = weak_found
+        
+        # Block if no strong terms, or fewer than 2 weak terms
+        if not strong_found and len(weak_found) < 2:
+            meta["blocked_reason"] = "medical_query_no_medical_content"
+            return True, SAFE_MESSAGE, meta
+
+    if 'financial' in domains:
+        fin_terms = ['investment', 'stock', 'bond', 'dividend', 'portfolio',
+                     'trading', 'tax', 'revenue', 'pricing', 'cost',
+                     'budget', 'expense', 'invoice', 'payment']
+        found = [t for t in fin_terms if t in combined]
+        meta["financial_indicators_found"] = found
+        if not found:
+            meta["blocked_reason"] = "financial_query_no_financial_content"
+            return True, SAFE_MESSAGE, meta
+
+    if 'offtopic' in domains:
+        meta["blocked_reason"] = "offtopic_query"
+        return True, SAFE_MESSAGE, meta
+
+    return False, None, meta
+
 
 def check_retrieval_guardrail(chunks: list[dict]) -> tuple[bool, Optional[str], dict]:
     """
@@ -102,7 +213,7 @@ def _extract_query_keywords(query: str) -> set[str]:
 def check_topic_relevance(
     query: str,
     chunks: list[dict],
-    min_keyword_overlap: float = 0.15,
+    min_keyword_overlap: float = 0.30,
 ) -> tuple[bool, Optional[str], dict]:
     """
     Check if retrieved chunks are topically relevant to the query.
@@ -171,7 +282,19 @@ def check_topic_relevance(
     if overlap_ratio < min_keyword_overlap:
         metadata["blocked_reason"] = "topic_not_relevant"
         return True, TOPIC_MISMATCH_MESSAGE, metadata
-    
+
+    # Additional semantic guard: if we have few keywords and only 1 matches,
+    # but the top chunk score is weak, still block (avoid false positives from
+    # single common-word matches like "service" in unrelated docs)
+    if (
+        len(query_keywords) <= 3 and
+        len(found_keywords) == 1 and
+        chunks and
+        chunks[0].get("score", 0) < 0.75
+    ):
+        metadata["blocked_reason"] = "topic_not_relevant_single_keyword"
+        return True, TOPIC_MISMATCH_MESSAGE, metadata
+
     return False, None, metadata
 
 
@@ -360,7 +483,16 @@ def apply_grounding_checks(
     metadata.update(relevance_meta)
     if should_block:
         return True, message, metadata
-    
+
+    # Check 2.5: High-risk domain check (legal/medical/financial/offtopic)
+    # This runs before topic relevance to catch domain-specific queries that
+    # might pass keyword overlap checks but are actually out of scope
+    if query is not None:
+        should_block, message, domain_meta = check_high_risk_domain(query, chunks)
+        metadata.update(domain_meta)
+        if should_block:
+            return True, message, metadata
+
     # Check 3: Topic relevance (Phase 11.2) - only if query is provided
     if query is not None:
         should_block, message, topic_meta = check_topic_relevance(query, chunks)
