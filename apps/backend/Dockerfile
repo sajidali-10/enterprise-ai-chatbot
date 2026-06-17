@@ -11,6 +11,11 @@ ENV HF_HOME=/tmp/hf_home
 ENV TRANSFORMERS_CACHE=/tmp/hf_home/transformers
 
 COPY requirements.txt .
+# Pin torch to CPU-only from PyPI before requirements install.
+# This ensures pip doesn't pull GPU wheels from the PyTorch index.
+# torch 2.4.0 on PyPI is the CPU-only build; GPU wheels live only on
+# download.pytorch.org which we intentionally avoid here.
+RUN pip install --no-cache-dir torch==2.4.0
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
