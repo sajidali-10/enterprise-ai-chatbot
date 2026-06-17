@@ -1,0 +1,14 @@
+# Block real certificate and key files
+*.key
+*.crt
+*.pem
+*.pfx
+
+# Block everything else first
+*
+
+# Then allow the documentation files (must be after the * rule)
+# The last matching rule wins, so these override the *
+!README.md
+!.gitignore
+!.gitkeep

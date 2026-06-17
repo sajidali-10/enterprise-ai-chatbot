@@ -138,6 +138,32 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
+  # Nginx — HTTPS Reverse Proxy (Phase 17)
+  # --------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: chatbot_nginx
+    depends_on:
+      - frontend
+      - backend
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./infra/nginx/ssl:/etc/nginx/ssl:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
   # Backend — FastAPI Application
   # --------------------------------------------------------------------------
   backend:
@@ -162,8 +188,6 @@ services:
         condition: service_started
       litellm:
         condition: service_started  # LiteLLM Gateway — backend will still work via direct OpenRouter if litellm is unavailable
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
     networks:
       - chatbot-network
     healthcheck:
@@ -188,8 +212,6 @@ services:
       - .env
     environment:
       - HOST=0.0.0.0
-    ports:
-      - "${FRONTEND_PORT:-3000}:3000"
     networks:
       - chatbot-network
     restart: unless-stopped
