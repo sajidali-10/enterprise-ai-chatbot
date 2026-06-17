@@ -56,6 +56,70 @@ def _require_permission_for_mode(auth: AuthContext, mode: str) -> None:
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
 
+# ==============================================================================
+# Provider Health Endpoint (Phase 15 — LiteLLM Gateway)
+# ==============================================================================
+# Separate router so the prefix doesn't conflict with /api/chat
+_provider_router = APIRouter(tags=["Health"])
+
+
+@_provider_router.get("/api/health/provider")
+def get_provider_info():
+    """
+    Return the currently configured LLM provider and its configuration.
+    
+    This endpoint NEVER exposes secrets (API keys, master keys).
+    Only the base URL host is returned, not the full URL with credentials.
+    
+    Response fields:
+    - provider: LLM_PROVIDER value (e.g., "openrouter", "litellm", "mock")
+    - model: configured model name
+    - base_url_host: host portion of base URL only (no credentials or path)
+    - gateway_mode: true if using LiteLLM Gateway (LLM_PROVIDER=litellm)
+    - litellm_enabled: whether LiteLLM gateway is enabled in config
+    """
+    import os
+    from urllib.parse import urlparse
+
+    provider_name = os.getenv("LLM_PROVIDER", "mock").lower().strip()
+    gateway_mode = provider_name == "litellm"
+    litellm_enabled = os.getenv("LITELLM_ENABLED", "false").lower() in ("true", "1", "yes")
+
+    # Get model — varies by provider
+    if provider_name == "openrouter":
+        model = os.getenv("OPENROUTER_MODEL", "unknown")
+        base_url_raw = os.getenv("OPENROUTER_BASE_URL", "")
+    elif provider_name == "litellm":
+        model = os.getenv("LITELLM_MODEL", "unknown")
+        base_url_raw = os.getenv("LITELLM_BASE_URL", "")
+    elif provider_name == "openai":
+        model = os.getenv("OPENAI_MODEL", "unknown")
+        base_url_raw = os.getenv("OPENAI_BASE_URL", "")
+    elif provider_name == "ollama":
+        model = os.getenv("OLLAMA_MODEL", "unknown")
+        base_url_raw = os.getenv("OLLAMA_BASE_URL", "")
+    else:
+        model = "unknown"
+        base_url_raw = ""
+
+    # Extract just the host from the base URL — NEVER return full URL or secrets
+    base_url_host = ""
+    if base_url_raw:
+        try:
+            parsed = urlparse(base_url_raw if base_url_raw.startswith("http") else f"http://{base_url_raw}")
+            base_url_host = parsed.hostname or ""
+        except Exception:
+            base_url_host = ""
+
+    return {
+        "provider": provider_name,
+        "model": model,
+        "base_url_host": base_url_host,
+        "gateway_mode": gateway_mode,
+        "litellm_enabled": litellm_enabled,
+    }
+
+
 class ChatMode(str, Enum):
     GENERAL_CHAT = "general_chat"
     KNOWLEDGE_BASE = "knowledge_base"

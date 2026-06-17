@@ -1,128 +1,172 @@
 """
-LiteLLM Provider
+LiteLLM Gateway Provider (Phase 15)
 
-Unified interface to 100+ LLMs through LiteLLM library.
-Supports OpenAI, Anthropic, Azure, OpenRouter, Ollama, and more.
+Calls a self-hosted LiteLLM Gateway via its OpenAI-compatible HTTP API.
+This provider does NOT use the litellm Python library — it uses httpx directly.
 
-Configuration:
+Configuration (environment variables):
 - LLM_PROVIDER=litellm
-- LITELLM_MODEL=e.g., "gpt-4o-mini", "claude-3-haiku", "openrouter/anthropic/claude-3-haiku"
-- LITELLM_API_KEY=your-api-key (if not using Ollama local)
-- LITELLM_BASE_URL=override-endpoint (optional)
-- LITELLM_API_BASE=alternate-endpoint (optional, for proxies)
+- LITELLM_BASE_URL: Gateway base URL (e.g., http://litellm:4000)
+- LITELLM_MODEL: Model name as defined in LiteLLM config (e.g., openrouter-gpt-oss)
+- LITELLM_MASTER_KEY: Gateway master key for authentication
+- LITELLM_TIMEOUT: Optional request timeout in seconds (default: 120)
+
+The gateway's OpenAI-compatible endpoint is:
+  {LITELLM_BASE_URL}/v1/chat/completions
+
+Available models (defined in infra/litellm/config.yaml):
+- openrouter-gpt-oss    → google/gemini-2.0-flash-exp via OpenRouter
+- openrouter-claude     → anthropic/claude-3-haiku via OpenRouter
+- openrouter-llama      → meta-llama/llama-3-8b-instruct via OpenRouter
+- openrouter-free       → mistralai/mistral-7b-instruct via OpenRouter
+- local-ollama          → llama3.2 via local Ollama
+
+To switch back to direct OpenRouter: set LLM_PROVIDER=openrouter (no gateway needed).
 """
 
+import logging
 import os
 from typing import Optional
+
+import httpx
 
 from app.schemas.chat import ChatRequest, ChatResponse, MessageRole
 from app.services.llm.base import LlmProvider
 
+logger = logging.getLogger(__name__)
+
 
 class LiteLLMProvider(LlmProvider):
     """
-    LiteLLM-based provider for unified LLM access.
-    
-    Supports any model that LiteLLM supports:
-    - OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.
-    - Anthropic: claude-3-5-sonnet, claude-3-opus, claude-3-haiku
-    - Azure: azure/gpt-4o
-    - OpenRouter: openrouter/anthropic/claude-3-haiku
-    - Ollama: ollama/llama3.1
-    - And 100+ more providers
+    LiteLLM Gateway provider — calls the self-hosted LiteLLM proxy
+    using the OpenAI-compatible /v1/chat/completions endpoint.
+
+    Authentication: Bearer token using LITELLM_MASTER_KEY.
+    No API keys are stored here — keys are managed by the LiteLLM Gateway
+    via its config.yaml and environment variables.
     """
-    
+
+    DEFAULT_TIMEOUT = 120.0  # seconds
+
     def __init__(
         self,
         model: Optional[str] = None,
-        api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        api_base: Optional[str] = None,
-        timeout: float = 60.0,
-        max_retries: int = 3,
+        master_key: Optional[str] = None,
+        timeout: Optional[float] = None,
         **kwargs
     ):
-        self.model = model or os.getenv("LITELLM_MODEL", "gpt-4o-mini")
-        self.api_key = api_key or os.getenv("LITELLM_API_KEY", "")
-        self.base_url = base_url or os.getenv("LITELLM_BASE_URL", "")
-        self.api_base = api_base or os.getenv("LITELLM_API_BASE", "")
-        self.timeout = timeout
-        self.max_retries = max_retries
+        self.model = model or os.getenv("LITELLM_MODEL", "openrouter-gpt-oss")
+        base = base_url or os.getenv("LITELLM_BASE_URL", "http://litellm:4000")
+        self.base_url = base.rstrip("/")
+        self.master_key = master_key or os.getenv("LITELLM_MASTER_KEY", "")
+        self.timeout = timeout or float(os.getenv("LITELLM_TIMEOUT", str(self.DEFAULT_TIMEOUT)))
         self.extra_kwargs = kwargs
-        
-        # Check if litellm is available
-        self._litellm_available = self._check_litellm()
-    
-    def _check_litellm(self) -> bool:
-        """Check if litellm package is installed."""
-        try:
-            import litellm
-            return True
-        except ImportError:
-            return False
-    
+
+        self.provider_name = "litellm"
+
     def chat(self, request: ChatRequest) -> ChatResponse:
         """
-        Send chat request through LiteLLM.
-        
-        Falls back to mock response if:
-        - LiteLLM not installed
-        - API key not configured (and not using local Ollama)
-        - Request fails
+        Send chat request to the LiteLLM Gateway.
+
+        Error handling:
+        - No master key configured → mock fallback with clear message
+        - Gateway unreachable (connection error) → mock fallback
+        - HTTP 401/403 → mock fallback (auth issue)
+        - HTTP 404 → mock fallback (model not found)
+        - HTTP 429 → mock fallback (rate limited)
+        - HTTP 500+ → mock fallback (server error)
         """
-        # Fallback if litellm not installed
-        if not self._litellm_available:
-            return self._mock_fallback("LiteLLM not installed. Install with: pip install litellm")
-        
-        # Fallback if no API key and not using local provider
-        if not self.api_key and not self._is_local_provider():
-            return self._mock_fallback(
-                f"LITELLM_API_KEY not set and model '{self.model}' is not a local provider."
+        if not self.master_key:
+            msg = (
+                "LiteLLM Gateway master key not configured. "
+                "Set LITELLM_MASTER_KEY environment variable."
             )
-        
+            logger.warning(f"LiteLLM Gateway: {msg}")
+            return self._fallback_response(msg)
+
+        url = f"{self.base_url}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.master_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": request.message}],
+        }
+
+        # Pass through any extra kwargs (temperature, max_tokens, etc.)
+        # but exclude known httpx/response fields
+        excluded = {"timeout", "model", "messages"}
+        for key, value in self.extra_kwargs.items():
+            if key not in excluded:
+                payload[key] = value
+
         try:
-            import litellm
-            
-            # Build litellm arguments
-            litellm_args = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": request.message}],
-                "timeout": self.timeout,
-                "max_retries": self.max_retries,
-            }
-            
-            # Add optional params if set
-            if self.api_key:
-                litellm_args["api_key"] = self.api_key
-            if self.base_url:
-                litellm_args["base_url"] = self.base_url
-            elif self.api_base:
-                litellm_args["api_base"] = self.api_base
-            
-            # Add any extra kwargs (temperature, max_tokens, etc.)
-            litellm_args.update(self.extra_kwargs)
-            
-            # Make the call
-            response = litellm.completion(**litellm_args)
-            
-            # Extract content from response
-            content = response.choices[0].message.content
-            return ChatResponse(message=content, role=MessageRole.assistant)
-            
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(url, headers=headers, json=payload)
+
+                if response.status_code == 401 or response.status_code == 403:
+                    msg = (
+                        "LiteLLM Gateway authentication failed. "
+                        "Check LITELLM_MASTER_KEY."
+                    )
+                    logger.warning(f"LiteLLM Gateway: {msg}")
+                    return self._fallback_response(msg)
+
+                elif response.status_code == 404:
+                    msg = (
+                        f"LiteLLM Gateway: model '{self.model}' not found. "
+                        "Check LITELLM_MODEL and that the model is defined in config.yaml."
+                    )
+                    logger.warning(f"LiteLLM Gateway: {msg}")
+                    return self._fallback_response(msg)
+
+                elif response.status_code == 429:
+                    msg = "LiteLLM Gateway rate limit exceeded. Please wait and try again."
+                    logger.warning(f"LiteLLM Gateway: {msg}")
+                    return self._fallback_response(msg)
+
+                elif response.status_code >= 500:
+                    msg = f"LiteLLM Gateway server error ({response.status_code}). Please try again later."
+                    logger.error(f"LiteLLM Gateway: {msg}")
+                    return self._fallback_response(msg)
+
+                response.raise_for_status()
+                data = response.json()
+                content = data["choices"][0]["message"]["content"]
+                return ChatResponse(message=content, role=MessageRole.assistant)
+
+        except httpx.ConnectError:
+            msg = (
+                "LiteLLM Gateway is unreachable. "
+                "Ensure the litellm service is running (docker compose up -d litellm)."
+            )
+            logger.warning(f"LiteLLM Gateway: {msg}")
+            return self._fallback_response(msg)
+
+        except httpx.TimeoutException:
+            msg = f"LiteLLM Gateway request timed out after {self.timeout}s."
+            logger.warning(f"LiteLLM Gateway: {msg}")
+            return self._fallback_response(msg)
+
+        except httpx.HTTPStatusError as e:
+            msg = f"LiteLLM Gateway HTTP error {e.response.status_code}: {str(e)}"
+            logger.error(f"LiteLLM Gateway: {msg}")
+            return self._fallback_response(msg)
+
         except Exception as e:
-            return self._mock_fallback(f"LiteLLM error: {str(e)}")
-    
-    def _is_local_provider(self) -> bool:
-        """Check if model is a local provider (doesn't need API key)."""
-        local_prefixes = ["ollama/", "ollama/", "local/", "localhost:"]
-        return any(self.model.lower().startswith(p) for p in local_prefixes)
-    
-    def _mock_fallback(self, error_message: str) -> ChatResponse:
-        """Return a mock response when LiteLLM cannot be used."""
+            msg = f"LiteLLM Gateway request failed: {str(e)}"
+            logger.error(f"LiteLLM Gateway: {msg}")
+            return self._fallback_response(msg)
+
+    def _fallback_response(self, error_message: str) -> ChatResponse:
+        """Return a gracefully-handled fallback response (no stack traces)."""
         return ChatResponse(
-            message=f"[LiteLLM Fallback] {error_message}. Using mock response instead.",
+            message=f"[LiteLLM Gateway] {error_message}",
             role=MessageRole.assistant,
         )
-    
+
     def __repr__(self) -> str:
-        return f"LiteLLMProvider(model={self.model!r})"
+        return f"LiteLLMProvider(model={self.model!r}, base_url={self.base_url!r})"

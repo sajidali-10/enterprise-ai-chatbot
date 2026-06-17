@@ -102,6 +102,42 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
+  # LiteLLM Gateway — Unified LLM Proxy (Phase 15)
+  # --------------------------------------------------------------------------
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: chatbot_litellm
+    environment:
+      # LiteLLM master key — clients must provide this to authenticate
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-changeme_litellm_master_key}
+      # Database for LiteLLM proxy state (in-memory fallback is fine for single instance)
+      DATABASE_URL: ${DATABASE_URL:-postgresql://chatbot:changeme@postgres:5432/chatbot}
+      # OpenRouter API key for OpenRouter-backed models (loaded via config.yaml env var)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Optional: LiteLLM UI credentials
+      # Optional: disable LiteLLM admin UI (set to 'true' to enable)
+      LITELLM_DISABLE_ADMIN_UI: "true"
+      # Store model credentials in database instead of config file
+      LITELLM_MODEL_STORES: "database"
+      # Disable LiteLLM's built-in telemetry
+      LITELLM_TELEMETRY: "false"
+      LITELLM_AUDIT_LOGGING: "true"
+    volumes:
+      - ./infra/litellm/config.yaml:/app/config.yaml:ro
+    command: --config /app/config.yaml --port 4000 --detailed_debug false
+    ports:
+      - "${LITELLM_EXTERNAL_PORT:-4000}:4000"  # External port only if LITELLM_EXTERNAL_PORT is set
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
   # Backend — FastAPI Application
   # --------------------------------------------------------------------------
   backend:
@@ -124,6 +160,8 @@ services:
         condition: service_started
       minio:
         condition: service_started
+      litellm:
+        condition: service_started  # LiteLLM Gateway — backend will still work via direct OpenRouter if litellm is unavailable
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     networks:

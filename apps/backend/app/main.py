@@ -46,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(chat_router.router)
+app.include_router(chat_router._provider_router)
 app.include_router(documents_router.router)
 app.include_router(evaluation_router.router)
 app.include_router(auth_router.router)

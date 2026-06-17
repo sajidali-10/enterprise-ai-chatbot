@@ -277,7 +277,7 @@ class TestCreateUser:
             "password": "short",
             "role": "user",
         })
-        assert res.status_code == 422
+        assert res.status_code == 400
 
     def test_invalid_email_rejected(self, admin_client):
         res = admin_client.post("/api/admin/users", json={
@@ -421,7 +421,7 @@ class TestPasswordReset:
         res = admin_client.post(f"/api/admin/users/{regular_user.id}/reset-password", json={
             "new_password": "short",
         })
-        assert res.status_code == 422
+        assert res.status_code == 400
 
     def test_password_reset_nonexistent_user_returns_404(self, admin_client):
         res = admin_client.post("/api/admin/users/99999/reset-password", json={

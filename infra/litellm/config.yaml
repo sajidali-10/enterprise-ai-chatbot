@@ -1,0 +1,139 @@
+# ==============================================================================
+# LiteLLM Gateway Configuration — Phase 15
+# ==============================================================================
+# This is a SAFE TEMPLATE. API keys are NOT hardcoded — they come from
+# environment variables injected by docker-compose.
+#
+# IMPORTANT: Set real values in .env before running:
+#   - LITELLM_MASTER_KEY (for proxy authentication)
+#   - OPENROUTER_API_KEY (for OpenRouter-backed models)
+#
+# LiteLLM docs: https://docs.litellm.ai/docs
+# ==============================================================================
+
+model_list:
+  # ---------------------------------------------------------------------------
+  # OpenRouter — Production Models (requires OPENROUTER_API_KEY)
+  # ---------------------------------------------------------------------------
+  # Route: openrouter-gpt-oss → best open-source models via OpenRouter
+  - model_name: openrouter-gpt-oss
+    litellm_params:
+      model: openrouter/google/gemini-2.0-flash-exp
+      api_key: env:OPENROUTER_API_KEY
+    model_info:
+      mode: chat
+      supported_functions: null
+      has_function_call: false
+
+  # Route: openrouter-claude → Claude models via OpenRouter
+  - model_name: openrouter-claude
+    litellm_params:
+      model: openrouter/anthropic/claude-3-haiku-20240307
+      api_key: env:OPENROUTER_API_KEY
+    model_info:
+      mode: chat
+      supported_functions: null
+      has_function_call: false
+
+  # Route: openrouter-llama → Llama open-source models via OpenRouter
+  - model_name: openrouter-llama
+    litellm_params:
+      model: openrouter/meta-llama/llama-3-8b-instruct
+      api_key: env:OPENROUTER_API_KEY
+    model_info:
+      mode: chat
+      supported_functions: null
+      has_function_call: false
+
+  # ---------------------------------------------------------------------------
+  # OpenRouter — Free/Trial Models (no API key required for some models)
+  # ---------------------------------------------------------------------------
+  # Route: openrouter-free → free tier models via OpenRouter
+  # Note: Some free models don't require API key, but most do.
+  - model_name: openrouter-free
+    litellm_params:
+      model: openrouter/mistralai/mistral-7b-instruct
+      api_key: env:OPENROUTER_API_KEY
+    model_info:
+      mode: chat
+      supported_functions: null
+      has_function_call: false
+
+  # ---------------------------------------------------------------------------
+  # Local Ollama — No API Key Required (for local inference)
+  # ---------------------------------------------------------------------------
+  # Route: local-ollama → local Ollama instance
+  # Note: Requires Ollama to be running locally (e.g., http://host.docker.internal:11434)
+  # Set OLLAMA_BASE_URL env var or update the model URL below.
+  - model_name: local-ollama
+    litellm_params:
+      model: ollama_chat/llama3.2
+      api_base: http://host.docker.internal:11434
+      api_key: null  # Ollama doesn't need an API key
+    model_info:
+      mode: chat
+      supported_functions: null
+      has_function_call: false
+
+  # ---------------------------------------------------------------------------
+  # OpenAI Direct (optional — add key to .env if using)
+  # ---------------------------------------------------------------------------
+  # Route: openai-gpt4o → direct OpenAI API
+  # Uncomment and set OPENAI_API_KEY in .env to use.
+  # - model_name: openai-gpt4o
+  #   litellm_params:
+  #     model: gpt-4o-mini
+  #     api_key: env:OPENAI_API_KEY
+  #   model_info:
+  #     mode: chat
+  #     supported_functions: null
+  #     has_function_call: false
+
+  # ---------------------------------------------------------------------------
+  # Anthropic Direct (optional — add key to .env if using)
+  # ---------------------------------------------------------------------------
+  # Route: anthropic-claude → direct Anthropic API
+  # Uncomment and set ANTHROPIC_API_KEY in .env to use.
+  # - model_name: anthropic-claude
+  #   litellm_params:
+  #     model: anthropic/claude-3-haiku-20240307
+  #     api_key: env:ANTHROPIC_API_KEY
+  #   model_info:
+  #     mode: chat
+  #     supported_functions: null
+  #     has_function_call: false
+
+# ==============================================================================
+# General Settings
+# ==============================================================================
+# Settings: https://docs.litellm.ai/docs/general_settings
+general_settings:
+  # Master key for proxy authentication (clients must provide this)
+  master_key: env:LITELLM_MASTER_KEY
+
+  # Database for audit logs and key management (optional)
+  database_url: env:DATABASE_URL
+
+  # Drop existing tables and re-create on startup (safe for dev — change to false in prod)
+  drop_database: false
+
+  # Set to false to disable LiteLLM UI
+  ui_access_mode: false
+
+# ==============================================================================
+# Environment Variables (optional Litellm settings)
+# ==============================================================================
+# These can be set directly in docker-compose.yml instead, but listed here
+# for documentation purposes.
+environment:
+  # Disable anonymous telemetry
+  LITELLM_TELEMETRY: "false"
+
+  # Disable LiteLLM's built-in audit logging to external services
+  LITELLM_AUDIT_LOGGING: "true"
+
+  # Store model credentials in database
+  LITELLM_MODEL_STORES: "database"
+
+  # Suppress detailed debug output
+  DETAILED_DEBUG: "false"
