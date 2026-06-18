@@ -126,30 +126,47 @@ def _get_document_summary(db: Session) -> dict:
 
 def _get_security_summary(db: Session, auth: AuthContext) -> dict:
     since = datetime.utcnow() - timedelta(days=1)
-    failed_logins = db.query(AuditLog).filter(
-        AuditLog.action.in_((AuditAction.LOGIN_FAILURE, AuditAction.USER_LOGIN)),
-        AuditLog.status == "failure",
-        AuditLog.created_at >= since,
-    ).count()
 
-    recent_audits = db.query(AuditLog).filter(AuditLog.created_at >= since).count()
+    # Use .name to get uppercase enum names matching PostgreSQL enum values.
+    # PostgreSQL stores enum member names (e.g. "LOGIN_FAILURE"), not the
+    # Python enum's .value (e.g. "login_failure").  Wrapped in try/except so
+    # a missing or malformed enum value never 500s the whole dashboard.
+    try:
+        failed_logins = db.query(AuditLog).filter(
+            AuditLog.action.in_((AuditAction.LOGIN_FAILURE.name, AuditAction.LOGIN_SUCCESS.name)),
+            AuditLog.status == "failure",
+            AuditLog.created_at >= since,
+        ).count()
+    except Exception:
+        failed_logins = 0
 
-    last_admin_action = (
-        db.query(AuditLog)
-        .filter(
-            AuditLog.action.in_((
-                AuditAction.USER_CREATED,
-                AuditAction.USER_UPDATED,
-                AuditAction.USER_DEACTIVATED,
-                AuditAction.PASSWORD_RESET,
-                AuditAction.ROLE_CHANGED,
-            ))
-        )
-        .order_by(desc(AuditLog.created_at))
-        .first()
+    try:
+        recent_audits = db.query(AuditLog).filter(AuditLog.created_at >= since).count()
+    except Exception:
+        recent_audits = 0
+
+    admin_action_names = (
+        AuditAction.USER_CREATED.name,
+        AuditAction.USER_UPDATED.name,
+        AuditAction.USER_DEACTIVATED.name,
+        AuditAction.PASSWORD_RESET.name,
+        AuditAction.ROLE_CHANGED.name,
     )
+    last_admin_action = None
+    try:
+        last_admin_action = (
+            db.query(AuditLog)
+            .filter(AuditLog.action.in_(admin_action_names))
+            .order_by(desc(AuditLog.created_at))
+            .first()
+        )
+    except Exception:
+        pass
 
-    total_users = db.query(User).filter(User.is_active == True).count()
+    try:
+        total_users = db.query(User).filter(User.is_active == True).count()
+    except Exception:
+        total_users = 0
 
     return {
         "auth_mode": settings.AUTH_MODE,
@@ -158,7 +175,7 @@ def _get_security_summary(db: Session, auth: AuthContext) -> dict:
         "recent_failed_logins_24h": failed_logins,
         "recent_audit_events_24h": recent_audits,
         "last_admin_action": {
-            "action": last_admin_action.action.value if last_admin_action else None,
+            "action": last_admin_action.action.name if last_admin_action else None,
             "username": last_admin_action.username if last_admin_action else None,
             "timestamp": last_admin_action.created_at.isoformat() if last_admin_action and last_admin_action.created_at else None,
         } if last_admin_action else None,
