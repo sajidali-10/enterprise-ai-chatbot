@@ -7,13 +7,12 @@ No secrets, no tokens, no environment dumps.
 
 import os
 from datetime import datetime, timedelta
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Any
 
 import redis
 from fastapi import APIRouter, Depends, Request
 from qdrant_client import QdrantClient
-from sqlalchemy import func, text, desc
+from sqlalchemy import desc, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -25,13 +24,18 @@ from app.security.models import AuditAction, AuditLog, User
 
 router = APIRouter(prefix="/api/admin/system", tags=["Admin System Status"])
 
+# ---------------------------------------------------------------------------
+# Safe helpers — each subsection is fully isolated: on any DB error the
+# transaction is rolled back and a safe degraded response is returned.
+# ---------------------------------------------------------------------------
 
 def _check_postgres(db: Session) -> dict:
     try:
         db.execute(text("SELECT 1"))
         return {"status": "healthy", "label": "PostgreSQL DB"}
     except Exception as exc:
-        return {"status": "unhealthy", "label": "PostgreSQL DB", "detail": str(exc)}
+        db.rollback()
+        return {"status": "unhealthy", "label": "PostgreSQL DB", "detail": "Connection failed"}
 
 
 def _check_redis() -> dict:
@@ -39,8 +43,8 @@ def _check_redis() -> dict:
         r = redis.Redis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, socket_connect_timeout=2)
         r.ping()
         return {"status": "healthy", "label": "Redis Cache"}
-    except Exception as exc:
-        return {"status": "unhealthy", "label": "Redis Cache", "detail": str(exc)}
+    except Exception:
+        return {"status": "unhealthy", "label": "Redis Cache", "detail": "Connection failed"}
 
 
 def _check_qdrant() -> dict:
@@ -48,8 +52,8 @@ def _check_qdrant() -> dict:
         client = QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT, timeout=2)
         client.get_collections()
         return {"status": "healthy", "label": "Qdrant Vector DB"}
-    except Exception as exc:
-        return {"status": "unhealthy", "label": "Qdrant Vector DB", "detail": str(exc)}
+    except Exception:
+        return {"status": "unhealthy", "label": "Qdrant Vector DB", "detail": "Connection failed"}
 
 
 def _check_minio() -> dict:
@@ -57,8 +61,8 @@ def _check_minio() -> dict:
         client = get_minio_client()
         client.list_buckets()
         return {"status": "healthy", "label": "MinIO Object Storage"}
-    except Exception as exc:
-        return {"status": "unhealthy", "label": "MinIO Object Storage", "detail": str(exc)}
+    except Exception:
+        return {"status": "unhealthy", "label": "MinIO Object Storage", "detail": "Connection failed"}
 
 
 def _get_provider_info() -> dict:
@@ -73,7 +77,7 @@ def _get_provider_info() -> dict:
     elif provider_name == "openai":
         model = os.getenv("OPENAI_MODEL", "unknown")
     elif provider_name == "ollama":
-        model = os.getenv("OLLAMA_MODEL", "unknown")
+        model = os.getenv("OLLAMAMODEL", "unknown")
     else:
         model = "unknown"
 
@@ -87,62 +91,85 @@ def _get_provider_info() -> dict:
 
 def _get_rag_summary(db: Session) -> dict:
     from app.models.evaluation import EvaluationRun
-    latest = db.query(EvaluationRun).order_by(desc(EvaluationRun.created_at)).first()
-    if latest:
+    try:
+        latest = db.query(EvaluationRun).order_by(desc(EvaluationRun.created_at)).first()
+        if latest:
+            return {
+                "last_run": latest.created_at.isoformat() if latest.created_at else None,
+                "total_tests": latest.total_tests,
+                "passed_tests": latest.passed_tests,
+                "failed_tests": latest.failed_tests,
+                "pass_percentage": round(latest.pass_percentage, 2),
+                "status": latest.status,
+            }
         return {
-            "last_run": latest.created_at.isoformat() if latest.created_at else None,
-            "total_tests": latest.total_tests,
-            "passed_tests": latest.passed_tests,
-            "failed_tests": latest.failed_tests,
-            "pass_percentage": round(latest.pass_percentage, 2),
-            "status": latest.status,
+            "last_run": None,
+            "total_tests": 0,
+            "passed_tests": 0,
+            "failed_tests": 0,
+            "pass_percentage": 0.0,
+            "status": "no_runs",
         }
-    return {
-        "last_run": None,
-        "total_tests": 0,
-        "passed_tests": 0,
-        "failed_tests": 0,
-        "pass_percentage": 0.0,
-        "status": "no_runs",
-    }
+    except Exception:
+        db.rollback()
+        return {
+            "last_run": None,
+            "total_tests": 0,
+            "passed_tests": 0,
+            "failed_tests": 0,
+            "pass_percentage": 0.0,
+            "status": "unavailable",
+        }
 
 
 def _get_document_summary(db: Session) -> dict:
     from app.models.document import Document
-    total = db.query(Document).count()
-    indexed = db.query(Document).filter(Document.status == "indexed").count()
-    failed = db.query(Document).filter(Document.status == "failed").count()
-    pending = db.query(Document).filter(Document.status == "pending").count()
-    return {
-        "total_documents": total,
-        "indexed": indexed,
-        "failed": failed,
-        "pending": pending,
-        "collection_name": settings.QDRANT_COLLECTION,
-        "embedding_provider": settings.EMBEDDING_PROVIDER,
-        "embedding_dimension": settings.EMBEDDING_DIMENSION,
-    }
+    try:
+        total = db.query(Document).count()
+        indexed = db.query(Document).filter(Document.status == "indexed").count()
+        failed = db.query(Document).filter(Document.status == "failed").count()
+        pending = db.query(Document).filter(Document.status == "pending").count()
+        return {
+            "total_documents": total,
+            "indexed": indexed,
+            "failed": failed,
+            "pending": pending,
+            "collection_name": settings.QDRANT_COLLECTION,
+            "embedding_provider": settings.EMBEDDING_PROVIDER,
+            "embedding_dimension": settings.EMBEDDING_DIMENSION,
+        }
+    except Exception:
+        db.rollback()
+        return {
+            "total_documents": 0,
+            "indexed": 0,
+            "failed": 0,
+            "pending": 0,
+            "collection_name": settings.QDRANT_COLLECTION or "unknown",
+            "embedding_provider": settings.EMBEDDING_PROVIDER or "unknown",
+            "embedding_dimension": settings.EMBEDDING_DIMENSION or 0,
+        }
 
 
 def _get_security_summary(db: Session, auth: AuthContext) -> dict:
     since = datetime.utcnow() - timedelta(days=1)
 
-    # Use .name to get uppercase enum names matching PostgreSQL enum values.
-    # PostgreSQL stores enum member names (e.g. "LOGIN_FAILURE"), not the
-    # Python enum's .value (e.g. "login_failure").  Wrapped in try/except so
-    # a missing or malformed enum value never 500s the whole dashboard.
     try:
+        # PostgreSQL stores enum values as UPPERCASE names (e.g. "LOGIN_FAILURE").
+        # Use .name to get the uppercase string matching the DB representation.
         failed_logins = db.query(AuditLog).filter(
             AuditLog.action.in_((AuditAction.LOGIN_FAILURE.name, AuditAction.LOGIN_SUCCESS.name)),
             AuditLog.status == "failure",
             AuditLog.created_at >= since,
         ).count()
     except Exception:
+        db.rollback()
         failed_logins = 0
 
     try:
         recent_audits = db.query(AuditLog).filter(AuditLog.created_at >= since).count()
     except Exception:
+        db.rollback()
         recent_audits = 0
 
     admin_action_names = (
@@ -161,11 +188,12 @@ def _get_security_summary(db: Session, auth: AuthContext) -> dict:
             .first()
         )
     except Exception:
-        pass
+        db.rollback()
 
     try:
         total_users = db.query(User).filter(User.is_active == True).count()
     except Exception:
+        db.rollback()
         total_users = 0
 
     return {
@@ -187,71 +215,84 @@ def _get_recent_activity(db: Session) -> dict:
     from app.models.evaluation import EvaluationRun
     from app.models.observability import ChatObservation
 
-    latest_docs = (
-        db.query(Document)
-        .order_by(desc(Document.created_at))
-        .limit(5)
-        .all()
-    )
+    recent_documents: list[dict[str, Any]] = []
+    latest_evaluation: dict[str, Any] | None = None
+    recent_audit_events: list[dict[str, Any]] = []
+    recent_feedback: list[dict[str, Any]] = []
 
-    latest_eval = (
-        db.query(EvaluationRun)
-        .order_by(desc(EvaluationRun.created_at))
-        .first()
-    )
-
-    latest_audits = (
-        db.query(AuditLog)
-        .order_by(desc(AuditLog.created_at))
-        .limit(5)
-        .all()
-    )
-
-    latest_feedback = (
-        db.query(ChatObservation)
-        .filter(ChatObservation.feedback_rating.isnot(None))
-        .order_by(desc(ChatObservation.created_at))
-        .limit(5)
-        .all()
-    )
-
-    return {
-        "recent_documents": [
+    try:
+        docs = db.query(Document).order_by(desc(Document.created_at)).limit(5).all()
+        recent_documents = [
             {
                 "id": d.id,
                 "filename": d.original_name or d.filename,
                 "status": d.status,
                 "created_at": d.created_at.isoformat() if d.created_at else None,
             }
-            for d in latest_docs
-        ],
-        "latest_evaluation": {
-            "run_id": latest_eval.id,
-            "created_at": latest_eval.created_at.isoformat() if latest_eval and latest_eval.created_at else None,
-            "pass_percentage": round(latest_eval.pass_percentage, 2) if latest_eval else None,
-            "status": latest_eval.status if latest_eval else None,
-        } if latest_eval else None,
-        "recent_audit_events": [
+            for d in docs
+        ]
+    except Exception:
+        db.rollback()
+
+    try:
+        latest_eval = db.query(EvaluationRun).order_by(desc(EvaluationRun.created_at)).first()
+        if latest_eval:
+            latest_evaluation = {
+                "run_id": latest_eval.id,
+                "created_at": latest_eval.created_at.isoformat() if latest_eval.created_at else None,
+                "pass_percentage": round(latest_eval.pass_percentage, 2),
+                "status": latest_eval.status,
+            }
+    except Exception:
+        db.rollback()
+
+    try:
+        audits = db.query(AuditLog).order_by(desc(AuditLog.created_at)).limit(5).all()
+        recent_audit_events = [
             {
                 "id": a.id,
-                "action": a.action.value if hasattr(a.action, "value") else str(a.action),
+                # Use .name to get the uppercase DB representation of the enum.
+                "action": a.action.name if hasattr(a.action, "name") else str(a.action),
                 "username": a.username,
                 "status": a.status,
                 "timestamp": a.created_at.isoformat() if a.created_at else None,
             }
-            for a in latest_audits
-        ],
-        "recent_feedback": [
+            for a in audits
+        ]
+    except Exception:
+        db.rollback()
+
+    try:
+        feedback = (
+            db.query(ChatObservation)
+            .filter(ChatObservation.feedback_rating.isnot(None))
+            .order_by(desc(ChatObservation.created_at))
+            .limit(5)
+            .all()
+        )
+        recent_feedback = [
             {
                 "id": f.id,
                 "rating": f.feedback_rating,
-                "question": f.question[:100] + "..." if f.question and len(f.question) > 100 else f.question,
+                "question": (f.question[:100] + "...") if f.question and len(f.question) > 100 else f.question,
                 "timestamp": f.created_at.isoformat() if f.created_at else None,
             }
-            for f in latest_feedback
-        ],
+            for f in feedback
+        ]
+    except Exception:
+        db.rollback()
+
+    return {
+        "recent_documents": recent_documents,
+        "latest_evaluation": latest_evaluation,
+        "recent_audit_events": recent_audit_events,
+        "recent_feedback": recent_feedback,
     }
 
+
+# ---------------------------------------------------------------------------
+# Endpoint — fully isolated subsections: one failing never 500s the whole
+# ---------------------------------------------------------------------------
 
 @router.get("/status")
 def get_system_status(
@@ -273,26 +314,80 @@ def get_system_status(
     - Recent activity
 
     No secrets, API keys, tokens, or raw .env values are exposed.
+    Every subsection is fully isolated — a failure in any one of them
+    returns a safe degraded response and never 500s the whole endpoint.
     """
     # Infer gateway info from request headers
     forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
     is_https = forwarded_proto == "https" or request.url.scheme == "https"
     host = request.headers.get("Host", request.url.hostname or "unknown")
 
-    # Connectivity checks
+    # Connectivity checks — each is already self-contained
     pg = _check_postgres(db)
     rd = _check_redis()
     qd = _check_qdrant()
     mn = _check_minio()
 
-    # Overall health
     all_ok = all(s["status"] == "healthy" for s in [pg, rd, qd, mn])
-
     provider = _get_provider_info()
+
+    # Each subsection is fully isolated: try/except + rollback ensures a
+    # failure in one query does NOT abort the transaction for the rest.
+    rag_quality: dict[str, Any] = {
+        "last_run": None,
+        "total_tests": 0,
+        "passed_tests": 0,
+        "failed_tests": 0,
+        "pass_percentage": 0.0,
+        "status": "unavailable",
+    }
+    documents: dict[str, Any] = {
+        "total_documents": 0,
+        "indexed": 0,
+        "failed": 0,
+        "pending": 0,
+        "collection_name": "unknown",
+        "embedding_provider": "unknown",
+        "embedding_dimension": 0,
+    }
+    security: dict[str, Any] = {
+        "auth_mode": "unknown",
+        "current_user_role": "unknown",
+        "total_active_users": 0,
+        "recent_failed_logins_24h": 0,
+        "recent_audit_events_24h": 0,
+        "last_admin_action": None,
+    }
+    recent_activity: dict[str, Any] = {
+        "recent_documents": [],
+        "latest_evaluation": None,
+        "recent_audit_events": [],
+        "recent_feedback": [],
+    }
+
+    try:
+        rag_quality = _get_rag_summary(db)
+    except Exception:
+        db.rollback()
+
+    try:
+        documents = _get_document_summary(db)
+    except Exception:
+        db.rollback()
+
+    try:
+        security = _get_security_summary(db, auth)
+    except Exception:
+        db.rollback()
+
+    try:
+        recent_activity = _get_recent_activity(db)
+    except Exception:
+        db.rollback()
 
     return {
         "gateway": {
-            "nginx_proxy": "healthy",  # If request reached here through nginx, it's working
+            "nginx_proxy": "healthy",
             "https_active": is_https,
             "domain": host,
         },
@@ -312,10 +407,10 @@ def get_system_status(
             "gateway_mode": provider["gateway_mode"],
             "litellm_enabled": provider["litellm_enabled"],
         },
-        "rag_quality": _get_rag_summary(db),
-        "documents": _get_document_summary(db),
-        "security": _get_security_summary(db, auth),
-        "recent_activity": _get_recent_activity(db),
+        "rag_quality": rag_quality,
+        "documents": documents,
+        "security": security,
+        "recent_activity": recent_activity,
         "overall_healthy": all_ok,
         "status_source_note": "Status is based on application connectivity checks, not raw Docker container state.",
     }

@@ -155,3 +155,86 @@ class TestAdminStatusEndpoint:
         assert "recent_failed_logins_24h" in summary
         assert "recent_audit_events_24h" in summary
         assert "last_admin_action" in summary
+
+    def test_endpoint_returns_200_when_security_summary_fails(self, jwt_admin_client, monkeypatch):
+        """
+        Even if the security subsection raises an exception, the endpoint
+        must still return HTTP 200 with a degraded-but-safe security section.
+        """
+        import app.api.admin_status as admin_status_mod
+
+        def broken_security_summary(db, auth):
+            raise RuntimeError("simulated security DB failure")
+
+        monkeypatch.setattr(admin_status_mod, "_get_security_summary", broken_security_summary)
+        response = jwt_admin_client.get("/api/admin/system/status")
+
+        assert response.status_code == 200, "Endpoint must not 500 when a subsection fails"
+        data = response.json()
+
+        # Other sections must still be present
+        assert "gateway" in data
+        assert "application" in data
+        assert "data" in data
+        assert "ai_provider" in data
+        assert "rag_quality" in data
+        assert "documents" in data
+        assert "recent_activity" in data
+
+        # Security section must exist and contain safe degraded values
+        assert "security" in data
+        sec = data["security"]
+        assert isinstance(sec["total_active_users"], int)
+        assert isinstance(sec["recent_failed_logins_24h"], int)
+        assert isinstance(sec["recent_audit_events_24h"], int)
+        # No raw error details leaked
+        raw = response.text.lower()
+        assert "simulated" not in raw
+        assert "runtimeerror" not in raw
+        assert "traceback" not in raw
+        assert "stack" not in raw
+
+    def test_endpoint_returns_200_when_rag_summary_fails(self, jwt_admin_client, monkeypatch):
+        """
+        Even if the RAG summary subsection raises an exception, the endpoint
+        must still return HTTP 200 with degraded default values for rag_quality.
+        """
+        import app.api.admin_status as admin_status_mod
+
+        def broken_rag_summary(db):
+            raise RuntimeError("simulated RAG DB failure")
+
+        monkeypatch.setattr(admin_status_mod, "_get_rag_summary", broken_rag_summary)
+        response = jwt_admin_client.get("/api/admin/system/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        rag = data["rag_quality"]
+        assert rag["status"] == "unavailable"
+        assert rag["total_tests"] == 0
+        raw = response.text.lower()
+        assert "simulated" not in raw
+        assert "runtimeerror" not in raw
+
+    def test_recent_activity_isolation(self, jwt_admin_client, monkeypatch):
+        """
+        Even if _get_recent_activity fails completely, the endpoint still
+        returns 200 and all other sections are populated.
+        """
+        import app.api.admin_status as admin_status_mod
+
+        def broken_recent_activity(db):
+            raise RuntimeError("simulated recent_activity failure")
+
+        monkeypatch.setattr(admin_status_mod, "_get_recent_activity", broken_recent_activity)
+        response = jwt_admin_client.get("/api/admin/system/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        # recent_activity must be present with safe defaults
+        assert "recent_activity" in data
+        assert isinstance(data["recent_activity"], dict)
+        # No secrets leaked
+        raw = response.text.lower()
+        assert "simulated" not in raw
+        assert "runtimeerror" not in raw
