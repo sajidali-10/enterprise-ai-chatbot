@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { useAuth } from '@/contexts/AuthContext'
 import { getApiBaseUrl } from '@/lib/api'
+import { useAuthFetch } from '@/hooks/useApi'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import AppHeader from '@/components/AppHeader'
 import { normalizePermissions, type PermissionFlags } from '@/lib/permissions'
@@ -278,7 +279,9 @@ function DashboardContent() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const [basicHealth, setBasicHealth] = useState<{ status: string; service: string } | null>(null)
   const [healthError, setHealthError] = useState<string | null>(null)
+  const [statusError, setStatusError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const authFetch = useAuthFetch()
 
   useEffect(() => {
     async function load() {
@@ -295,23 +298,24 @@ function DashboardContent() {
       // Admin system status
       if (isAdmin) {
         try {
-          const token = localStorage.getItem('token') || ''
-          const res = await fetch(`${getApiBaseUrl()}/api/admin/system/status`, {
-            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          })
+          const res = await authFetch('/api/admin/system/status')
           if (res.ok) {
             const data = await res.json()
             setSystemStatus(data)
+          } else if (res.status === 403) {
+            setStatusError('Admin access required for system status.')
+          } else {
+            setStatusError(`Failed to load system status (HTTP ${res.status}).`)
           }
-        } catch {
-          // Fallback to basic if admin status fails
+        } catch (err) {
+          setStatusError(err instanceof Error ? err.message : 'Failed to load system status.')
         }
       }
 
       setLoading(false)
     }
     load()
-  }, [isAdmin])
+  }, [isAdmin, authFetch])
 
   const displayName = user?.full_name || user?.username || user?.email || auth?.username || ''
 
@@ -482,6 +486,13 @@ function DashboardContent() {
         {healthError && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-lg mb-8">
             <strong>Backend Connection Error:</strong> {healthError}
+          </div>
+        )}
+
+        {/* Admin Status Error Banner */}
+        {statusError && (
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 px-4 py-3 rounded-lg mb-8">
+            <strong>System Status:</strong> {statusError}
           </div>
         )}
 

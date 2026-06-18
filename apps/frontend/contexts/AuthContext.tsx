@@ -229,15 +229,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Global 401 handler — any API call returning 401 triggers logout
+  // Global 401 handler — only redirect for /api/auth/me failures
   useEffect(() => {
     const originalFetch = window.fetch
     window.fetch = async (...args) => {
       const response = await originalFetch(...args)
       if (response.status === 401) {
-        // Only handle 401 for API calls, not static assets
+        // Only handle 401 for /api/auth/me — other endpoints handle auth locally
         const url = typeof args[0] === 'string' ? args[0] : args[0].toString()
-        if (url.includes(getApiBaseUrl())) {
+        if (url.includes('/api/auth/me')) {
           localStorage.removeItem('access_token')
           window.location.href = '/auth'
         }
