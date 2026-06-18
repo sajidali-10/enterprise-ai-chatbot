@@ -663,12 +663,10 @@ function DashboardContent() {
               ) : (
                 <div className="space-y-5">
                   <div className="grid grid-cols-2 gap-4">
-                    <MetricTile label="Auth Mode" value={systemStatus.security.auth_mode} />
-                    <MetricTile label="Current Role" value={systemStatus.security.current_user_role.charAt(0).toUpperCase() + systemStatus.security.current_user_role.slice(1)} />
-                    <MetricTile label="Active Users" value={String(systemStatus.security.total_active_users)} />
                     <MetricTile label="Failed Logins" value={String(systemStatus.security.recent_failed_logins_24h)} tone={systemStatus.security.recent_failed_logins_24h > 0 ? 'red' : 'green'} />
                     <MetricTile label="Audit Events" value={String(systemStatus.security.recent_audit_events_24h)} />
-                    <MetricTile label="Audit Events" value={String(systemStatus.security.recent_audit_events_24h)} />
+                    <MetricTile label="Active Users" value={String(systemStatus.security.total_active_users)} />
+                    <MetricTile label="Auth Mode" value={systemStatus.security.auth_mode} />
                   </div>
 
                   <div className="h-px bg-hiplink-border dark:bg-dark-border" />
@@ -685,6 +683,12 @@ function DashboardContent() {
                         {new Date(systemStatus.security.last_admin_action.timestamp).toLocaleString()}
                       </p>
                     )}
+                    <div className="pt-1">
+                      <Link href="/admin/security" className="inline-flex items-center gap-1.5 text-sm font-medium text-hiplink-blue hover:underline">
+                        Open Security Operations
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                      </Link>
+                    </div>
                   </div>
                 </div>
               )}

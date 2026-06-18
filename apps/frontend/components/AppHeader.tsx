@@ -82,6 +82,8 @@ interface NavItem {
  *   4. Observability
  *   5. Evaluations
  *   6. Users
+ *   7. Security
+ *   8. Audit Logs
  */
 const NAV_ITEMS: NavItem[] = [
   { href: '/', label: 'Dashboard', matchPath: (p) => p === '/' },
@@ -109,6 +111,12 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Users',
     permission: 'canManageUsers',
     matchPath: (p) => p === '/admin/users' || p.startsWith('/admin/users/'),
+  },
+  {
+    href: '/admin/security',
+    label: 'Security',
+    permission: 'canAccessObservability',
+    matchPath: (p) => p === '/admin/security',
   },
   {
     href: '/admin/audit-logs',
