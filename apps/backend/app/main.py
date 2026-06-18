@@ -10,6 +10,7 @@ from app.api import auth as auth_router
 from app.api import admin as admin_router
 from app.api import admin_documents as admin_documents_router
 from app.api import admin_audit as admin_audit_router
+from app.api import admin_status as admin_status_router
 from app.db.base import Base, engine
 from app.core.config import settings
 from app.core.startup_validation import validate_startup
@@ -53,6 +54,7 @@ app.include_router(auth_router.router)
 app.include_router(admin_router.router)
 app.include_router(admin_documents_router.router)
 app.include_router(admin_audit_router.router)
+app.include_router(admin_status_router.router)
 
 
 @app.on_event("startup")
