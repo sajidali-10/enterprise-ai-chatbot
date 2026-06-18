@@ -17,7 +17,7 @@ export function getApiBaseUrl(): string {
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
     // Use same host but port 8000 for backend
-    return `${protocol}//${hostname}:8000`;
+    return window.location.origin;
   }
 
   // Fallback for SSR (should not be used for browser requests)
