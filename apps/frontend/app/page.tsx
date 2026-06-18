@@ -106,14 +106,14 @@ interface SystemStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Status helpers
+// Status helpers — dark-aware color tokens
 // ---------------------------------------------------------------------------
 function statusDotClass(status: string) {
   const s = status.toLowerCase()
-  if (['healthy', 'active', 'pass', 'indexed', 'success', 'operational'].includes(s)) {
+  if (['healthy', 'active', 'pass', 'indexed', 'success', 'operational', 'online'].includes(s)) {
     return 'bg-emerald-500'
   }
-  if (['unhealthy', 'failure', 'failed', 'error', 'degraded'].includes(s)) {
+  if (['unhealthy', 'failure', 'failed', 'error', 'degraded', 'offline'].includes(s)) {
     return 'bg-red-500'
   }
   if (['warning', 'pending', 'unknown'].includes(s)) {
@@ -124,42 +124,42 @@ function statusDotClass(status: string) {
 
 function statusTextClass(status: string) {
   const s = status.toLowerCase()
-  if (['healthy', 'active', 'pass', 'indexed', 'success', 'operational'].includes(s)) {
-    return 'text-emerald-400'
+  if (['healthy', 'active', 'pass', 'indexed', 'success', 'operational', 'online'].includes(s)) {
+    return 'text-emerald-600 dark:text-emerald-400'
   }
-  if (['unhealthy', 'failure', 'failed', 'error', 'degraded'].includes(s)) {
-    return 'text-red-400'
+  if (['unhealthy', 'failure', 'failed', 'error', 'degraded', 'offline'].includes(s)) {
+    return 'text-red-600 dark:text-red-400'
   }
   if (['warning', 'pending', 'unknown'].includes(s)) {
-    return 'text-amber-400'
+    return 'text-amber-600 dark:text-amber-400'
   }
-  return 'text-sky-400'
+  return 'text-sky-600 dark:text-sky-400'
 }
 
 function statusBadgeClass(status: string) {
   const s = status.toLowerCase()
-  if (['healthy', 'active', 'pass', 'indexed', 'success', 'operational'].includes(s)) {
-    return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+  if (['healthy', 'active', 'pass', 'indexed', 'success', 'operational', 'online'].includes(s)) {
+    return 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20'
   }
-  if (['unhealthy', 'failure', 'failed', 'error', 'degraded'].includes(s)) {
-    return 'bg-red-500/10 text-red-400 border-red-500/20'
+  if (['unhealthy', 'failure', 'failed', 'error', 'degraded', 'offline'].includes(s)) {
+    return 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200 dark:border-red-500/20'
   }
   if (['warning', 'pending', 'unknown'].includes(s)) {
-    return 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+    return 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20'
   }
-  return 'bg-sky-500/10 text-sky-400 border-sky-500/20'
+  return 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-500/20'
 }
 
 // ---------------------------------------------------------------------------
 // Skeleton components
 // ---------------------------------------------------------------------------
 function SkeletonRow({ w = 'w-3/4' }: { w?: string }) {
-  return <div className={`h-3 bg-slate-700/50 rounded ${w} animate-pulse`} />
+  return <div className={`h-3 bg-gray-200 dark:bg-slate-700/50 rounded ${w} animate-pulse`} />
 }
 
 function SkeletonCard() {
   return (
-    <div className="bg-dark-card border border-dark-border rounded-xl p-5 space-y-3">
+    <div className="bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-xl p-5 space-y-3">
       <SkeletonRow w="w-1/2" />
       <SkeletonRow w="w-3/4" />
       <SkeletonRow w="w-1/3" />
@@ -168,13 +168,17 @@ function SkeletonCard() {
 }
 
 // ---------------------------------------------------------------------------
-// Small inline degraded card (never a full-width error banner)
+// Small inline degraded indicator
 // ---------------------------------------------------------------------------
-function DegradedPill({ label }: { label: string }) {
+function RefreshIndicator({ error }: { error: string | null }) {
+  if (!error) return null
   return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-      {label}
+    <span
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20"
+      title={error}
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+      Refresh failed
     </span>
   )
 }
@@ -254,15 +258,42 @@ const Icons = {
 // ---------------------------------------------------------------------------
 // KPI Card
 // ---------------------------------------------------------------------------
-function KPICard({ label, value, color, icon }: { label: string; value: string; color: string; icon: React.ReactNode }) {
+function KPICard({ label, value, icon, tone }: { label: string; value: string; icon: React.ReactNode; tone: 'green' | 'blue' | 'amber' | 'slate' }) {
+  const toneMap = {
+    green: {
+      bg: 'bg-emerald-50 dark:bg-emerald-500/10',
+      border: 'border-emerald-200 dark:border-emerald-500/20',
+      text: 'text-emerald-700 dark:text-emerald-400',
+      iconBg: 'bg-emerald-100 dark:bg-emerald-500/20',
+    },
+    blue: {
+      bg: 'bg-sky-50 dark:bg-sky-500/10',
+      border: 'border-sky-200 dark:border-sky-500/20',
+      text: 'text-sky-700 dark:text-sky-400',
+      iconBg: 'bg-sky-100 dark:bg-sky-500/20',
+    },
+    amber: {
+      bg: 'bg-amber-50 dark:bg-amber-500/10',
+      border: 'border-amber-200 dark:border-amber-500/20',
+      text: 'text-amber-700 dark:text-amber-400',
+      iconBg: 'bg-amber-100 dark:bg-amber-500/20',
+    },
+    slate: {
+      bg: 'bg-white dark:bg-dark-card',
+      border: 'border-hiplink-border dark:border-dark-border',
+      text: 'text-hiplink-dark dark:text-dark-text',
+      iconBg: 'bg-gray-100 dark:bg-slate-700/30',
+    },
+  }
+  const t = toneMap[tone]
   return (
-    <div className="bg-dark-card border border-dark-border rounded-xl p-4 flex items-center gap-3">
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${color} bg-opacity-10`}>
-        <div className={color}>{icon}</div>
+    <div className={`${t.bg} ${t.border} border rounded-xl p-4 flex items-center gap-3`}>
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${t.iconBg}`}>
+        <div className={t.text}>{icon}</div>
       </div>
       <div>
-        <p className="text-xs text-dark-text-dim">{label}</p>
-        <p className="text-sm font-semibold text-dark-text">{value}</p>
+        <p className="text-xs text-hiplink-secondary dark:text-dark-text-muted">{label}</p>
+        <p className="text-sm font-semibold text-hiplink-dark dark:text-dark-text">{value}</p>
       </div>
     </div>
   )
@@ -273,12 +304,14 @@ function KPICard({ label, value, color, icon }: { label: string; value: string; 
 // ---------------------------------------------------------------------------
 function ServiceHealthGroup({ title, items }: StatusGroup) {
   return (
-    <div className="bg-dark-card border border-dark-border rounded-xl p-5">
-      <h4 className="text-xs font-semibold text-dark-text-dim uppercase tracking-wider mb-4">{title}</h4>
+    <div className="card p-5">
+      <h4 className="text-xs font-semibold text-hiplink-secondary dark:text-dark-text-muted uppercase tracking-wider mb-4">
+        {title}
+      </h4>
       <div className="space-y-2.5">
         {items.map((item) => (
           <div key={item.label} className="flex items-center justify-between text-sm">
-            <span className="text-dark-text-muted">{item.label}</span>
+            <span className="text-hiplink-dark dark:text-dark-text">{item.label}</span>
             <span className="flex items-center gap-1.5">
               <span className={`w-2 h-2 rounded-full ${statusDotClass(item.status)}`} />
               <span className={`text-xs font-medium ${statusTextClass(item.status)}`}>
@@ -295,19 +328,26 @@ function ServiceHealthGroup({ title, items }: StatusGroup) {
 // ---------------------------------------------------------------------------
 // Operation Card
 // ---------------------------------------------------------------------------
-function OperationCard({ title, description, href, icon, bg }: {
-  title: string; description: string; href: string; icon: React.ReactNode; bg: string
+function OperationCard({ title, description, href, icon, color }: {
+  title: string; description: string; href: string; icon: React.ReactNode; color: string
 }) {
   return (
-    <Link href={href} className="bg-dark-card border border-dark-border rounded-xl p-4 flex items-center gap-4 hover:border-hiplink-blue/50 hover:bg-dark-elevated transition-all group">
-      <div className={`w-11 h-11 rounded-lg flex items-center justify-center flex-shrink-0 ${bg}`}>
+    <Link
+      href={href}
+      className="card p-5 flex items-center gap-4 hover:shadow-md hover:border-hiplink-blue/40 dark:hover:border-hiplink-blue/30 transition-all group"
+    >
+      <div className={`w-11 h-11 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
         <div className="text-white">{icon}</div>
       </div>
       <div className="flex-1 min-w-0">
-        <h3 className="text-sm font-medium text-dark-text group-hover:text-hiplink-blue transition-colors">{title}</h3>
-        <p className="text-xs text-dark-text-dim mt-0.5 leading-relaxed">{description}</p>
+        <h3 className="text-sm font-medium text-hiplink-dark dark:text-dark-text group-hover:text-hiplink-blue dark:group-hover:text-sky-400 transition-colors">
+          {title}
+        </h3>
+        <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mt-0.5 leading-relaxed">
+          {description}
+        </p>
       </div>
-      <svg className="w-4 h-4 text-dark-text-dim flex-shrink-0 group-hover:text-hiplink-blue transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg className="w-4 h-4 text-hiplink-secondary dark:text-dark-text-dim flex-shrink-0 group-hover:text-hiplink-blue dark:group-hover:text-sky-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
       </svg>
     </Link>
@@ -318,7 +358,7 @@ function OperationCard({ title, description, href, icon, bg }: {
 // Dashboard Content
 // ---------------------------------------------------------------------------
 function DashboardContent() {
-  const { auth, user } = useAuth()
+  const { auth, user, loading: authLoading } = useAuth()
   const authFetch = useAuthFetch()
   const rawRole = (auth?.role ?? 'viewer') as string
   const perms: PermissionFlags = normalizePermissions(auth?.permissions, rawRole)
@@ -327,138 +367,121 @@ function DashboardContent() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [statusError, setStatusError] = useState<string | null>(null)
-  const retryCountRef = useRef(0)
-  const abortRef = useRef<AbortController | null>(null)
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
-  const fetchStatus = useCallback(async (isRetry = false) => {
+  // Refs to avoid dependency loops
+  const authFetchRef = useRef(authFetch)
+  const abortRef = useRef<AbortController | null>(null)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const fetchInProgressRef = useRef(false)
+
+  authFetchRef.current = authFetch
+
+  /**
+   * Load status — supports both initial (shows loading) and background (silent).
+   * Uses refs for authFetch to keep deps stable (prevents useEffect loops).
+   */
+  const loadStatus = useCallback(async (isBackground = false) => {
     if (!isAdmin) {
       setLoading(false)
       return
     }
+    if (fetchInProgressRef.current) return
 
-    // Cancel any in-flight request
-    if (abortRef.current) {
-      abortRef.current.abort()
-    }
-    abortRef.current = new AbortController()
-
-    if (!isRetry) {
-      setLoading(true)
-      setStatusError(null)
-    }
+    fetchInProgressRef.current = true
+    if (!isBackground) setLoading(true)
+    setStatusError(null)
 
     try {
-      const res = await authFetch('/api/admin/system/status', {
+      if (abortRef.current) abortRef.current.abort()
+      abortRef.current = new AbortController()
+
+      const res = await authFetchRef.current('/api/admin/system/status', {
         signal: abortRef.current.signal,
       })
+
       if (res.ok) {
         const data: SystemStatus = await res.json()
         setSystemStatus(data)
-        retryCountRef.current = 0
+        setStatusError(null)
+        setLastRefresh(new Date())
       } else if (res.status === 401 || res.status === 403) {
-        // Auth failure — let the global handler or login flow deal with it
         setStatusError('Access denied')
       } else {
         setStatusError(`Status unavailable (${res.status})`)
       }
-    } catch (err) {
-      // AbortError is expected on unmount/tab-switch — ignore it
-      if (err instanceof Error && err.name === 'AbortError') return
-      setStatusError('Status unavailable')
+    } catch (err: any) {
+      // Ignore AbortError — expected on unmount / tab-switch
+      if (err?.name === 'AbortError') return
+      setStatusError('Refresh failed')
     } finally {
-      setLoading(false)
+      fetchInProgressRef.current = false
+      if (!isBackground) setLoading(false)
     }
-  }, [isAdmin, authFetch])
+  }, [isAdmin])
 
-  // Initial fetch + cleanup
+  // Initial fetch + background refresh every 60s.
+  // Runs once isAdmin is resolved (authLoading is false).
   useEffect(() => {
-    fetchStatus()
+    if (authLoading) return
+
+    loadStatus(false)
+
+    intervalRef.current = setInterval(() => {
+      loadStatus(true)
+    }, 60000)
+
     return () => {
-      if (abortRef.current) {
-        abortRef.current.abort()
-      }
+      if (abortRef.current) abortRef.current.abort()
+      if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [fetchStatus])
+  }, [authLoading, loadStatus])
 
-  // Retry once after a short delay
-  useEffect(() => {
-    if (statusError && retryCountRef.current < 1) {
-      retryCountRef.current += 1
-      const t = setTimeout(() => fetchStatus(true), 2500)
-      return () => clearTimeout(t)
-    }
-  }, [statusError, fetchStatus])
+  const displayName = user?.full_name || user?.username || user?.email || auth?.username || ''
 
-  // Build groups from system status or show degraded defaults
+  // -------------------------------------------------------------------------
+  // Build service health groups from status or degraded defaults
+  // -------------------------------------------------------------------------
   const buildGroups = (): StatusGroup[] => {
-    if (systemStatus) {
+    if (!systemStatus) {
       return [
-        {
-          title: 'Application',
-          items: [
-            { label: systemStatus.application.frontend.label, status: systemStatus.application.frontend.status },
-            { label: systemStatus.application.backend_api.label, status: systemStatus.application.backend_api.status },
-          ],
-        },
-        {
-          title: 'Gateway',
-          items: [
-            { label: 'Nginx Reverse Proxy', status: systemStatus.gateway.nginx_proxy },
-            { label: 'HTTPS / TLS', status: systemStatus.gateway.https_active ? 'active' : 'unhealthy' },
-            { label: 'Domain', status: 'info', detail: systemStatus.gateway.domain },
-          ],
-        },
-        {
-          title: 'Data',
-          items: [
-            { label: systemStatus.data.postgres.label, status: systemStatus.data.postgres.status },
-            { label: systemStatus.data.redis.label, status: systemStatus.data.redis.status },
-            { label: systemStatus.data.qdrant.label, status: systemStatus.data.qdrant.status },
-            { label: systemStatus.data.minio.label, status: systemStatus.data.minio.status },
-          ],
-        },
-        {
-          title: 'AI',
-          items: [
-            { label: 'Active Provider', status: 'info', detail: systemStatus.ai_provider.active_provider },
-            { label: 'Model', status: 'info', detail: systemStatus.ai_provider.model },
-            { label: 'LiteLLM Gateway', status: systemStatus.ai_provider.litellm_enabled ? 'active' : 'disabled', detail: systemStatus.ai_provider.litellm_enabled ? 'Enabled' : 'Disabled' },
-          ],
-        },
+        { title: 'Application', items: [{ label: 'Frontend UI', status: 'unknown' }, { label: 'Backend API', status: 'unknown' }] },
+        { title: 'Gateway', items: [{ label: 'Nginx Reverse Proxy', status: 'unknown' }, { label: 'HTTPS / TLS', status: 'unknown' }, { label: 'Domain', status: 'unknown' }] },
+        { title: 'Data', items: [{ label: 'PostgreSQL DB', status: 'unknown' }, { label: 'Redis Cache', status: 'unknown' }, { label: 'Qdrant Vector DB', status: 'unknown' }, { label: 'MinIO Object Storage', status: 'unknown' }] },
+        { title: 'AI', items: [{ label: 'Active Provider', status: 'unknown' }, { label: 'Model', status: 'unknown' }, { label: 'LiteLLM Gateway', status: 'unknown' }] },
       ]
     }
-    // Degraded fallback when backend status is not loaded
     return [
       {
         title: 'Application',
         items: [
-          { label: 'Frontend UI', status: 'unknown' },
-          { label: 'Backend API', status: 'unknown' },
+          { label: systemStatus.application.frontend.label, status: systemStatus.application.frontend.status },
+          { label: systemStatus.application.backend_api.label, status: systemStatus.application.backend_api.status },
         ],
       },
       {
         title: 'Gateway',
         items: [
-          { label: 'Nginx Reverse Proxy', status: 'unknown' },
-          { label: 'HTTPS / TLS', status: 'unknown' },
-          { label: 'Domain', status: 'unknown' },
+          { label: 'Nginx Reverse Proxy', status: systemStatus.gateway.nginx_proxy },
+          { label: 'HTTPS / TLS', status: systemStatus.gateway.https_active ? 'active' : 'unhealthy' },
+          { label: 'Domain', status: 'info', detail: systemStatus.gateway.domain },
         ],
       },
       {
         title: 'Data',
         items: [
-          { label: 'PostgreSQL DB', status: 'unknown' },
-          { label: 'Redis Cache', status: 'unknown' },
-          { label: 'Qdrant Vector DB', status: 'unknown' },
-          { label: 'MinIO Object Storage', status: 'unknown' },
+          { label: systemStatus.data.postgres.label, status: systemStatus.data.postgres.status },
+          { label: systemStatus.data.redis.label, status: systemStatus.data.redis.status },
+          { label: systemStatus.data.qdrant.label, status: systemStatus.data.qdrant.status },
+          { label: systemStatus.data.minio.label, status: systemStatus.data.minio.status },
         ],
       },
       {
         title: 'AI',
         items: [
-          { label: 'Active Provider', status: 'unknown' },
-          { label: 'Model', status: 'unknown' },
-          { label: 'LiteLLM Gateway', status: 'unknown', detail: 'Unknown' },
+          { label: 'Active Provider', status: 'info', detail: systemStatus.ai_provider.active_provider },
+          { label: 'Model', status: 'info', detail: systemStatus.ai_provider.model },
+          { label: 'LiteLLM Gateway', status: systemStatus.ai_provider.litellm_enabled ? 'active' : 'disabled', detail: systemStatus.ai_provider.litellm_enabled ? 'Enabled' : 'Disabled' },
         ],
       },
     ]
@@ -466,133 +489,173 @@ function DashboardContent() {
 
   const groups = buildGroups()
 
-  // KPI values
-  const kpiValues = systemStatus
+  // KPI data
+  const kpiData = systemStatus
     ? [
-        { label: 'Overall Health', value: systemStatus.overall_healthy ? 'Healthy' : 'Degraded', color: 'text-emerald-400', bg: 'bg-emerald-500', icon: Icons.checkmark },
-        { label: 'HTTPS / TLS', value: systemStatus.gateway.https_active ? 'Active' : 'Inactive', color: 'text-hiplink-blue', bg: 'bg-sky-500', icon: Icons.lock },
-        { label: 'RAG Evaluation', value: `${systemStatus.rag_quality.passed_tests}/${systemStatus.rag_quality.total_tests} PASS`, color: 'text-emerald-400', bg: 'bg-emerald-500', icon: Icons.chart },
-        { label: 'Active Provider', value: systemStatus.ai_provider.active_provider.charAt(0).toUpperCase() + systemStatus.ai_provider.active_provider.slice(1), color: 'text-hiplink-blue', bg: 'bg-sky-500', icon: Icons.lightning },
-        { label: 'Documents Indexed', value: String(systemStatus.documents.indexed), color: 'text-emerald-400', bg: 'bg-emerald-500', icon: Icons.document },
+        { label: 'Overall Health', value: systemStatus.overall_healthy ? 'Healthy' : 'Degraded', tone: 'green' as const, icon: <span className="text-emerald-600 dark:text-emerald-400">{Icons.checkmark}</span> },
+        { label: 'HTTPS / TLS', value: systemStatus.gateway.https_active ? 'Active' : 'Inactive', tone: 'blue' as const, icon: <span className="text-sky-600 dark:text-sky-400">{Icons.lock}</span> },
+        { label: 'RAG Evaluation', value: `${systemStatus.rag_quality.passed_tests}/${systemStatus.rag_quality.total_tests} PASS`, tone: 'green' as const, icon: <span className="text-emerald-600 dark:text-emerald-400">{Icons.chart}</span> },
+        { label: 'Active Provider', value: systemStatus.ai_provider.active_provider.charAt(0).toUpperCase() + systemStatus.ai_provider.active_provider.slice(1), tone: 'blue' as const, icon: <span className="text-sky-600 dark:text-sky-400">{Icons.lightning}</span> },
+        { label: 'Documents Indexed', value: String(systemStatus.documents.indexed), tone: 'green' as const, icon: <span className="text-emerald-600 dark:text-emerald-400">{Icons.document}</span> },
       ]
-    : [
-        { label: 'Overall Health', value: 'Checking…', color: 'text-dark-text-dim', bg: 'bg-slate-600', icon: Icons.checkmark },
-        { label: 'HTTPS / TLS', value: 'Checking…', color: 'text-dark-text-dim', bg: 'bg-slate-600', icon: Icons.lock },
-        { label: 'RAG Evaluation', value: 'Checking…', color: 'text-dark-text-dim', bg: 'bg-slate-600', icon: Icons.chart },
-        { label: 'Active Provider', value: 'Checking…', color: 'text-dark-text-dim', bg: 'bg-slate-600', icon: Icons.lightning },
-        { label: 'Documents Indexed', value: 'Checking…', color: 'text-dark-text-dim', bg: 'bg-slate-600', icon: Icons.document },
-      ]
+    : null
 
-  const displayName = user?.full_name || user?.username || user?.email || auth?.username || ''
+  // -------------------------------------------------------------------------
+  // Non-admin simplified dashboard
+  // -------------------------------------------------------------------------
+  if (!isAdmin) {
+    return (
+      <main className="min-h-screen bg-hiplink-background dark:bg-dark-bg">
+        <AppHeader />
+        <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
 
+          {/* Hero */}
+          <div className="card p-8 text-center relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-hiplink-blue/5 to-transparent pointer-events-none" />
+            <div className="relative z-10">
+              <Image src="/hiplink-logo.png" alt="HipLink" width={72} height={72} className="object-contain mx-auto mb-4" />
+              <h1 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text mb-2">Enterprise AI Assistant</h1>
+              <p className="text-sm text-hiplink-secondary dark:text-dark-text-muted max-w-xl mx-auto mb-4 leading-relaxed">
+                Chat with AI using general conversation or query your uploaded documents with RAG-powered retrieval.
+              </p>
+              <div className="flex items-center justify-center gap-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
+                <span>Production • chatbot.hiplink.com</span>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium ${statusBadgeClass('active')}`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Online
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Operations (non-admin view) */}
+          <div>
+            <h2 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text uppercase tracking-wider mb-4">Operations</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <OperationCard title="Chat" description="Start a conversation with the AI assistant." href="/chat" icon={Icons.chat} color="bg-hiplink-blue" />
+              {perms.canViewDocuments && (
+                <OperationCard title="Documents" description="Upload and manage your documents for RAG." href="/documents" icon={Icons.document} color="bg-emerald-500" />
+              )}
+            </div>
+          </div>
+
+          {/* Welcome footer */}
+          <div className="card p-6 text-center">
+            <p className="text-sm text-hiplink-dark dark:text-dark-text">
+              Welcome back, <span className="font-semibold">{displayName}</span>
+            </p>
+            <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mt-1">
+              Role: <span className="capitalize font-medium text-hiplink-dark dark:text-dark-text">{rawRole}</span>
+            </p>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  // -------------------------------------------------------------------------
+  // Admin full dashboard
+  // -------------------------------------------------------------------------
   return (
-    <main className="min-h-screen bg-dark-bg">
+    <main className="min-h-screen bg-hiplink-background dark:bg-dark-bg">
       <AppHeader />
-
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
 
-        {/* ----------------------------------------------------------------- */}
-        {/* Hero Section                                                     */}
-        {/* ----------------------------------------------------------------- */}
-        <div className="bg-dark-card border border-dark-border rounded-2xl p-8 text-center relative overflow-hidden">
-          {/* Ambient gradient */}
+        {/* Hero */}
+        <div className="card p-8 text-center relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-hiplink-blue/5 to-transparent pointer-events-none" />
           <div className="relative z-10">
             <Image src="/hiplink-logo.png" alt="HipLink" width={72} height={72} className="object-contain mx-auto mb-4" />
-            <h1 className="text-2xl font-bold text-dark-text mb-2">Enterprise AI Assistant</h1>
-            <p className="text-sm text-dark-text-muted max-w-xl mx-auto mb-4 leading-relaxed">
+            <h1 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text mb-2">Enterprise AI Assistant</h1>
+            <p className="text-sm text-hiplink-secondary dark:text-dark-text-muted max-w-xl mx-auto mb-4 leading-relaxed">
               Chat with AI using general conversation or query your uploaded documents with RAG-powered retrieval.
             </p>
             <div className="flex items-center justify-center gap-3 text-xs">
-              <span className="text-dark-text-dim">
+              <span className="text-hiplink-secondary dark:text-dark-text-dim">
                 Production • {systemStatus?.gateway.domain ?? (typeof window !== 'undefined' ? window.location.hostname : 'chatbot.hiplink.com')}
               </span>
-              {loading ? (
-                <DegradedPill label="Checking…" />
+              {loading && !systemStatus ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  Checking…
+                </span>
               ) : statusError ? (
-                <DegradedPill label="Partial" />
+                <RefreshIndicator error={statusError} />
               ) : (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium ${statusBadgeClass('active')}`}>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   Operational
+                </span>
+              )}
+              {lastRefresh && (
+                <span className="text-hiplink-secondary dark:text-dark-text-dim" title={lastRefresh.toLocaleString()}>
+                  Updated {lastRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
               )}
             </div>
           </div>
         </div>
 
-        {/* ----------------------------------------------------------------- */}
-        {/* KPI Row                                                          */}
-        {/* ----------------------------------------------------------------- */}
+        {/* KPI Row */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          {kpiValues.map((kpi) => (
-            <KPICard key={kpi.label} label={kpi.label} value={kpi.value} color={kpi.color} icon={
-              <div className={kpi.color}>{kpi.icon}</div>
-            } />
-          ))}
+          {kpiData ? (
+            kpiData.map((k) => <KPICard key={k.label} {...k} />)
+          ) : (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="card p-4 space-y-2">
+                <SkeletonRow w="w-1/2" />
+                <SkeletonRow w="w-2/3" />
+              </div>
+            ))
+          )}
         </div>
 
-        {/* ----------------------------------------------------------------- */}
-        {/* Loading Skeletons (only during initial load)                     */}
-        {/* ----------------------------------------------------------------- */}
-        {loading && !systemStatus && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((i) => (
-              <SkeletonCard key={i} />
-            ))}
-          </div>
-        )}
-
-        {/* ----------------------------------------------------------------- */}
-        {/* Service Health                                                   */}
-        {/* ----------------------------------------------------------------- */}
+        {/* Service Health */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-dark-text uppercase tracking-wider">Service Health</h2>
-            {statusError && <DegradedPill label={statusError} />}
+            <h2 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text uppercase tracking-wider">Service Health</h2>
+            <RefreshIndicator error={statusError} />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {groups.map((group) => (
-              <ServiceHealthGroup key={group.title} {...group} />
-            ))}
-          </div>
+          {loading && !systemStatus ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {groups.map((group) => (
+                <ServiceHealthGroup key={group.title} {...group} />
+              ))}
+            </div>
+          )}
           {systemStatus && (
-            <p className="text-[11px] text-dark-text-dim mt-3 italic">
+            <p className="text-[11px] text-hiplink-secondary dark:text-dark-text-dim mt-3 italic">
               {systemStatus.status_source_note}
             </p>
           )}
         </div>
 
-        {/* ----------------------------------------------------------------- */}
-        {/* Operations                                                       */}
-        {/* ----------------------------------------------------------------- */}
+        {/* Operations */}
         <div>
-          <h2 className="text-sm font-semibold text-dark-text uppercase tracking-wider mb-4">Operations</h2>
+          <h2 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text uppercase tracking-wider mb-4">Operations</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <OperationCard title="Chat" description="General conversation with AI or RAG-powered knowledge base queries." href="/chat" icon={Icons.chat} bg="bg-hiplink-blue" />
+            <OperationCard title="Chat" description="General conversation with AI or RAG-powered knowledge base queries." href="/chat" icon={Icons.chat} color="bg-hiplink-blue" />
             {perms.canViewDocuments && (
-              <OperationCard title="Documents" description="Upload, manage, and index documents for RAG retrieval." href="/documents" icon={Icons.document} bg="bg-emerald-500" />
+              <OperationCard title="Documents" description="Upload, manage, and index documents for RAG retrieval." href="/documents" icon={Icons.document} color="bg-emerald-500" />
             )}
-            {isAdmin && (
-              <>
-                <OperationCard title="Observability" description="Monitor usage, latency, feedback, and blocked answers." href="/admin/observability" icon={Icons.eye} bg="bg-sky-500" />
-                <OperationCard title="Evaluations" description="Track controlled RAG quality tests and failure analysis." href="/admin/evaluations" icon={Icons.chart} bg="bg-purple-500" />
-                <OperationCard title="Users" description="Manage user accounts, roles, and permissions." href="/admin/users" icon={Icons.users} bg="bg-amber-500" />
-                <OperationCard title="Audit Logs" description="Review security audit events and user actions." href="/admin/audit-logs" icon={Icons.shield} bg="bg-rose-500" />
-              </>
-            )}
+            <OperationCard title="Observability" description="Monitor usage, latency, feedback, and blocked answers." href="/admin/observability" icon={Icons.eye} color="bg-sky-500" />
+            <OperationCard title="Evaluations" description="Track controlled RAG quality tests and failure analysis." href="/admin/evaluations" icon={Icons.chart} color="bg-purple-500" />
+            <OperationCard title="Users" description="Manage user accounts, roles, and permissions." href="/admin/users" icon={Icons.users} color="bg-amber-500" />
+            <OperationCard title="Audit Logs" description="Review security audit events and user actions." href="/admin/audit-logs" icon={Icons.shield} color="bg-rose-500" />
           </div>
         </div>
 
-        {/* ----------------------------------------------------------------- */}
-        {/* Bottom Row: RAG & Data | Security | Recent Activity            */}
-        {/* ----------------------------------------------------------------- */}
+        {/* Bottom Row: RAG & Data | Security | Recent Activity */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
           {/* RAG & Data Summary */}
-          <div className="bg-dark-card border border-dark-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-dark-text mb-4 flex items-center gap-2">
-              <span className="text-emerald-400">{Icons.chart}</span>
+          <div className="card p-5">
+            <h3 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text mb-4 flex items-center gap-2">
+              <span className="text-emerald-600 dark:text-emerald-400">{Icons.chart}</span>
               RAG &amp; Data Summary
             </h3>
             {!systemStatus ? (
@@ -603,45 +666,45 @@ function DashboardContent() {
             ) : (
               <div className="space-y-2.5 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Total Uploaded</span>
-                  <span className="text-dark-text font-medium">{systemStatus.documents.total_documents}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Total Uploaded</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium">{systemStatus.documents.total_documents}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Indexed</span>
-                  <span className="text-emerald-400 font-medium">{systemStatus.documents.indexed}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Indexed</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">{systemStatus.documents.indexed}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Failed</span>
-                  <span className="text-red-400 font-medium">{systemStatus.documents.failed}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Failed</span>
+                  <span className="text-red-600 dark:text-red-400 font-medium">{systemStatus.documents.failed}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Pending</span>
-                  <span className="text-amber-400 font-medium">{systemStatus.documents.pending}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Pending</span>
+                  <span className="text-amber-600 dark:text-amber-400 font-medium">{systemStatus.documents.pending}</span>
                 </div>
-                <div className="h-px bg-dark-border my-2" />
+                <div className="h-px bg-hiplink-border dark:bg-dark-border my-2" />
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Collection</span>
-                  <span className="text-dark-text font-medium">{systemStatus.documents.collection_name}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Embedding</span>
-                  <span className="text-dark-text font-medium">{systemStatus.documents.embedding_provider}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Collection</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium">{systemStatus.documents.collection_name}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Dimension</span>
-                  <span className="text-dark-text font-medium">{systemStatus.documents.embedding_dimension}D</span>
-                </div>
-                <div className="h-px bg-dark-border my-2" />
-                <div className="flex justify-between">
-                  <span className="text-dark-text-muted">RAG Pass Rate</span>
-                  <span className="text-emerald-400 font-medium">{systemStatus.rag_quality.pass_percentage}%</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Embedding</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium">{systemStatus.documents.embedding_provider}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Total Cases</span>
-                  <span className="text-dark-text font-medium">{systemStatus.rag_quality.total_tests}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Dimension</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium">{systemStatus.documents.embedding_dimension}D</span>
+                </div>
+                <div className="h-px bg-hiplink-border dark:bg-dark-border my-2" />
+                <div className="flex justify-between">
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">RAG Pass Rate</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">{systemStatus.rag_quality.pass_percentage}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Total Cases</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium">{systemStatus.rag_quality.total_tests}</span>
                 </div>
                 {systemStatus.rag_quality.last_run && (
-                  <p className="text-[11px] text-dark-text-dim pt-1">
+                  <p className="text-[11px] text-hiplink-secondary dark:text-dark-text-dim pt-1">
                     Last run: {new Date(systemStatus.rag_quality.last_run).toLocaleString()}
                   </p>
                 )}
@@ -650,9 +713,9 @@ function DashboardContent() {
           </div>
 
           {/* Security & Admin Summary */}
-          <div className="bg-dark-card border border-dark-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-dark-text mb-4 flex items-center gap-2">
-              <span className="text-amber-400">{Icons.lock}</span>
+          <div className="card p-5">
+            <h3 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text mb-4 flex items-center gap-2">
+              <span className="text-amber-600 dark:text-amber-400">{Icons.lock}</span>
               Security &amp; Admin Summary
             </h3>
             {!systemStatus ? (
@@ -663,38 +726,38 @@ function DashboardContent() {
             ) : (
               <div className="space-y-2.5 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Auth Mode</span>
-                  <span className="text-dark-text font-medium capitalize">{systemStatus.security.auth_mode}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Auth Mode</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium capitalize">{systemStatus.security.auth_mode}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Current Role</span>
-                  <span className="text-dark-text font-medium capitalize">{systemStatus.security.current_user_role}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Current Role</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium capitalize">{systemStatus.security.current_user_role}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Active Users</span>
-                  <span className="text-dark-text font-medium">{systemStatus.security.total_active_users}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Active Users</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium">{systemStatus.security.total_active_users}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Failed Logins (24h)</span>
-                  <span className={`font-medium ${systemStatus.security.recent_failed_logins_24h > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Failed Logins (24h)</span>
+                  <span className={`font-medium ${systemStatus.security.recent_failed_logins_24h > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {systemStatus.security.recent_failed_logins_24h}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Audit Events (24h)</span>
-                  <span className="text-dark-text font-medium">{systemStatus.security.recent_audit_events_24h}</span>
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Audit Events (24h)</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium">{systemStatus.security.recent_audit_events_24h}</span>
                 </div>
-                <div className="h-px bg-dark-border my-2" />
+                <div className="h-px bg-hiplink-border dark:bg-dark-border my-2" />
                 <div className="flex justify-between">
-                  <span className="text-dark-text-muted">Last Admin Action</span>
-                  <span className="text-dark-text font-medium truncate max-w-[120px]">
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted">Last Admin Action</span>
+                  <span className="text-hiplink-dark dark:text-dark-text font-medium truncate max-w-[120px]">
                     {systemStatus.security.last_admin_action
                       ? systemStatus.security.last_admin_action.action
                       : 'N/A'}
                   </span>
                 </div>
                 {systemStatus.security.last_admin_action?.timestamp && (
-                  <p className="text-[11px] text-dark-text-dim">
+                  <p className="text-[11px] text-hiplink-secondary dark:text-dark-text-dim">
                     {new Date(systemStatus.security.last_admin_action.timestamp).toLocaleString()}
                   </p>
                 )}
@@ -703,9 +766,9 @@ function DashboardContent() {
           </div>
 
           {/* Recent Activity */}
-          <div className="bg-dark-card border border-dark-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-dark-text mb-4 flex items-center gap-2">
-              <span className="text-sky-400">{Icons.activity}</span>
+          <div className="card p-5">
+            <h3 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text mb-4 flex items-center gap-2">
+              <span className="text-sky-600 dark:text-sky-400">{Icons.activity}</span>
               Recent Activity
             </h3>
             {!systemStatus ? (
@@ -716,14 +779,13 @@ function DashboardContent() {
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Recent Documents */}
                 <div>
-                  <h4 className="text-xs font-medium text-dark-text-dim mb-2">Documents</h4>
+                  <h4 className="text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim mb-2">Documents</h4>
                   {systemStatus.recent_activity.recent_documents.length > 0 ? (
                     <ul className="space-y-1.5">
                       {systemStatus.recent_activity.recent_documents.map((doc) => (
                         <li key={doc.id} className="flex items-center justify-between text-xs">
-                          <span className="text-dark-text truncate max-w-[180px]">{doc.filename}</span>
+                          <span className="text-hiplink-dark dark:text-dark-text truncate max-w-[180px]">{doc.filename}</span>
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${statusBadgeClass(doc.status)}`}>
                             {doc.status}
                           </span>
@@ -731,34 +793,32 @@ function DashboardContent() {
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-xs text-dark-text-dim">No recent documents.</p>
+                    <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim">No recent documents.</p>
                   )}
                 </div>
 
-                {/* Recent Audit Events */}
                 <div>
-                  <h4 className="text-xs font-medium text-dark-text-dim mb-2">Audit Events</h4>
+                  <h4 className="text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim mb-2">Audit Events</h4>
                   {systemStatus.recent_activity.recent_audit_events.length > 0 ? (
                     <ul className="space-y-1.5">
                       {systemStatus.recent_activity.recent_audit_events.map((evt) => (
                         <li key={evt.id} className="flex items-center justify-between text-xs">
-                          <span className="text-dark-text truncate max-w-[140px]">{evt.action}</span>
-                          <span className="text-dark-text-dim">{evt.username}</span>
+                          <span className="text-hiplink-dark dark:text-dark-text truncate max-w-[140px]">{evt.action}</span>
+                          <span className="text-hiplink-secondary dark:text-dark-text-dim">{evt.username}</span>
                         </li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-xs text-dark-text-dim">No recent events.</p>
+                    <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim">No recent events.</p>
                   )}
                 </div>
 
-                {/* Latest Evaluation */}
                 {systemStatus.recent_activity.latest_evaluation && (
                   <div>
-                    <h4 className="text-xs font-medium text-dark-text-dim mb-2">Latest Evaluation</h4>
+                    <h4 className="text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim mb-2">Latest Evaluation</h4>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-dark-text">{systemStatus.recent_activity.latest_evaluation.status}</span>
-                      <span className="text-emerald-400 font-medium">{systemStatus.recent_activity.latest_evaluation.pass_percentage}%</span>
+                      <span className="text-hiplink-dark dark:text-dark-text">{systemStatus.recent_activity.latest_evaluation.status}</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">{systemStatus.recent_activity.latest_evaluation.pass_percentage}%</span>
                     </div>
                   </div>
                 )}
@@ -767,11 +827,14 @@ function DashboardContent() {
           </div>
         </div>
 
-        {/* ----------------------------------------------------------------- */}
-        {/* Footer                                                            */}
-        {/* ----------------------------------------------------------------- */}
-        <div className="text-center text-[11px] text-dark-text-dim pt-4">
-          Welcome back, <span className="text-dark-text font-medium">{displayName}</span>
+        {/* Footer */}
+        <div className="text-center text-[11px] text-hiplink-secondary dark:text-dark-text-dim pt-4">
+          Welcome back, <span className="text-hiplink-dark dark:text-dark-text font-medium">{displayName}</span>
+          {lastRefresh && (
+            <span className="ml-2" title={lastRefresh.toLocaleString()}>
+              • Last updated {lastRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
         </div>
       </div>
     </main>

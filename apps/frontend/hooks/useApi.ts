@@ -6,13 +6,14 @@
  * AUTH_MODE=dev. In AUTH_MODE=local, only JWT auth is allowed.
  */
 
+import { useCallback } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { getApiBaseUrl } from '@/lib/api'
 
 export function useAuthFetch() {
   const { authMode, devUser } = useAuth()
 
-  return async function authFetch(
+  return useCallback(async function authFetch(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<Response> {
@@ -31,5 +32,5 @@ export function useAuthFetch() {
       ...options,
       headers,
     })
-  }
+  }, [authMode, devUser])
 }
