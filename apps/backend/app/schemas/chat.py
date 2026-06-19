@@ -53,3 +53,4 @@ class ChatResponse(BaseModel):
     grouped_sources: Optional[List[GroupedSource]] = Field(default=None, description="Grouped sources by document for user-friendly display")
     debug_info: Optional[dict[str, Any]] = Field(default=None, description="Debug info about retrieval when debug=true or mode=debug")
     observation_id: Optional[int] = Field(default=None, description="ID for this observation - used for feedback submission")
+    suggested_followups: Optional[List[str]] = Field(default=None, description="Suggested follow-up prompts the user can click to continue the conversation")

@@ -40,6 +40,7 @@ interface Message {
   grouped_sources?: GroupedSource[]
   debug_info?: Record<string, unknown>
   observation_id?: number
+  suggested_followups?: string[]
 }
 
 interface ChatSession {
@@ -272,9 +273,9 @@ function ChatPageInner() {
   // Submit message
   // ---------------------------------------------------------------------------
 
-  const handleSubmit = async (e?: FormEvent) => {
+  const handleSubmit = async (e?: FormEvent, messageOverride?: string) => {
     e?.preventDefault()
-    const trimmed = input.trim()
+    const trimmed = messageOverride ?? input.trim()
     if (!trimmed || loading) return
 
     const userMessage: Message = { role: 'user', text: trimmed }
@@ -316,6 +317,7 @@ function ChatPageInner() {
         grouped_sources: data.grouped_sources,
         debug_info: data.debug_info,
         observation_id: data.observation_id,
+        suggested_followups: data.suggested_followups || undefined,
       }
 
       setMessages(prev => [...prev, assistantMessage])
@@ -336,6 +338,14 @@ function ChatPageInner() {
 
   const handleExampleClick = (prompt: string) => {
     setInput(prompt)
+  }
+
+  // Phase 20B: Handle clicking a suggested follow-up
+  const handleSuggestionSelect = (suggestion: string) => {
+    if (loading) return
+    // Auto-submit the suggestion (pass as message override to avoid setState race)
+    const fakeEvent = { preventDefault: () => {} } as FormEvent
+    handleSubmit(fakeEvent, suggestion)
   }
 
   const shouldShowSources = mode !== 'general_chat'
@@ -561,6 +571,14 @@ function ChatPageInner() {
                     {/* Feedback buttons for assistant messages */}
                     {msg.role === 'assistant' && msg.observation_id && (
                       <FeedbackButtons observationId={msg.observation_id} />
+                    )}
+
+                    {/* Suggested follow-ups (Phase 20B) */}
+                    {msg.role === 'assistant' && msg.suggested_followups && msg.suggested_followups.length > 0 && (
+                      <SuggestedFollowups
+                        suggestions={msg.suggested_followups}
+                        onSelect={handleSuggestionSelect}
+                      />
                     )}
                   </div>
                 </div>
@@ -947,6 +965,29 @@ function FeedbackButtons({ observationId }: { observationId: number }) {
         </button>
       </div>
       {error && <span className="text-xs text-hiplink-error dark:text-red-400">{error}</span>}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Suggested follow-ups component (Phase 20B)
+// ---------------------------------------------------------------------------
+
+function SuggestedFollowups({ suggestions, onSelect }: { suggestions: string[]; onSelect: (suggestion: string) => void }) {
+  return (
+    <div className="mt-4 pt-3 border-t border-hiplink-border dark:border-dark-border">
+      <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-2">Suggested follow-ups:</p>
+      <div className="flex flex-wrap gap-2">
+        {suggestions.map((suggestion, i) => (
+          <button
+            key={i}
+            onClick={() => onSelect(suggestion)}
+            className="px-3 py-1.5 text-xs rounded-lg bg-hiplink-background dark:bg-dark-elevated border border-hiplink-border dark:border-dark-border text-hiplink-blue dark:text-sky-400 hover:bg-blue-50 dark:hover:bg-sky-900/30 hover:border-hiplink-blue dark:hover:border-sky-400 transition-colors text-left"
+          >
+            {suggestion}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

@@ -26,6 +26,7 @@ from app.rag.answer_generator import (
 )
 from app.rag.citations import format_citations, group_citations_by_source
 from app.services.observability import log_chat_observation
+from app.services.suggestions import generate_suggestions, is_fallback_response
 from app.core.rate_limit import rate_limit
 
 # Chat session models (Phase 20A)
@@ -422,10 +423,19 @@ def post_chat(
             citations=citations if citations else None,
             grouped_sources=grouped_sources if grouped_sources else None,
         )
-        
+
         # Add debug info to response for debug mode or when explicitly requested
         if (is_debug_mode or debug) and metadata:
             response.debug_info = metadata
+
+        # Phase 20B: Add suggested follow-ups based on response characteristics
+        is_fallback = is_fallback_response(answer, citations)
+        response.suggested_followups = generate_suggestions(
+            mode=mode,
+            has_citations=citations is not None and len(citations) > 0,
+            is_fallback=is_fallback,
+            citations=citations,
+        )
         
     else:
         # General Chat mode - no RAG, no sources
@@ -445,6 +455,9 @@ def post_chat(
             role=MessageRole.assistant,
             session_id=session_id,
         )
+
+        # Phase 20B: Add suggested follow-ups for general chat
+        response.suggested_followups = generate_suggestions(mode=mode)
     
     # Calculate latency
     latency_ms = int((time.time() - start_time) * 1000)
