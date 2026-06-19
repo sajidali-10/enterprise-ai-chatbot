@@ -3,13 +3,19 @@ Chat API Endpoint
 
 Provides /api/chat endpoint for normal and RAG chat.
 Supports authentication and audit logging (Phase 6).
+Phase 20A: Persistent sessions and message storage.
 """
 
+import json
 import time
-from fastapi import APIRouter, Query, Request, Depends, HTTPException
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+from fastapi import APIRouter, Query, Request, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
 from app.schemas.chat import ChatRequest, ChatResponse, MessageRole
 from app.services.llm import get_llm_provider
 from app.rag.answer_generator import (
@@ -21,6 +27,16 @@ from app.rag.answer_generator import (
 from app.rag.citations import format_citations, group_citations_by_source
 from app.services.observability import log_chat_observation
 from app.core.rate_limit import rate_limit
+
+# Chat session models (Phase 20A)
+try:
+    from app.models.chat_session import ChatSession, ChatMessage
+    from app.models.chat_session import ChatSessionMode as DBChatSessionMode, MessageRole as DBMessageRole
+    HAS_SESSION_MODELS = True
+except ImportError:
+    HAS_SESSION_MODELS = False
+    ChatSession = None
+    ChatMessage = None
 
 # Import security modules for Phase 6 / Phase 12
 try:
@@ -52,6 +68,7 @@ def _require_permission_for_mode(auth: AuthContext, mode: str) -> None:
         raise HTTPException(status_code=403, detail="Knowledge Base is not allowed for this user")
     if mode == ChatMode.DEBUG and not perms["can_use_debug"]:
         raise HTTPException(status_code=403, detail="Debug mode is not allowed for this user")
+
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
@@ -159,17 +176,150 @@ def get_auth_context(request: Request) -> Optional[AuthContext]:
         return authenticate_request(request)
 
 
+def _truncate_title(text: str, max_len: int = 80) -> str:
+    """Truncate title to max_len, removing trailing incomplete words."""
+    if len(text) <= max_len:
+        return text
+    truncated = text[:max_len]
+    last_space = truncated.rfind(" ")
+    if last_space > max_len * 0.6:
+        truncated = truncated[:last_space]
+    return truncated + "…"
+
+
+def _get_or_create_session(
+    db: Session,
+    auth: AuthContext,
+    session_id: Optional[int],
+    mode: str,
+    first_message: str,
+) -> Optional[ChatSession]:
+    """
+    Get an existing session or create a new one.
+    
+    Returns None if session models are not available.
+    Raises 404 if session_id refers to a non-existent or non-owned session.
+    Raises 400 if session_id refers to an archived session.
+    """
+    if not HAS_SESSION_MODELS or not auth.user_id:
+        return None
+
+    if session_id is not None:
+        # Load existing session
+        session = db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == auth.user_id,
+        ).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.archived_at:
+            raise HTTPException(status_code=400, detail="Cannot append to archived session")
+        return session
+
+    # Create new session
+    db_mode = DBChatSessionMode.RAG if mode in (ChatMode.KNOWLEDGE_BASE, ChatMode.DEBUG) else DBChatSessionMode.GENERAL
+    title = _truncate_title(first_message)
+
+    session = ChatSession(
+        user_id=auth.user_id,
+        title=title,
+        mode=db_mode,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def _store_messages(
+    db: Session,
+    auth: AuthContext,
+    session: ChatSession,
+    user_message: str,
+    assistant_message: str,
+    citations: Optional[list],
+    grouped_sources: Optional[list],
+    model_used: Optional[str],
+    provider_used: Optional[str],
+    latency_ms: int,
+) -> None:
+    """
+    Store the user and assistant messages for a session.
+    
+    Safely stores citations as display metadata only — does not grant document access.
+    """
+    if not HAS_SESSION_MODELS or not auth.user_id:
+        return
+
+    # Safely serialize citations (display metadata only — no secrets)
+    citations_json = None
+    retrieved_docs_json = None
+    if citations:
+        # Store minimal citation info for display — not secrets or raw document content
+        safe_citations = []
+        for c in citations:
+            if isinstance(c, dict):
+                safe_citations.append({
+                    "source_file_name": c.get("source_file_name"),
+                    "content_snippet": c.get("content_snippet", "")[:500] if c.get("content_snippet") else None,
+                    "relevance_score": c.get("relevance_score"),
+                })
+        citations_json = json.dumps(safe_citations)
+
+    if grouped_sources:
+        safe_docs = []
+        for gs in grouped_sources:
+            if isinstance(gs, dict):
+                safe_docs.append({
+                    "source_file_name": gs.get("source_file_name"),
+                    "sections_used": gs.get("sections_used"),
+                    "confidence": gs.get("confidence"),
+                })
+        retrieved_docs_json = json.dumps(safe_docs)
+
+    # Store user message
+    user_msg = ChatMessage(
+        session_id=session.id,
+        user_id=auth.user_id,
+        role=DBMessageRole.USER,
+        content=user_message,
+    )
+    db.add(user_msg)
+
+    # Store assistant message
+    assistant_msg = ChatMessage(
+        session_id=session.id,
+        user_id=auth.user_id,
+        role=DBMessageRole.ASSISTANT,
+        content=assistant_message,
+        citations_json=citations_json,
+        retrieved_documents_json=retrieved_docs_json,
+        model_used=model_used,
+        provider_used=provider_used,
+        latency_ms=latency_ms,
+    )
+    db.add(assistant_msg)
+
+    # Update session timestamp
+    session.updated_at = datetime.utcnow()
+    db.commit()
+
+
 @router.post("", response_model=ChatResponse)
 def post_chat(
     request: Request,
     chat_request: ChatRequest,
     use_hybrid: bool = Query(default=True, description="Use hybrid retrieval (vector + keyword) for RAG"),
     debug: bool = Query(default=False, description="Return debug info about retrieval scores"),
+    db: Session = Depends(get_db),
     auth: Optional[AuthContext] = Depends(get_auth_context),
     _=Depends(rate_limit(max_requests=30, window=60)),
 ) -> ChatResponse:
     """
     Process a chat message and return a response.
+    
+    Phase 20A: If session_id is provided, append to that session.
+    Otherwise, create a new session automatically.
     
     Modes (from request body):
     - general_chat: General AI assistant without document retrieval
@@ -207,8 +357,35 @@ def post_chat(
     
     latency_ms = None
     observation_id = None
+    session = None
+    session_id = None
     
+    # Phase 20A: Get or create session
+    if HAS_SESSION_MODELS and auth and auth.is_authenticated and auth.user_id:
+        try:
+            session = _get_or_create_session(
+                db=db,
+                auth=auth,
+                session_id=chat_request.session_id,
+                mode=mode,
+                first_message=chat_request.message,
+            )
+            if session:
+                session_id = session.id
+        except HTTPException:
+            raise
+        except Exception:
+            # Don't break chat if session storage fails
+            session = None
+
     # Knowledge Base and Debug modes both use RAG
+    citations = None
+    grouped_sources = None
+    metadata = None
+    answer = None
+    model_used = None
+    provider_used = None
+
     if mode in (ChatMode.KNOWLEDGE_BASE, ChatMode.DEBUG):
         if HAS_SECURITY and auth and auth.is_authenticated:
             # Use audit-aware RAG generation with permission filtering
@@ -229,7 +406,6 @@ def post_chat(
             )
         
         # Create grouped sources for user-friendly display with answer-aware excerpt selection
-        grouped_sources = None
         if citations:
             grouped_sources = group_citations_by_source(
                 citations,
@@ -242,6 +418,7 @@ def post_chat(
         response = ChatResponse(
             message=answer,
             role=MessageRole.assistant,
+            session_id=session_id,
             citations=citations if citations else None,
             grouped_sources=grouped_sources if grouped_sources else None,
         )
@@ -266,14 +443,21 @@ def post_chat(
         response = ChatResponse(
             message=answer,
             role=MessageRole.assistant,
+            session_id=session_id,
         )
-        grouped_sources = None
-        citations = None
-        metadata = None
     
     # Calculate latency
-    latency_ms = (time.time() - start_time) * 1000
+    latency_ms = int((time.time() - start_time) * 1000)
     
+    # Get provider/model info for storage (no secrets)
+    try:
+        llm_provider = get_llm_provider()
+        if llm_provider:
+            provider_used = getattr(llm_provider, 'provider_name', None)
+            model_used = getattr(llm_provider, 'model', None)
+    except Exception:
+        pass
+
     # Log observability (non-blocking - don't break chat if logging fails)
     try:
         auth_dict = None
@@ -293,14 +477,32 @@ def post_chat(
             grouped_sources=grouped_sources,
             metadata=metadata,
             latency_ms=latency_ms,
-            blocked=False,  # Will be determined by the logging service
+            blocked=False,
         )
     except Exception:
-        # Observability logging should never break the chat response
         pass
     
     # Add observation_id to response for feedback tracking
     response.observation_id = observation_id
+    
+    # Phase 20A: Store messages (non-blocking — don't break chat if storage fails)
+    if session:
+        try:
+            _store_messages(
+                db=db,
+                auth=auth,
+                session=session,
+                user_message=chat_request.message,
+                assistant_message=answer,
+                citations=citations,
+                grouped_sources=grouped_sources,
+                model_used=model_used,
+                provider_used=provider_used,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            # Log but don't break the response
+            pass
     
     return response
 

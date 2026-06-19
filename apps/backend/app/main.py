@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.api import chat as chat_router
+from app.api import chat_sessions as chat_sessions_router
 from app.api import documents as documents_router
 from app.api import evaluation as evaluation_router
 from app.api import auth as auth_router
@@ -49,6 +50,7 @@ app.add_middleware(
 
 app.include_router(chat_router.router)
 app.include_router(chat_router._provider_router)
+app.include_router(chat_sessions_router.router)
 app.include_router(documents_router.router)
 app.include_router(evaluation_router.router)
 app.include_router(auth_router.router)

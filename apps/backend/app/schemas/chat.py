@@ -21,6 +21,7 @@ class ChatMode(str, Enum):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="User message text")
     mode: str = Field(default="general_chat", description="Chat mode: 'general_chat', 'knowledge_base', or 'debug'")
+    session_id: Optional[int] = Field(default=None, description="Existing session ID to continue; creates a new session if omitted")
 
 
 class GroupedSource(BaseModel):
@@ -47,6 +48,7 @@ class DebugMetadata(BaseModel):
 class ChatResponse(BaseModel):
     message: str = Field(..., description="Assistant response text")
     role: MessageRole = Field(default=MessageRole.assistant)
+    session_id: Optional[int] = Field(default=None, description="ID of the chat session this message belongs to")
     citations: Optional[List[dict]] = Field(default=None, description="RAG citations when mode is rag - raw citation list for backward compatibility")
     grouped_sources: Optional[List[GroupedSource]] = Field(default=None, description="Grouped sources by document for user-friendly display")
     debug_info: Optional[dict[str, Any]] = Field(default=None, description="Debug info about retrieval when debug=true or mode=debug")

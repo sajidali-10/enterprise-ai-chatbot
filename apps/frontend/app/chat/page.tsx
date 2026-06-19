@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, FormEvent, KeyboardEvent } from 'react'
+import { useState, useRef, FormEvent, KeyboardEvent, useEffect, useCallback } from 'react'
 import Image from 'next/image'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -10,6 +10,10 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import Header from '@/components/Header'
 import ProtectedRoute from '@/components/ProtectedRoute'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface Citation {
   index: number
@@ -38,6 +42,17 @@ interface Message {
   observation_id?: number
 }
 
+interface ChatSession {
+  id: number
+  user_id: number
+  title: string
+  mode: 'general' | 'rag'
+  created_at: string
+  updated_at: string
+  archived_at: string | null
+  message_count: number
+}
+
 type ChatMode = 'general_chat' | 'knowledge_base' | 'debug'
 
 interface ChatModeConfig {
@@ -60,6 +75,10 @@ const examplePrompts = [
   'What topics are covered?',
 ]
 
+// ---------------------------------------------------------------------------
+// Page wrapper
+// ---------------------------------------------------------------------------
+
 export default function ChatPage() {
   return (
     <ProtectedRoute>
@@ -68,20 +87,29 @@ export default function ChatPage() {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Main chat page with sidebar
+// ---------------------------------------------------------------------------
+
 function ChatPageInner() {
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [sessionsLoading, setSessionsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const authFetch = useAuthFetch()
   const { devUser, auth } = useAuth()
   const { theme } = useTheme()
-  
+  const sidebarRef = useRef<HTMLDivElement>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
   // Determine effective role and permissions
-  const rawRole = auth?.role || 
-    (devUser === 'admin_user' ? 'admin' : 
-     devUser === 'regular_user' ? 'user' : 
+  const rawRole = auth?.role ||
+    (devUser === 'admin_user' ? 'admin' :
+     devUser === 'regular_user' ? 'user' :
      devUser === 'viewer_user' ? 'viewer' : undefined)
   const perms: PermissionFlags = normalizePermissions(auth?.permissions, rawRole)
 
@@ -90,21 +118,159 @@ function ChatPageInner() {
 
   // Filter available modes based on permissions
   const availableModes = allModes.filter(m => !m.permission || perms[m.permission])
-  
+
   // Enforce permission check when mode changes
   const handleModeChange = (newMode: ChatMode) => {
     const config = allModes.find(m => m.id === newMode)
     if (config?.permission && !perms[config.permission]) {
-      // User doesn't have permission - switch to default allowed mode
       setMode(getDefaultChatMode(rawRole) as ChatMode)
       return
     }
     setMode(newMode)
   }
 
+  // ---------------------------------------------------------------------------
+  // Load sessions from backend
+  // ---------------------------------------------------------------------------
+
+  const loadSessions = useCallback(async () => {
+    setSessionsLoading(true)
+    try {
+      const res = await authFetch('/api/chat/sessions')
+      if (res.ok) {
+        const data = await res.json()
+        setSessions(data.sessions || [])
+      }
+    } catch {
+      // Silently fail — sessions load is non-critical
+    } finally {
+      setSessionsLoading(false)
+    }
+  }, [authFetch])
+
+  // Load sessions on mount
+  useEffect(() => {
+    loadSessions()
+  }, [loadSessions])
+
+  // ---------------------------------------------------------------------------
+  // Load a specific session's messages
+  // ---------------------------------------------------------------------------
+
+  const loadSession = useCallback(async (sessionId: number) => {
+    try {
+      const res = await authFetch(`/api/chat/sessions/${sessionId}`)
+      if (res.ok) {
+        const data = await res.json()
+        // Convert stored messages to UI format
+        const loadedMessages: Message[] = data.messages.map((m: {
+          role: string
+          content: string
+          citations_json?: string
+          retrieved_documents_json?: string
+          debug_info?: Record<string, unknown>
+          observation_id?: number
+        }) => ({
+          role: m.role as 'user' | 'assistant',
+          text: m.content,
+          citations: m.citations_json ? safeParseJson(m.citations_json) : undefined,
+          grouped_sources: m.retrieved_documents_json ? safeParseGroupedSources(m.retrieved_documents_json) : undefined,
+          debug_info: m.debug_info,
+          observation_id: m.observation_id,
+        }))
+        setMessages(loadedMessages)
+        // Update session title in case it changed
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, ...data.session } : s
+        ))
+      } else if (res.status === 404) {
+        // Session was deleted — remove from list
+        setSessions(prev => prev.filter(s => s.id !== sessionId))
+        if (activeSessionId === sessionId) {
+          setActiveSessionId(null)
+          setMessages([])
+        }
+      }
+    } catch {
+      // Silently fail
+    }
+  }, [authFetch, activeSessionId])
+
+  // ---------------------------------------------------------------------------
+  // Start a new chat (clear active session)
+  // ---------------------------------------------------------------------------
+
+  const startNewChat = () => {
+    setActiveSessionId(null)
+    setMessages([])
+    setError(null)
+    setSidebarOpen(false)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Select a session
+  // ---------------------------------------------------------------------------
+
+  const selectSession = async (sessionId: number) => {
+    setActiveSessionId(sessionId)
+    setError(null)
+    setSidebarOpen(false)
+    await loadSession(sessionId)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delete/archive a session
+  // ---------------------------------------------------------------------------
+
+  const deleteSession = async (sessionId: number) => {
+    try {
+      const res = await authFetch(`/api/chat/sessions/${sessionId}`, { method: 'DELETE' })
+      if (res.ok || res.status === 204) {
+        setSessions(prev => prev.filter(s => s.id !== sessionId))
+        if (activeSessionId === sessionId) {
+          setActiveSessionId(null)
+          setMessages([])
+        }
+      }
+    } catch {
+      setError('Failed to delete session')
+    }
+  }
+
+  const archiveSession = async (sessionId: number) => {
+    try {
+      const res = await authFetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true }),
+      })
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== sessionId))
+        if (activeSessionId === sessionId) {
+          setActiveSessionId(null)
+          setMessages([])
+        }
+      }
+    } catch {
+      setError('Failed to archive session')
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scroll
+  // ---------------------------------------------------------------------------
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  // ---------------------------------------------------------------------------
+  // Submit message
+  // ---------------------------------------------------------------------------
 
   const handleSubmit = async (e?: FormEvent) => {
     e?.preventDefault()
@@ -112,23 +278,37 @@ function ChatPageInner() {
     if (!trimmed || loading) return
 
     const userMessage: Message = { role: 'user', text: trimmed }
-    setMessages((prev) => [...prev, userMessage])
+    setMessages(prev => [...prev, userMessage])
     setInput('')
     setLoading(true)
     setError(null)
     scrollToBottom()
 
     try {
+      const body: Record<string, unknown> = { message: trimmed, mode }
+      if (activeSessionId !== null) {
+        body.session_id = activeSessionId
+      }
+
       const res = await authFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, mode }),
+        body: JSON.stringify(body),
       })
+
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
       }
+
       const data = await res.json()
-      
+
+      // If backend created a new session, switch to it
+      if (data.session_id && data.session_id !== activeSessionId) {
+        setActiveSessionId(data.session_id)
+        // Reload sessions to pick up the new session
+        await loadSessions()
+      }
+
       const assistantMessage: Message = {
         role: 'assistant',
         text: data.message,
@@ -137,8 +317,8 @@ function ChatPageInner() {
         debug_info: data.debug_info,
         observation_id: data.observation_id,
       }
-      
-      setMessages((prev) => [...prev, assistantMessage])
+
+      setMessages(prev => [...prev, assistantMessage])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -162,170 +342,312 @@ function ChatPageInner() {
   const isDebugMode = mode === 'debug'
   const isViewerMode = rawRole === 'viewer'
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
   return (
     <div className="min-h-screen bg-hiplink-background dark:bg-dark-bg flex flex-col">
       <Header showAdminNav />
-      
-      {/* Main Content */}
-      <div className="flex-1 max-w-4xl mx-auto w-full px-4 py-6 flex flex-col">
-        {/* Mode Selector - Segmented Control */}
-        <div className="mb-6 p-4 bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-xl shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex items-center gap-1 bg-gray-100 dark:bg-dark-elevated p-1 rounded-lg">
-              {availableModes.map((modeConfig) => (
-                <button
-                  key={modeConfig.id}
-                  type="button"
-                  onClick={() => handleModeChange(modeConfig.id)}
-                  className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                    mode === modeConfig.id
-                      ? 'bg-hiplink-blue text-white shadow-sm'
-                      : 'bg-transparent text-hiplink-secondary dark:text-dark-text-muted hover:text-hiplink-dark dark:hover:text-dark-text'
-                  }`}
-                >
-                  {modeConfig.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              {isViewerMode ? (
-                <span className="text-xs text-hiplink-secondary dark:text-dark-text-dim italic bg-blue-50 dark:bg-sky-900/20 px-2 py-1 rounded">
-                  Viewer mode: read-only answers from uploaded knowledge sources.
-                </span>
-              ) : (
-                <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim italic">
-                  {availableModes.find(m => m.id === mode)?.helperText}
-                </p>
-              )}
-            </div>
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Mobile sidebar toggle */}
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="lg:hidden fixed top-16 left-4 z-30 p-2 bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-lg shadow-md"
+          aria-label="Toggle chat history"
+        >
+          <svg className="w-5 h-5 text-hiplink-secondary dark:text-dark-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
+        {/* Sidebar */}
+        <aside
+          ref={sidebarRef}
+          className={`
+            fixed lg:static inset-y-0 left-0 z-40 w-72 bg-white dark:bg-dark-card border-r border-hiplink-border dark:border-dark-border
+            transform transition-transform duration-200 ease-in-out flex flex-col
+            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+          `}
+        >
+          {/* Sidebar header */}
+          <div className="p-4 border-b border-hiplink-border dark:border-dark-border flex items-center justify-between">
+            <h2 className="font-semibold text-hiplink-dark dark:text-dark-text">Chat History</h2>
+            <button
+              onClick={startNewChat}
+              className="flex items-center gap-1.5 text-sm font-medium text-hiplink-blue dark:text-sky-400 hover:text-hiplink-blue-dark dark:hover:text-sky-300 transition-colors"
+              title="New chat"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Chat
+            </button>
           </div>
-        </div>
 
-        {/* Chat Container */}
-        <div className="flex-1 flex flex-col bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-xl shadow-sm overflow-hidden">
-          {/* Error banner */}
-          {error && (
-            <div className="mx-4 mt-4 bg-red-50 dark:bg-red-900/20 border border-hiplink-error text-hiplink-error dark:text-red-400 px-4 py-3 rounded-lg">
-              <strong>Error:</strong> {error}
-            </div>
-          )}
-
-          {/* Message list */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.length === 0 && !loading && (
-              <WelcomeState 
-                mode={mode} 
-                onExampleClick={handleExampleClick} 
-                examplePrompts={examplePrompts}
-              />
-            )}
-
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div className={`max-w-[80%] ${
-                  msg.role === 'user'
-                    ? 'bg-hiplink-blue dark:bg-sky-600 text-white'
-                    : 'bg-hiplink-background dark:bg-dark-elevated text-hiplink-dark dark:text-dark-text'
-                } px-5 py-3 rounded-2xl ${
-                  msg.role === 'user'
-                    ? 'rounded-br-sm'
-                    : 'rounded-bl-sm border border-hiplink-border dark:border-dark-border'
-                }`}>
-                  {msg.role === 'user' ? (
-                    <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                  ) : (
-                    <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 dark:prose-invert">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.text}
-                      </ReactMarkdown>
-                    </div>
-                  )}
-                
-                  {/* Sources for Knowledge Base and Debug modes */}
-                  {msg.role === 'assistant' && shouldShowSources && msg.grouped_sources && msg.grouped_sources.length > 0 && (
-                    <div className="mt-4 pt-4 border-t border-hiplink-border dark:border-dark-border">
-                      <p className="font-semibold text-hiplink-dark dark:text-dark-text mb-3 text-sm flex items-center gap-2">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Sources
-                      </p>
-                      <div className="space-y-2">
-                        {msg.grouped_sources.map((source: GroupedSource, idx: number) => (
-                          <SourceCard key={idx} source={source} isDebugMode={isDebugMode} />
-                        ))}
+          {/* Sessions list */}
+          <div className="flex-1 overflow-y-auto">
+            {sessionsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <span className="text-sm text-hiplink-secondary dark:text-dark-text-dim">Loading...</span>
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim">No conversations yet.</p>
+                <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mt-1">Start a new chat to see it here.</p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-hiplink-border dark:divide-dark-border">
+                {sessions.map(session => (
+                  <li key={session.id}>
+                    <button
+                      onClick={() => selectSession(session.id)}
+                      className={`w-full text-left px-4 py-3 hover:bg-hiplink-background dark:hover:bg-dark-elevated transition-colors group ${
+                        activeSessionId === session.id ? 'bg-hiplink-background dark:bg-dark-elevated' : ''
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-medium truncate ${
+                            activeSessionId === session.id
+                              ? 'text-hiplink-blue dark:text-sky-400'
+                              : 'text-hiplink-dark dark:text-dark-text'
+                          }`}>
+                            {session.title}
+                          </p>
+                          <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mt-0.5">
+                            {formatRelativeTime(session.updated_at)}
+                          </p>
+                        </div>
+                        {/* Session actions */}
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); archiveSession(session.id) }}
+                            className="p-1 text-hiplink-secondary dark:text-dark-text-dim hover:text-hiplink-blue dark:hover:text-sky-400 rounded"
+                            title="Archive"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteSession(session.id) }}
+                            className="p-1 text-hiplink-secondary dark:text-dark-text-dim hover:text-hiplink-error dark:hover:text-red-400 rounded"
+                            title="Delete"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                
-                  {/* Debug info for Debug mode */}
-                  {msg.role === 'assistant' && isDebugMode && msg.debug_info && (
-                    <DebugInfoPanel debugInfo={msg.debug_info} />
-                  )}
-                
-                  {/* Feedback buttons for assistant messages */}
-                  {msg.role === 'assistant' && msg.observation_id && (
-                    <FeedbackButtons observationId={msg.observation_id} />
-                  )}
-                </div>
-              </div>
-            ))}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </aside>
 
-            {loading && (
-              <div className="flex justify-start">
-                <div className="bg-hiplink-background dark:bg-dark-elevated text-hiplink-secondary dark:text-dark-text-muted px-5 py-3 rounded-2xl rounded-bl-sm border border-hiplink-border dark:border-dark-border">
-                  <span className="inline-flex items-center gap-2">
-                    <span className="w-2 h-2 bg-hiplink-blue dark:bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 bg-hiplink-blue dark:bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 bg-hiplink-blue dark:bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                    <span className="ml-1">Thinking...</span>
+        {/* Mobile overlay */}
+        {sidebarOpen && (
+          <div
+            className="lg:hidden fixed inset-0 bg-black/30 z-30"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        {/* Main chat area */}
+        <main className="flex-1 flex flex-col min-w-0">
+          {/* Mode Selector */}
+          <div className="p-4 bg-white dark:bg-dark-card border-b border-hiplink-border dark:border-dark-border">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 max-w-4xl mx-auto">
+              <div className="flex items-center gap-1 bg-gray-100 dark:bg-dark-elevated p-1 rounded-lg">
+                {availableModes.map((modeConfig) => (
+                  <button
+                    key={modeConfig.id}
+                    type="button"
+                    onClick={() => handleModeChange(modeConfig.id)}
+                    className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                      mode === modeConfig.id
+                        ? 'bg-hiplink-blue text-white shadow-sm'
+                        : 'bg-transparent text-hiplink-secondary dark:text-dark-text-muted hover:text-hiplink-dark dark:hover:text-dark-text'
+                    }`}
+                  >
+                    {modeConfig.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                {isViewerMode ? (
+                  <span className="text-xs text-hiplink-secondary dark:text-dark-text-dim italic bg-blue-50 dark:bg-sky-900/20 px-2 py-1 rounded">
+                    Viewer mode: read-only answers from uploaded knowledge sources.
                   </span>
-                </div>
+                ) : (
+                  <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim italic">
+                    {availableModes.find(m => m.id === mode)?.helperText}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Chat container */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Error banner */}
+            {error && (
+              <div className="mx-4 mt-4 bg-red-50 dark:bg-red-900/20 border border-hiplink-error text-hiplink-error dark:text-red-400 px-4 py-3 rounded-lg">
+                <strong>Error:</strong> {error}
               </div>
             )}
 
-            <div ref={messagesEndRef} />
-          </div>
+            {/* Message list */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {messages.length === 0 && !loading && (
+                <WelcomeState
+                  mode={mode}
+                  onExampleClick={handleExampleClick}
+                  examplePrompts={examplePrompts}
+                />
+              )}
 
-          {/* Input row - sticky at bottom */}
-          <div className="border-t border-hiplink-border dark:border-dark-border p-4 bg-white dark:bg-dark-card">
-            <form onSubmit={handleSubmit} className="flex gap-3">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                disabled={loading}
-                placeholder="Type your message..."
-                className="flex-1 border border-hiplink-border dark:border-dark-border rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-hiplink-blue dark:focus:ring-sky-400 focus:border-transparent disabled:bg-gray-100 dark:bg-dark-elevated disabled:cursor-not-allowed text-hiplink-dark dark:text-dark-text placeholder:text-gray-400 dark:placeholder:text-dark-text-dim bg-white dark:bg-dark-card"
-              />
-              <button
-                type="submit"
-                disabled={loading || !input.trim()}
-                className="btn-primary px-6 py-3 flex items-center gap-2"
-              >
-                <span>Send</span>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                </svg>
-              </button>
-            </form>
+              {messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div className={`max-w-[80%] ${
+                    msg.role === 'user'
+                      ? 'bg-hiplink-blue dark:bg-sky-600 text-white'
+                      : 'bg-hiplink-background dark:bg-dark-elevated text-hiplink-dark dark:text-dark-text'
+                  } px-5 py-3 rounded-2xl ${
+                    msg.role === 'user'
+                      ? 'rounded-br-sm'
+                      : 'rounded-bl-sm border border-hiplink-border dark:border-dark-border'
+                  }`}>
+                    {msg.role === 'user' ? (
+                      <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                    ) : (
+                      <div className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 dark:prose-invert">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {msg.text}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+
+                    {/* Sources for Knowledge Base and Debug modes */}
+                    {msg.role === 'assistant' && shouldShowSources && msg.grouped_sources && msg.grouped_sources.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-hiplink-border dark:border-dark-border">
+                        <p className="font-semibold text-hiplink-dark dark:text-dark-text mb-3 text-sm flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          Sources
+                        </p>
+                        <div className="space-y-2">
+                          {msg.grouped_sources.map((source: GroupedSource, idx: number) => (
+                            <SourceCard key={idx} source={source} isDebugMode={isDebugMode} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Debug info for Debug mode */}
+                    {msg.role === 'assistant' && isDebugMode && msg.debug_info && (
+                      <DebugInfoPanel debugInfo={msg.debug_info} />
+                    )}
+
+                    {/* Feedback buttons for assistant messages */}
+                    {msg.role === 'assistant' && msg.observation_id && (
+                      <FeedbackButtons observationId={msg.observation_id} />
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {loading && (
+                <div className="flex justify-start">
+                  <div className="bg-hiplink-background dark:bg-dark-elevated text-hiplink-secondary dark:text-dark-text-muted px-5 py-3 rounded-2xl rounded-bl-sm border border-hiplink-border dark:border-dark-border">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="w-2 h-2 bg-hiplink-blue dark:bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-hiplink-blue dark:bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-hiplink-blue dark:bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <span className="ml-1">Thinking...</span>
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input row - sticky at bottom */}
+            <div className="border-t border-hiplink-border dark:border-dark-border p-4 bg-white dark:bg-dark-card">
+              <form onSubmit={handleSubmit} className="flex gap-3 max-w-4xl mx-auto">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  disabled={loading}
+                  placeholder="Type your message..."
+                  className="flex-1 border border-hiplink-border dark:border-dark-border rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-hiplink-blue dark:focus:ring-sky-400 focus:border-transparent disabled:bg-gray-100 dark:bg-dark-elevated disabled:cursor-not-allowed text-hiplink-dark dark:text-dark-text placeholder:text-gray-400 dark:placeholder:text-dark-text-dim bg-white dark:bg-dark-card"
+                />
+                <button
+                  type="submit"
+                  disabled={loading || !input.trim()}
+                  className="btn-primary px-6 py-3 flex items-center gap-2"
+                >
+                  <span>Send</span>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                  </svg>
+                </button>
+              </form>
+            </div>
           </div>
-        </div>
+        </main>
       </div>
     </div>
   )
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function safeParseJson(json: string): unknown {
+  try { return JSON.parse(json) } catch { return null }
+}
+
+function safeParseGroupedSources(json: string): GroupedSource[] {
+  try { return JSON.parse(json) } catch { return [] }
+}
+
+function formatRelativeTime(isoString: string): string {
+  const date = new Date(isoString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 1) return 'Just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
+}
+
+// ---------------------------------------------------------------------------
 // Welcome state component
-function WelcomeState({ 
-  mode, 
-  onExampleClick, 
-  examplePrompts 
-}: { 
+// ---------------------------------------------------------------------------
+
+function WelcomeState({
+  mode,
+  onExampleClick,
+  examplePrompts
+}: {
   mode: ChatMode
   onExampleClick: (prompt: string) => void
   examplePrompts: string[]
@@ -343,13 +665,13 @@ function WelcomeState({
       </div>
       <h2 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text mb-2">Welcome to HipLink AI Assistant</h2>
       <p className="text-hiplink-secondary dark:text-dark-text-muted mb-8 max-w-md">
-        {mode === 'general_chat' 
+        {mode === 'general_chat'
           ? 'Ask me anything! I\'ll use general AI conversation to help you.'
           : mode === 'knowledge_base'
           ? 'I\'ll search through your uploaded documents to find answers.'
           : 'Debug mode shows retrieval, grounding, and citation metadata.'}
       </p>
-      
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
         {examplePrompts.map((prompt, i) => (
           <button
@@ -365,7 +687,10 @@ function WelcomeState({
   )
 }
 
-// Source card component for grouped sources display
+// ---------------------------------------------------------------------------
+// Source card component
+// ---------------------------------------------------------------------------
+
 function SourceCard({ source, isDebugMode = false }: { source: GroupedSource; isDebugMode?: boolean }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -388,7 +713,6 @@ function SourceCard({ source, isDebugMode = false }: { source: GroupedSource; is
               <span className="text-hiplink-secondary dark:text-dark-text-dim text-xs">
                 {source.sections_used} {source.sections_used === 1 ? 'section' : 'sections'} used
               </span>
-              {/* Show debug details only in Debug mode */}
               {isDebugMode && source.highest_score !== null && (
                 <span className="text-gray-400 dark:text-dark-text-dim text-xs font-mono">
                   score: {source.highest_score.toFixed(3)}
@@ -440,10 +764,13 @@ function SourceCard({ source, isDebugMode = false }: { source: GroupedSource; is
   )
 }
 
-// Debug info panel for developer/admin mode
+// ---------------------------------------------------------------------------
+// Debug info panel
+// ---------------------------------------------------------------------------
+
 function DebugInfoPanel({ debugInfo }: { debugInfo: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false)
-  
+
   return (
     <div className="mt-4 bg-gray-900 dark:bg-slate-800 text-gray-100 rounded-lg overflow-hidden">
       <button
@@ -464,7 +791,10 @@ function DebugInfoPanel({ debugInfo }: { debugInfo: Record<string, unknown> }) {
   )
 }
 
+// ---------------------------------------------------------------------------
 // Feedback buttons component
+// ---------------------------------------------------------------------------
+
 function FeedbackButtons({ observationId }: { observationId: number }) {
   const [feedbackState, setFeedbackState] = useState<'none' | 'submitted' | 'reason'>('none')
   const [selectedReason, setSelectedReason] = useState<string>('')
@@ -492,10 +822,10 @@ function FeedbackButtons({ observationId }: { observationId: number }) {
     setError(null)
 
     try {
-      const res = await authFetch(`/api/chat/${observationId}/feedback`, {
+      const res = await authFetch(`/api/chat/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating }),
+        body: JSON.stringify({ observation_id: observationId, rating }),
       })
 
       if (!res.ok) {
@@ -515,10 +845,11 @@ function FeedbackButtons({ observationId }: { observationId: number }) {
     setError(null)
 
     try {
-      const res = await authFetch(`/api/chat/${observationId}/feedback`, {
+      const res = await authFetch(`/api/chat/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          observation_id: observationId,
           rating: 'not_helpful',
           reason: selectedReason,
           comment: comment || undefined,
