@@ -51,15 +51,31 @@ def test_suggested_followups_returned_for_rag_chat():
     assert 3 <= len(data["suggested_followups"]) <= 5
 
 
-def test_suggested_followups_are_strings():
-    """All suggested follow-ups are strings of reasonable length."""
+def test_suggested_followups_are_typed_objects():
+    """All suggested follow-ups are objects with label, prompt, and type fields."""
     response = client.post("/api/chat", json={"message": "test", "mode": "general_chat"})
     assert response.status_code == 200
     data = response.json()
     for suggestion in data["suggested_followups"]:
-        assert isinstance(suggestion, str)
-        assert len(suggestion) > 0
-        assert len(suggestion) <= 80  # Max length check
+        assert isinstance(suggestion, dict), f"Suggestion should be dict, got {type(suggestion)}"
+        assert "label" in suggestion, "Suggestion must have 'label' field"
+        assert "prompt" in suggestion, "Suggestion must have 'prompt' field"
+        assert "type" in suggestion, "Suggestion must have 'type' field"
+        assert isinstance(suggestion["label"], str), "label must be string"
+        assert len(suggestion["label"]) > 0, "label must not be empty"
+        assert len(suggestion["label"]) <= 80, "label must be <= 80 chars"
+        assert suggestion["type"] in ("question", "frontend_action", "contextual_action"), \
+            "type must be 'question', 'frontend_action', or 'contextual_action'"
+
+
+def test_suggested_followups_no_contextual_action():
+    """RAG responses should not include contextual_action suggestions (Phase 20B UX fix)."""
+    response = client.post("/api/chat", json={"message": "hello", "mode": "knowledge_base"})
+    assert response.status_code == 200
+    data = response.json()
+    for suggestion in data["suggested_followups"]:
+        assert suggestion["type"] != "contextual_action", \
+            "contextual_action suggestions should be hidden until Phase 20C"
 
 
 def test_suggested_followups_no_secrets():
@@ -69,9 +85,13 @@ def test_suggested_followups_no_secrets():
     data = response.json()
     dangerous_patterns = ["key", "secret", "password", "token", "api", "sk-", "eyJ"]
     for suggestion in data["suggested_followups"]:
-        suggestion_lower = suggestion.lower()
-        for pattern in dangerous_patterns:
-            assert pattern not in suggestion_lower, f"Suggestion contains dangerous pattern: {pattern}"
+        # Check both label and prompt fields
+        for field in ["label", "prompt"]:
+            if suggestion.get(field):
+                suggestion_lower = suggestion[field].lower()
+                for pattern in dangerous_patterns:
+                    assert pattern not in suggestion_lower, \
+                        f"Suggestion.{field} contains dangerous pattern: {pattern}"
 
 
 def test_suggested_followups_session_id_returned():

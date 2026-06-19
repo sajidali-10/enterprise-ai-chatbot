@@ -40,7 +40,16 @@ interface Message {
   grouped_sources?: GroupedSource[]
   debug_info?: Record<string, unknown>
   observation_id?: number
-  suggested_followups?: string[]
+  suggested_followups?: Suggestion[]
+}
+
+// Phase 20B UX Fix: Typed suggestion interface
+type SuggestionType = 'question' | 'frontend_action' | 'contextual_action'
+
+interface Suggestion {
+  label: string
+  prompt: string
+  type: SuggestionType
 }
 
 interface ChatSession {
@@ -340,12 +349,43 @@ function ChatPageInner() {
     setInput(prompt)
   }
 
-  // Phase 20B: Handle clicking a suggested follow-up
-  const handleSuggestionSelect = (suggestion: string) => {
+  // Phase 20B UX Fix: Handle typed suggestion clicks
+  const handleSuggestionSelect = (suggestion: Suggestion) => {
     if (loading) return
-    // Auto-submit the suggestion (pass as message override to avoid setState race)
-    const fakeEvent = { preventDefault: () => {} } as FormEvent
-    handleSubmit(fakeEvent, suggestion)
+
+    // Phase 20B UX Fix: Handle frontend_action types without API call
+    if (suggestion.type === 'frontend_action') {
+      handleFrontendAction(suggestion.label)
+      return
+    }
+
+    // For 'question' types, send to API
+    if (suggestion.type === 'question' && suggestion.prompt) {
+      const fakeEvent = { preventDefault: () => {} } as FormEvent
+      handleSubmit(fakeEvent, suggestion.prompt)
+    }
+  }
+
+  // Phase 20B UX Fix: Handle frontend actions without API calls
+  const handleFrontendAction = (label: string) => {
+    const lowerLabel = label.toLowerCase()
+
+    if (lowerLabel.includes('show cited sources') || lowerLabel.includes('show sources')) {
+      // Scroll to sources section
+      const sourcesEl = document.getElementById('sources-section')
+      if (sourcesEl) {
+        sourcesEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    } else if (lowerLabel.includes('show documents') || lowerLabel.includes('my documents')) {
+      // Navigate to Documents page
+      window.location.href = '/documents'
+    } else if (lowerLabel.includes('upload')) {
+      // Navigate to Documents page (upload section)
+      window.location.href = '/documents'
+    } else if (lowerLabel.includes('rephrase')) {
+      // Show a tooltip or do nothing
+      // User should manually rephrase
+    }
   }
 
   const shouldShowSources = mode !== 'general_chat'
@@ -548,7 +588,7 @@ function ChatPageInner() {
 
                     {/* Sources for Knowledge Base and Debug modes */}
                     {msg.role === 'assistant' && shouldShowSources && msg.grouped_sources && msg.grouped_sources.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-hiplink-border dark:border-dark-border">
+                      <div id="sources-section" className="mt-4 pt-4 border-t border-hiplink-border dark:border-dark-border">
                         <p className="font-semibold text-hiplink-dark dark:text-dark-text mb-3 text-sm flex items-center gap-2">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -973,18 +1013,30 @@ function FeedbackButtons({ observationId }: { observationId: number }) {
 // Suggested follow-ups component (Phase 20B)
 // ---------------------------------------------------------------------------
 
-function SuggestedFollowups({ suggestions, onSelect }: { suggestions: string[]; onSelect: (suggestion: string) => void }) {
+function SuggestedFollowups({ suggestions, onSelect }: { suggestions: Suggestion[]; onSelect: (suggestion: Suggestion) => void }) {
+  // Phase 20B UX Fix: Filter out contextual_action types until Phase 20C
+  const visibleSuggestions = suggestions.filter(s => s.type !== 'contextual_action')
+
+  if (visibleSuggestions.length === 0) {
+    return null
+  }
+
   return (
     <div className="mt-4 pt-3 border-t border-hiplink-border dark:border-dark-border">
       <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-2">Suggested follow-ups:</p>
       <div className="flex flex-wrap gap-2">
-        {suggestions.map((suggestion, i) => (
+        {visibleSuggestions.map((suggestion, i) => (
           <button
             key={i}
             onClick={() => onSelect(suggestion)}
-            className="px-3 py-1.5 text-xs rounded-lg bg-hiplink-background dark:bg-dark-elevated border border-hiplink-border dark:border-dark-border text-hiplink-blue dark:text-sky-400 hover:bg-blue-50 dark:hover:bg-sky-900/30 hover:border-hiplink-blue dark:hover:border-sky-400 transition-colors text-left"
+            className={`px-3 py-1.5 text-xs rounded-lg border transition-colors text-left ${
+              suggestion.type === 'frontend_action'
+                ? 'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/50'
+                : 'bg-hiplink-background dark:bg-dark-elevated border-hiplink-border dark:border-dark-border text-hiplink-blue dark:text-sky-400 hover:bg-blue-50 dark:hover:bg-sky-900/30 hover:border-hiplink-blue dark:hover:border-sky-400'
+            }`}
+            title={suggestion.type === 'frontend_action' ? 'Takes effect immediately' : 'Sends to AI'}
           >
-            {suggestion}
+            {suggestion.label}
           </button>
         ))}
       </div>

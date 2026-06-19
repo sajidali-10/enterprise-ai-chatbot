@@ -1,15 +1,34 @@
 """
 Suggestion Generator Service
 
-Phase 20B — Suggested Follow-up Buttons.
+Phase 20B — Suggested Follow-up Buttons (UX Fix).
+Phase 20C: Add typed suggestions to prevent bad fallback loops.
 
-Rule-based suggestion generator that creates 3-5 safe follow-up prompts
-based on chat mode, citations presence, and response characteristics.
+Suggestion types:
+- question: A standalone question that can be sent to the LLM directly
+- frontend_action: Handled by frontend (scroll, navigate, expand)
+- contextual_action: Depends on previous answer — HIDDEN until Phase 20C
 
 No LLM call is made — all suggestions are pre-defined and context-aware.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Literal
+from dataclasses import dataclass
+
+
+# ==============================================================================
+# Suggestion Type Definitions
+# ==============================================================================
+
+SuggestionType = Literal["question", "frontend_action", "contextual_action"]
+
+
+@dataclass
+class Suggestion:
+    """A typed suggestion with label, prompt, and type."""
+    label: str
+    prompt: str  # What to send to LLM if type is 'question'
+    type: SuggestionType
 
 
 # ==============================================================================
@@ -17,30 +36,91 @@ from typing import List, Optional
 # ==============================================================================
 
 # RAG answers WITH citations
-RAG_WITH_CITATIONS = [
-    "Show the cited source documents",
-    "Summarize this answer for management",
-    "Create an action checklist",
-    "What evidence supports this answer?",
-    "What risks or gaps are missing?",
+# - frontend_action: scroll to sources, navigate to documents
+# - question: standalone questions about the documents
+# - contextual_action: depends on previous answer — HIDDEN until Phase 20C
+RAG_WITH_CITATIONS: List[Suggestion] = [
+    Suggestion(
+        label="Show cited sources",
+        prompt="Show the cited source documents",
+        type="frontend_action",
+    ),
+    Suggestion(
+        label="Show documents I can access",
+        prompt="Show documents I can access",
+        type="frontend_action",
+    ),
+    Suggestion(
+        label="What topics are covered?",
+        prompt="What topics are covered in the uploaded documents?",
+        type="question",
+    ),
+    Suggestion(
+        label="Ask about another document",
+        prompt="What information is in another document?",
+        type="question",
+    ),
+    # CONTEXTUAL — hidden until Phase 20C:
+    # Suggestion(
+    #     label="Summarize for management",
+    #     prompt="Summarize the previous answer for management",
+    #     type="contextual_action",
+    # ),
 ]
 
 # RAG fallback / no-context / unsupported answers
-RAG_FALLBACK = [
-    "Upload a related document",
-    "Rephrase the question",
-    "Ask about available documents",
-    "Show documents I can access",
-    "Explain what information is missing",
+# Only safe standalone actions — no contextual suggestions
+RAG_FALLBACK: List[Suggestion] = [
+    Suggestion(
+        label="Upload a document",
+        prompt="",  # frontend_action, no prompt needed
+        type="frontend_action",
+    ),
+    Suggestion(
+        label="Rephrase the question",
+        prompt="",  # Will be handled specially by frontend
+        type="frontend_action",
+    ),
+    Suggestion(
+        label="Show my documents",
+        prompt="Show documents I can access",
+        type="frontend_action",
+    ),
+    Suggestion(
+        label="Ask about another topic",
+        prompt="What topics are covered in the uploaded documents?",
+        type="question",
+    ),
 ]
 
 # General chat suggestions
-GENERAL_CHAT = [
-    "Explain this in simpler terms",
-    "Create step-by-step instructions",
-    "Turn this into an email",
-    "Create a checklist",
-    "What should I do next?",
+# All are standalone questions — no context dependency
+GENERAL_CHAT: List[Suggestion] = [
+    Suggestion(
+        label="Explain in simpler terms",
+        prompt="Explain this in simpler terms",
+        type="question",
+    ),
+    Suggestion(
+        label="Step-by-step instructions",
+        prompt="Create step-by-step instructions based on this",
+        type="question",
+    ),
+    Suggestion(
+        label="Turn into an email",
+        prompt="Turn this into a professional email",
+        type="question",
+    ),
+    Suggestion(
+        label="Create a checklist",
+        prompt="Create a checklist based on this",
+        type="question",
+    ),
+    Suggestion(
+        label="What should I do next?",
+        prompt="What should I do next based on this?",
+        type="question",
+    ),
 ]
 
 
@@ -53,9 +133,12 @@ def generate_suggestions(
     has_citations: bool = False,
     is_fallback: bool = False,
     citations: Optional[List] = None,
-) -> List[str]:
+) -> List[dict]:
     """
-    Generate 3-5 suggested follow-up prompts based on context.
+    Generate 3-5 typed suggested follow-ups based on context.
+
+    Only returns 'question' and 'frontend_action' types.
+    'contextual_action' suggestions are hidden until Phase 20C.
 
     Args:
         mode: Chat mode ("general_chat", "knowledge_base", "debug")
@@ -64,7 +147,7 @@ def generate_suggestions(
         citations: Optional list of citations (used for safety checks)
 
     Returns:
-        List of 3-5 suggestion strings (max 80 chars each)
+        List of suggestion dicts with: label, prompt, type
     """
     # Normalize mode
     mode = mode.lower().strip() if mode else "general_chat"
@@ -79,8 +162,22 @@ def generate_suggestions(
     else:
         suggestions = GENERAL_CHAT
 
-    # Return a copy (3-5 suggestions)
-    return list(suggestions[:5])
+    # Filter out contextual_action types (hidden until Phase 20C)
+    # Also limit to 5 suggestions
+    safe_suggestions = [
+        s for s in suggestions
+        if s.type != "contextual_action"
+    ][:5]
+
+    # Convert to dict format for JSON serialization
+    return [
+        {
+            "label": s.label,
+            "prompt": s.prompt,
+            "type": s.type,
+        }
+        for s in safe_suggestions
+    ]
 
 
 def is_fallback_response(answer: str, citations: Optional[List] = None) -> bool:
