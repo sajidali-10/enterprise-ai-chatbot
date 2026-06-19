@@ -73,6 +73,50 @@ interface SummaryCards {
   rag_fallbacks_24h: number
 }
 
+interface PasswordPolicy {
+  minimum_length: number
+  complexity_enabled: boolean
+  weak_password_blocking_enabled: boolean
+  password_reset_support: boolean
+}
+
+interface SessionManagement {
+  auth_mode: string
+  token_version_invalidation: boolean
+  active_users_count: string
+  force_logout_all_supported: boolean
+  force_logout_all_status: string
+}
+
+interface LoginProtection {
+  failed_login_audit_tracking: string
+  repeated_ip_detection: string
+  account_lockout: string
+  failed_login_count_window: number
+}
+
+interface AuditEvidence {
+  csv_export: string
+  json_export: string
+  export_limit: number
+  audit_logs_link_available: boolean
+}
+
+interface RAGSafety {
+  crag_fallback_checks: string
+  high_risk_categories: string[]
+  rag_evaluation_status: string
+  unsupported_question_fallback: string
+}
+
+interface PolicyControls {
+  password_policy: PasswordPolicy
+  session_management: SessionManagement
+  login_protection: LoginProtection
+  audit_evidence: AuditEvidence
+  rag_safety: RAGSafety
+}
+
 interface SecurityOverview {
   summary_cards: SummaryCards
   failed_login_activity: {
@@ -93,6 +137,7 @@ interface SecurityOverview {
   }
   query_window_hours: number
   queried_since: string
+  policy_controls: PolicyControls
 }
 
 type TimeRange = 24 | 168 | 720
@@ -286,7 +331,6 @@ function SecurityPage() {
   return (
     <ProtectedRoute requirePermission="canAccessObservability">
       <main className="min-h-screen bg-hiplink-background dark:bg-dark-bg">
-        <AppHeader />
         <div className="max-w-[1440px] mx-auto px-6 py-8 space-y-8">
 
           {/* Hero / Header */}
@@ -624,6 +668,219 @@ function SecurityPage() {
               </div>
             </div>
           </div>
+
+          {/* Security Policy & Controls */}
+          <div className="bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-hiplink-border dark:border-dark-border">
+              <h2 className="text-base font-bold text-hiplink-dark dark:text-dark-text">Security Policy &amp; Controls</h2>
+              <p className="text-sm text-hiplink-secondary dark:text-dark-text-muted mt-0.5">
+                Read-only view of active security controls and policy settings.
+              </p>
+            </div>
+            <div className="p-6 space-y-6">
+
+              {/* Policy cards grid */}
+              {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[...Array(5)].map((_, i) => (
+                    <div key={i} className="rounded-xl border border-hiplink-border dark:border-dark-border p-5 space-y-3">
+                      <SkeletonBar w="w-1/2" />
+                      <SkeletonBar w="w-full" />
+                      <SkeletonBar w="w-3/4" />
+                    </div>
+                  ))}
+                </div>
+              ) : data?.policy_controls ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+
+                  {/* Password Policy */}
+                  <div className="rounded-xl border border-hiplink-border dark:border-dark-border p-5 bg-gray-50 dark:bg-dark-elevated">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center text-sky-600 dark:text-sky-400">
+                        {iconKey}
+                      </div>
+                      <h3 className="text-sm font-bold text-hiplink-dark dark:text-dark-text">Password Policy</h3>
+                    </div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Minimum Length</span>
+                        <span className="font-medium text-hiplink-dark dark:text-dark-text">{data.policy_controls.password_policy.minimum_length}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Complexity Required</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          {data.policy_controls.password_policy.complexity_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Weak Password Blocking</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          {data.policy_controls.password_policy.weak_password_blocking_enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Password Reset Support</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          {data.policy_controls.password_policy.password_reset_support ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Session Management */}
+                  <div className="rounded-xl border border-hiplink-border dark:border-dark-border p-5 bg-gray-50 dark:bg-dark-elevated">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                        {iconShield}
+                      </div>
+                      <h3 className="text-sm font-bold text-hiplink-dark dark:text-dark-text">Session Management</h3>
+                    </div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Auth Mode</span>
+                        <span className="font-medium text-hiplink-dark dark:text-dark-text">{data.policy_controls.session_management.auth_mode}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Token Version Invalidation</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          {data.policy_controls.session_management.token_version_invalidation ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Active Users Count</span>
+                        <span className="font-medium text-hiplink-secondary dark:text-dark-text-muted">{data.policy_controls.session_management.active_users_count}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Force Logout All</span>
+                        <span className="font-medium text-amber-600 dark:text-amber-400">{data.policy_controls.session_management.force_logout_all_status}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Login Protection */}
+                  <div className="rounded-xl border border-hiplink-border dark:border-dark-border p-5 bg-gray-50 dark:bg-dark-elevated">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center text-red-600 dark:text-red-400">
+                        {iconLock}
+                      </div>
+                      <h3 className="text-sm font-bold text-hiplink-dark dark:text-dark-text">Login Protection</h3>
+                    </div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Failed Login Audit</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{data.policy_controls.login_protection.failed_login_audit_tracking}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Repeated IP Detection</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{data.policy_controls.login_protection.repeated_ip_detection}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Account Lockout</span>
+                        <span className="font-medium text-hiplink-secondary dark:text-dark-text-muted">{data.policy_controls.login_protection.account_lockout}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Failed Logins (24h)</span>
+                        <span className="font-medium text-hiplink-dark dark:text-dark-text">{data.policy_controls.login_protection.failed_login_count_window}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Audit & Evidence */}
+                  <div className="rounded-xl border border-hiplink-border dark:border-dark-border p-5 bg-gray-50 dark:bg-dark-elevated">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                        {iconDoc}
+                      </div>
+                      <h3 className="text-sm font-bold text-hiplink-dark dark:text-dark-text">Audit &amp; Evidence</h3>
+                    </div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">CSV Export</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{data.policy_controls.audit_evidence.csv_export}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">JSON Export</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{data.policy_controls.audit_evidence.json_export}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Export Limit</span>
+                        <span className="font-medium text-hiplink-dark dark:text-dark-text">{data.policy_controls.audit_evidence.export_limit.toLocaleString()} records</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Audit Logs Link</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          {data.policy_controls.audit_evidence.audit_logs_link_available ? 'Available' : 'Unavailable'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* RAG Safety */}
+                  <div className="rounded-xl border border-hiplink-border dark:border-dark-border p-5 bg-gray-50 dark:bg-dark-elevated">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                        {iconAlert}
+                      </div>
+                      <h3 className="text-sm font-bold text-hiplink-dark dark:text-dark-text">RAG Safety</h3>
+                    </div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">CRAG Fallback Checks</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{data.policy_controls.rag_safety.crag_fallback_checks}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">High-Risk Categories</span>
+                        <span className="font-medium text-hiplink-dark dark:text-dark-text">
+                          {data.policy_controls.rag_safety.high_risk_categories.join(', ')}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">RAG Evaluation</span>
+                        <span className="font-medium text-hiplink-dark dark:text-dark-text">{data.policy_controls.rag_safety.rag_evaluation_status}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-hiplink-secondary dark:text-dark-text-muted">Unsupported Question</span>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{data.policy_controls.rag_safety.unsupported_question_fallback}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              ) : (
+                <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim">Policy controls data is not available.</p>
+              )}
+
+              {/* Quick links */}
+              <div className="flex items-center justify-between flex-wrap gap-3 pt-2 border-t border-hiplink-border dark:border-dark-border">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <a
+                    href="/admin/users"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white dark:bg-dark-elevated border border-hiplink-border dark:border-dark-border text-hiplink-dark dark:text-dark-text text-sm font-medium hover:bg-gray-50 dark:hover:bg-dark-border transition-colors"
+                  >
+                    {iconUsers}
+                    View Users
+                  </a>
+                  <a
+                    href="/admin/audit-logs"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white dark:bg-dark-elevated border border-hiplink-border dark:border-dark-border text-hiplink-dark dark:text-dark-text text-sm font-medium hover:bg-gray-50 dark:hover:bg-dark-border transition-colors"
+                  >
+                    {iconDoc}
+                    View Audit Logs
+                  </a>
+                  <button
+                    disabled
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-100 dark:bg-dark-elevated border border-hiplink-border dark:border-dark-border text-hiplink-secondary dark:text-dark-text-muted text-sm font-medium opacity-50 cursor-not-allowed"
+                    title="Coming soon"
+                  >
+                    {iconUsers}
+                    Force Logout All Users — Coming soon
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
         </div>
       </main>
     </ProtectedRoute>

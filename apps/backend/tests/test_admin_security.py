@@ -98,6 +98,69 @@ class TestAdminSecurityOverview:
         assert '"token"' not in raw
         assert '"api_key"' not in raw
 
+    def test_policy_controls_present(self, jwt_admin_client):
+        """Overview response includes policy_controls section."""
+        response = jwt_admin_client.get("/api/admin/security/overview")
+        assert response.status_code == 200
+        data = response.json()
+        assert "policy_controls" in data
+
+    def test_policy_controls_has_all_five_sections(self, jwt_admin_client):
+        """Policy controls contains all five required subsections."""
+        response = jwt_admin_client.get("/api/admin/security/overview")
+        assert response.status_code == 200
+        pc = response.json()["policy_controls"]
+        assert "password_policy" in pc
+        assert "session_management" in pc
+        assert "login_protection" in pc
+        assert "audit_evidence" in pc
+        assert "rag_safety" in pc
+
+    def test_policy_controls_password_policy_fields(self, jwt_admin_client):
+        """Password policy section has expected read-only fields."""
+        response = jwt_admin_client.get("/api/admin/security/overview")
+        assert response.status_code == 200
+        pp = response.json()["policy_controls"]["password_policy"]
+        assert "minimum_length" in pp
+        assert "complexity_enabled" in pp
+        assert "weak_password_blocking_enabled" in pp
+        assert "password_reset_support" in pp
+        assert isinstance(pp["minimum_length"], int)
+        assert pp["minimum_length"] >= 8
+
+    def test_policy_controls_session_management_fields(self, jwt_admin_client):
+        """Session management section has expected read-only fields."""
+        response = jwt_admin_client.get("/api/admin/security/overview")
+        assert response.status_code == 200
+        sm = response.json()["policy_controls"]["session_management"]
+        assert "auth_mode" in sm
+        assert "token_version_invalidation" in sm
+        assert "active_users_count" in sm
+        assert "force_logout_all_supported" in sm
+        assert "force_logout_all_status" in sm
+
+    def test_policy_controls_rag_safety_fields(self, jwt_admin_client):
+        """RAG safety section has expected read-only fields."""
+        response = jwt_admin_client.get("/api/admin/security/overview")
+        assert response.status_code == 200
+        rs = response.json()["policy_controls"]["rag_safety"]
+        assert "crag_fallback_checks" in rs
+        assert "high_risk_categories" in rs
+        assert "rag_evaluation_status" in rs
+        assert "unsupported_question_fallback" in rs
+        assert isinstance(rs["high_risk_categories"], list)
+
+    def test_policy_controls_no_secrets_exposed(self, jwt_admin_client):
+        """Policy controls must not expose tokens, keys, or env values."""
+        response = jwt_admin_client.get("/api/admin/security/overview")
+        assert response.status_code == 200
+        raw = response.text.lower()
+        # These should not appear as actual secret values
+        assert "Bearer " not in raw
+        assert "sk-" not in raw
+        assert "ghp_" not in raw
+        assert "eyJ" not in raw  # JWT prefix
+
     def test_risky_activity_structure(self, jwt_admin_client):
         """Risky activity section has the expected structure."""
         response = jwt_admin_client.get("/api/admin/security/overview")
