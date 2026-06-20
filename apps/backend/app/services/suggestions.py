@@ -133,18 +133,22 @@ def generate_suggestions(
     has_citations: bool = False,
     is_fallback: bool = False,
     citations: Optional[List] = None,
+    has_conversation_context: bool = False,
 ) -> List[dict]:
     """
     Generate 3-5 typed suggested follow-ups based on context.
 
-    Only returns 'question' and 'frontend_action' types.
-    'contextual_action' suggestions are hidden until Phase 20C.
+    Returns 'question', 'frontend_action', and 'contextual_action' types.
+    'contextual_action' suggestions are shown only when:
+    - has_conversation_context is True (Phase 20C)
+    - response is not fallback/no-context
 
     Args:
         mode: Chat mode ("general_chat", "knowledge_base", "debug")
         has_citations: Whether the response includes RAG citations
         is_fallback: Whether the response is a fallback/no-context answer
         citations: Optional list of citations (used for safety checks)
+        has_conversation_context: Whether there's recent conversation context (Phase 20C)
 
     Returns:
         List of suggestion dicts with: label, prompt, type
@@ -162,11 +166,11 @@ def generate_suggestions(
     else:
         suggestions = GENERAL_CHAT
 
-    # Filter out contextual_action types (hidden until Phase 20C)
-    # Also limit to 5 suggestions
+    # Filter suggestions based on Phase 20C rules:
+    # contextual_action only shown when there's conversation context AND not a fallback
     safe_suggestions = [
         s for s in suggestions
-        if s.type != "contextual_action"
+        if s.type != "contextual_action" or (has_conversation_context and not is_fallback)
     ][:5]
 
     # Convert to dict format for JSON serialization

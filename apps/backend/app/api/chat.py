@@ -27,6 +27,10 @@ from app.rag.answer_generator import (
 from app.rag.citations import format_citations, group_citations_by_source
 from app.services.observability import log_chat_observation
 from app.services.suggestions import generate_suggestions, is_fallback_response
+from app.services.conversation_context import (
+    get_recent_conversation_context,
+    format_conversation_context_for_prompt,
+)
 from app.core.rate_limit import rate_limit
 
 # Chat session models (Phase 20A)
@@ -379,6 +383,19 @@ def post_chat(
             # Don't break chat if session storage fails
             session = None
 
+    # Phase 20C: Load conversation context if continuing a session
+    conversation_context = ""
+    has_conversation_context = False
+    if session:
+        context_messages, _ = get_recent_conversation_context(
+            db=db,
+            session_id=session.id,
+            user_id=auth.user_id,
+        )
+        if context_messages:
+            conversation_context = format_conversation_context_for_prompt(context_messages)
+            has_conversation_context = True
+
     # Knowledge Base and Debug modes both use RAG
     citations = None
     grouped_sources = None
@@ -388,10 +405,12 @@ def post_chat(
     provider_used = None
 
     if mode in (ChatMode.KNOWLEDGE_BASE, ChatMode.DEBUG):
+        # Prepend conversation context to query for RAG mode
+        enhanced_query = f"{conversation_context}Current question: {chat_request.message}" if conversation_context else chat_request.message
         if HAS_SECURITY and auth and auth.is_authenticated:
             # Use audit-aware RAG generation with permission filtering
             answer, citations, metadata = generate_answer_with_rag_audit(
-                query=chat_request.message,
+                query=enhanced_query,
                 auth=auth,
                 debug=debug,
                 use_hybrid=use_hybrid,
@@ -401,7 +420,7 @@ def post_chat(
         else:
             # Fall back to regular RAG without auth/audit
             answer, citations, metadata = generate_answer_with_rag(
-                query=chat_request.message,
+                query=enhanced_query,
                 use_hybrid=use_hybrid,
                 debug=debug,
             )
@@ -435,6 +454,7 @@ def post_chat(
             has_citations=citations is not None and len(citations) > 0,
             is_fallback=is_fallback,
             citations=citations,
+            has_conversation_context=has_conversation_context,
         )
         
     else:
@@ -457,7 +477,11 @@ def post_chat(
         )
 
         # Phase 20B: Add suggested follow-ups for general chat
-        response.suggested_followups = generate_suggestions(mode=mode)
+        # Phase 20C: Pass conversation context info for contextual suggestions
+        response.suggested_followups = generate_suggestions(
+            mode=mode,
+            has_conversation_context=has_conversation_context,
+        )
     
     # Calculate latency
     latency_ms = int((time.time() - start_time) * 1000)
