@@ -3,11 +3,12 @@ Suggestion Generator Service
 
 Phase 20B — Suggested Follow-up Buttons (UX Fix).
 Phase 20C: Add typed suggestions to prevent bad fallback loops.
+Phase 20C (refined): Enable contextual_action suggestions when conversation context exists.
 
 Suggestion types:
 - question: A standalone question that can be sent to the LLM directly
 - frontend_action: Handled by frontend (scroll, navigate, expand)
-- contextual_action: Depends on previous answer — HIDDEN until Phase 20C
+- contextual_action: Depends on previous answer — enabled when conversation context exists
 
 No LLM call is made — all suggestions are pre-defined and context-aware.
 """
@@ -27,7 +28,7 @@ SuggestionType = Literal["question", "frontend_action", "contextual_action"]
 class Suggestion:
     """A typed suggestion with label, prompt, and type."""
     label: str
-    prompt: str  # What to send to LLM if type is 'question'
+    prompt: str  # What to send to LLM if type is 'question' or 'contextual_action'
     type: SuggestionType
 
 
@@ -35,10 +36,34 @@ class Suggestion:
 # Suggestion Templates by Context
 # ==============================================================================
 
+# Contextual action suggestions - shown when conversation context exists
+# These reference "the previous answer" and depend on having context to reference
+CONTEXTUAL_ACTIONS: List[Suggestion] = [
+    Suggestion(
+        label="Summarize this for management",
+        prompt="Summarize the previous answer in 3-5 bullet points for management",
+        type="contextual_action",
+    ),
+    Suggestion(
+        label="Create an action checklist",
+        prompt="Create a concise action checklist (3-6 items) based on the previous answer",
+        type="contextual_action",
+    ),
+    Suggestion(
+        label="What evidence supports this?",
+        prompt="What specific evidence from the sources supports the previous answer?",
+        type="contextual_action",
+    ),
+    Suggestion(
+        label="What risks or gaps are missing?",
+        prompt="Based on the previous answer and sources, what risks or gaps are missing?",
+        type="contextual_action",
+    ),
+]
+
 # RAG answers WITH citations
 # - frontend_action: scroll to sources, navigate to documents
 # - question: standalone questions about the documents
-# - contextual_action: depends on previous answer — HIDDEN until Phase 20C
 RAG_WITH_CITATIONS: List[Suggestion] = [
     Suggestion(
         label="Show cited sources",
@@ -60,12 +85,6 @@ RAG_WITH_CITATIONS: List[Suggestion] = [
         prompt="What information is in another document?",
         type="question",
     ),
-    # CONTEXTUAL — hidden until Phase 20C:
-    # Suggestion(
-    #     label="Summarize for management",
-    #     prompt="Summarize the previous answer for management",
-    #     type="contextual_action",
-    # ),
 ]
 
 # RAG fallback / no-context / unsupported answers
@@ -139,9 +158,12 @@ def generate_suggestions(
     Generate 3-5 typed suggested follow-ups based on context.
 
     Returns 'question', 'frontend_action', and 'contextual_action' types.
-    'contextual_action' suggestions are shown only when:
+    'contextual_action' suggestions are shown when:
     - has_conversation_context is True (Phase 20C)
     - response is not fallback/no-context
+
+    Phase 20C (refined): When context exists, contextual actions appear alongside
+    regular suggestions, making follow-ups like "Summarize this for management" available.
 
     Args:
         mode: Chat mode ("general_chat", "knowledge_base", "debug")
@@ -166,12 +188,18 @@ def generate_suggestions(
     else:
         suggestions = GENERAL_CHAT
 
+    # Phase 20C: Add contextual actions when conversation context exists AND not a fallback
+    # These provide clean, concise follow-ups referencing "the previous answer"
+    if has_conversation_context and not is_fallback:
+        # Prepend contextual actions to give them priority
+        suggestions = list(CONTEXTUAL_ACTIONS) + suggestions
+
     # Filter suggestions based on Phase 20C rules:
     # contextual_action only shown when there's conversation context AND not a fallback
     safe_suggestions = [
         s for s in suggestions
         if s.type != "contextual_action" or (has_conversation_context and not is_fallback)
-    ][:5]
+    ][:6]  # Allow a few more since contextual ones are prioritized
 
     # Convert to dict format for JSON serialization
     return [

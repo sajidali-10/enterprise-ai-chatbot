@@ -4,6 +4,7 @@ Chat API Endpoint
 Provides /api/chat endpoint for normal and RAG chat.
 Supports authentication and audit logging (Phase 6).
 Phase 20A: Persistent sessions and message storage.
+Phase 20C (refined): Separate conversation context from RAG retrieval query.
 """
 
 import json
@@ -89,10 +90,10 @@ _provider_router = APIRouter(tags=["Health"])
 def get_provider_info():
     """
     Return the currently configured LLM provider and its configuration.
-    
+
     This endpoint NEVER exposes secrets (API keys, master keys).
     Only the base URL host is returned, not the full URL with credentials.
-    
+
     Response fields:
     - provider: LLM_PROVIDER value (e.g., "openrouter", "litellm", "mock")
     - model: configured model name
@@ -154,12 +155,12 @@ def get_client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
-    
+
     # Check X-Real-IP header
     real_ip = request.headers.get("X-Real-IP")
     if real_ip:
         return real_ip
-    
+
     # Fall back to direct client IP
     if request.client:
         return request.client.host
@@ -169,7 +170,7 @@ def get_client_ip(request: Request) -> str:
 def get_auth_context(request: Request) -> Optional[AuthContext]:
     """
     Extract authentication context from request.
-    
+
     In production, validates JWT tokens.
     In development, supports dev user headers.
     """
@@ -201,7 +202,7 @@ def _get_or_create_session(
 ) -> Optional[ChatSession]:
     """
     Get an existing session or create a new one.
-    
+
     Returns None if session models are not available.
     Raises 404 if session_id refers to a non-existent or non-owned session.
     Raises 400 if session_id refers to an archived session.
@@ -250,7 +251,7 @@ def _store_messages(
 ) -> None:
     """
     Store the user and assistant messages for a session.
-    
+
     Safely stores citations as display metadata only — does not grant document access.
     """
     if not HAS_SESSION_MODELS or not auth.user_id:
@@ -322,49 +323,52 @@ def post_chat(
 ) -> ChatResponse:
     """
     Process a chat message and return a response.
-    
+
     Phase 20A: If session_id is provided, append to that session.
     Otherwise, create a new session automatically.
-    
+
+    Phase 20C (refined): Retrieval query is kept clean (user message only).
+    Conversation context is passed separately to the LLM prompt.
+
     Modes (from request body):
     - general_chat: General AI assistant without document retrieval
     - knowledge_base: RAG-enhanced response using uploaded documents only
     - debug: Admin/developer mode showing retrieval internals (admin only)
-    
+
     Authentication:
     - In development: Use X-Dev-User header to authenticate (e.g., X-Dev-User: admin_user)
     - Admin users bypass permission checks
     - Dev users (via header) have limited access
-    
+
     Query Parameters (RAG mode only):
     - use_hybrid: Use hybrid retrieval combining vector and keyword search (default: True)
     - debug: Return detailed retrieval debug info including scores and sources (default: False)
     """
     start_time = time.time()
-    
+
     # Get client info for audit logging
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")[:500]
-    
+
     # Use mode from request body, default to "general_chat"
     mode = chat_request.mode if chat_request.mode else ChatMode.GENERAL_CHAT
-    
+
     # Handle legacy mode values for backward compatibility
     mode = mode.lower().strip()
     if mode == "normal":
         mode = ChatMode.GENERAL_CHAT
     elif mode == "rag":
         mode = ChatMode.KNOWLEDGE_BASE
-    
+
     # Enforce authentication and mode permissions (Phase 12)
     _require_permission_for_mode(auth, mode)
     is_debug_mode = mode == ChatMode.DEBUG
-    
+
     latency_ms = None
     observation_id = None
     session = None
     session_id = None
-    
+
     # Phase 20A: Get or create session
     if HAS_SESSION_MODELS and auth and auth.is_authenticated and auth.user_id:
         try:
@@ -404,27 +408,31 @@ def post_chat(
     model_used = None
     provider_used = None
 
+    # Phase 20C: Use CLEAN retrieval query (user message only, no context prepended)
+    retrieval_query = chat_request.message
+
     if mode in (ChatMode.KNOWLEDGE_BASE, ChatMode.DEBUG):
-        # Prepend conversation context to query for RAG mode
-        enhanced_query = f"{conversation_context}Current question: {chat_request.message}" if conversation_context else chat_request.message
+        # Pass conversation context SEPARATELY to the prompt, not to retrieval
         if HAS_SECURITY and auth and auth.is_authenticated:
             # Use audit-aware RAG generation with permission filtering
             answer, citations, metadata = generate_answer_with_rag_audit(
-                query=enhanced_query,
+                query=retrieval_query,
                 auth=auth,
                 debug=debug,
                 use_hybrid=use_hybrid,
                 request_ip=client_ip,
                 request_user_agent=user_agent,
+                conversation_context=conversation_context,
             )
         else:
             # Fall back to regular RAG without auth/audit
             answer, citations, metadata = generate_answer_with_rag(
-                query=enhanced_query,
+                query=retrieval_query,
                 use_hybrid=use_hybrid,
                 debug=debug,
+                conversation_context=conversation_context,
             )
-        
+
         # Create grouped sources for user-friendly display with answer-aware excerpt selection
         if citations:
             grouped_sources = group_citations_by_source(
@@ -434,7 +442,7 @@ def post_chat(
                 max_excerpts=3,
                 debug_mode=is_debug_mode
             )
-        
+
         response = ChatResponse(
             message=answer,
             role=MessageRole.assistant,
@@ -448,6 +456,7 @@ def post_chat(
             response.debug_info = metadata
 
         # Phase 20B: Add suggested follow-ups based on response characteristics
+        # Phase 20C: Contextual suggestions now shown when there's conversation context
         is_fallback = is_fallback_response(answer, citations)
         response.suggested_followups = generate_suggestions(
             mode=mode,
@@ -456,7 +465,7 @@ def post_chat(
             citations=citations,
             has_conversation_context=has_conversation_context,
         )
-        
+
     else:
         # General Chat mode - no RAG, no sources
         if HAS_SECURITY and auth and auth.is_authenticated:
@@ -468,7 +477,7 @@ def post_chat(
             )
         else:
             answer = generate_answer_without_rag(chat_request.message)
-        
+
         # General Chat: no citations, no sources, no debug info
         response = ChatResponse(
             message=answer,
@@ -482,10 +491,10 @@ def post_chat(
             mode=mode,
             has_conversation_context=has_conversation_context,
         )
-    
+
     # Calculate latency
     latency_ms = int((time.time() - start_time) * 1000)
-    
+
     # Get provider/model info for storage (no secrets)
     try:
         llm_provider = get_llm_provider()
@@ -504,7 +513,7 @@ def post_chat(
                 'username': getattr(auth, 'username', None),
                 'role': getattr(auth, 'role', None),
             }
-        
+
         observation_id = log_chat_observation(
             mode=mode,
             question=chat_request.message,
@@ -518,10 +527,10 @@ def post_chat(
         )
     except Exception:
         pass
-    
+
     # Add observation_id to response for feedback tracking
     response.observation_id = observation_id
-    
+
     # Phase 20A: Store messages (non-blocking — don't break chat if storage fails)
     if session:
         try:
@@ -540,7 +549,7 @@ def post_chat(
         except Exception:
             # Log but don't break the response
             pass
-    
+
     return response
 
 
@@ -548,7 +557,7 @@ def post_chat(
 def get_auth_info(request: Request):
     """
     Get current authentication info.
-    
+
     This endpoint is useful for debugging and for the frontend
     to determine what UI to show (admin vs user).
     """
@@ -564,10 +573,10 @@ def get_auth_info(request: Request):
             "dev_mode": False,
             "permissions": get_role_permissions(UserRole.VIEWER),
         }
-    
+
     auth = authenticate_request(request)
     perms = get_role_permissions(auth.role)
-    
+
     return {
         "authenticated": auth.is_authenticated,
         "username": auth.username,

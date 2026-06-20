@@ -350,6 +350,7 @@ function ChatPageInner() {
   }
 
   // Phase 20B UX Fix: Handle typed suggestion clicks
+  // Phase 20C: contextual_action types are now supported and sent to API like question types
   const handleSuggestionSelect = (suggestion: Suggestion) => {
     if (loading) return
 
@@ -359,8 +360,8 @@ function ChatPageInner() {
       return
     }
 
-    // For 'question' types, send to API
-    if (suggestion.type === 'question' && suggestion.prompt) {
+    // For 'question' and 'contextual_action' types, send to API
+    if ((suggestion.type === 'question' || suggestion.type === 'contextual_action') && suggestion.prompt) {
       const fakeEvent = { preventDefault: () => {} } as FormEvent
       handleSubmit(fakeEvent, suggestion.prompt)
     }
@@ -1014,8 +1015,8 @@ function FeedbackButtons({ observationId }: { observationId: number }) {
 // ---------------------------------------------------------------------------
 
 function SuggestedFollowups({ suggestions, onSelect }: { suggestions: Suggestion[]; onSelect: (suggestion: Suggestion) => void }) {
-  // Phase 20B UX Fix: Filter out contextual_action types until Phase 20C
-  const visibleSuggestions = suggestions.filter(s => s.type !== 'contextual_action')
+  // Phase 20C: contextual_action types are now supported
+  const visibleSuggestions = suggestions
 
   if (visibleSuggestions.length === 0) {
     return null

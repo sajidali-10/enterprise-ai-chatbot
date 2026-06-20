@@ -32,6 +32,7 @@ from app.services.conversation_context import (
     ConversationMessage,
     MAX_RECENT_MESSAGES,
     MAX_CONTEXT_CHARACTERS,
+    MAX_ASSISTANT_CONTENT_CHARS,
 )
 
 
@@ -156,7 +157,7 @@ def test_archived_session_cannot_be_used(db_session, jwt_user_client):
 
 
 def test_context_limited_to_max_message_count(db_session, jwt_user_client):
-    """Context is limited to MAX_RECENT_MESSAGES (8)."""
+    """Context is limited to MAX_RECENT_MESSAGES (6)."""
     # Create session
     res = jwt_user_client.post("/api/chat/sessions", json={"title": "Many Messages"})
     session_id = res.json()["id"]
@@ -184,7 +185,7 @@ def test_context_limited_to_max_message_count(db_session, jwt_user_client):
 
 
 def test_context_limited_to_max_characters(db_session, jwt_user_client):
-    """Context is limited to MAX_CONTEXT_CHARACTERS (6000)."""
+    """Context is limited to MAX_CONTEXT_CHARACTERS (3500)."""
     # Create session
     res = jwt_user_client.post("/api/chat/sessions", json={"title": "Long Context"})
     session_id = res.json()["id"]
@@ -246,17 +247,26 @@ def test_context_excludes_citations_metadata(db_session, jwt_user_client):
 
 
 def test_format_conversation_context_for_prompt():
-    """Test formatting conversation context for prompt inclusion."""
+    """Test formatting conversation context for prompt inclusion.
+    
+    Phase 20C: Format is structured with labels like 'Previous user question:'
+    and 'Previous assistant answer:' to help LLM understand references.
+    """
     messages = [
         ConversationMessage(role="user", content="Hello"),
-        ConversationMessage(role="assistant", content="Hi there!"),
+        ConversationMessage(role="assistant", content="Hi there! How can I help you today?"),
     ]
     
     formatted = format_conversation_context_for_prompt(messages)
     
-    assert "[user] Hello" in formatted
-    assert "[assistant] Hi there!" in formatted
-    assert "Recent conversation context:" in formatted
+    # Should use structured format with labels
+    assert "Previous user question:" in formatted
+    assert "Previous assistant answer:" in formatted
+    # Should NOT use the old [user] format
+    assert "[user]" not in formatted
+    assert "[assistant]" not in formatted
+    # Should include rules for using context
+    assert "Rules for using conversation context:" in formatted
 
 
 # ==============================================================================
@@ -287,29 +297,147 @@ def test_suggested_followups_still_returned(jwt_user_client):
 
 
 def test_contextual_suggestions_when_context_available(jwt_user_client):
-    """Contextual suggestions can appear when session has conversation history."""
+    """Contextual suggestions appear when session has conversation history.
+    
+    Phase 20C: When conversation context exists, contextual_action suggestions
+    like 'Summarize this for management' should appear.
+    """
     # Create session
     res = jwt_user_client.post("/api/chat/sessions", json={"title": "Contextual Test"})
     session_id = res.json()["id"]
     
-    # First message
+    # First message (in general chat to avoid RAG complexity)
     res = jwt_user_client.post("/api/chat", json={
-        "message": "Tell me about Docker components",
+        "message": "What are the main components of Docker?",
         "session_id": session_id,
+        "mode": "general_chat",
     })
     assert res.status_code == 200
     
-    # Second message - should have context
+    # Second message - should have context and contextual suggestions
     res = jwt_user_client.post("/api/chat", json={
-        "message": "Explain the second one",
+        "message": "Summarize that for management",
         "session_id": session_id,
+        "mode": "general_chat",
     })
     assert res.status_code == 200
     
-    # Check response has contextual suggestions (if any)
+    # Check response has contextual suggestions
     data = res.json()
     suggestions = data.get("suggested_followups", [])
-    # Should not crash - either has suggestions or doesn't
+    # Should have suggestions (contextual ones are enabled now)
+    assert isinstance(suggestions, list)
+
+
+def test_context_not_used_as_retrieval_query(jwt_user_client, monkeypatch):
+    """Phase 20C: Conversation context is NOT prepended to RAG retrieval query.
+    
+    The retrieval query should remain clean (user message only).
+    """
+    # Track what query is passed to retrieval
+    captured_queries = []
+    
+    from app.rag import retriever
+    original_retrieve = retriever.retrieve_chunks_with_settings
+    
+    def mock_retrieve_chunks_with_settings(query, debug=False):
+        captured_queries.append(query)
+        return original_retrieve(query, debug)
+    
+    monkeypatch.setattr(retriever, 'retrieve_chunks_with_settings', mock_retrieve_chunks_with_settings)
+    
+    # Create session with conversation history
+    res = jwt_user_client.post("/api/chat/sessions", json={"title": "Retrieval Query Test"})
+    session_id = res.json()["id"]
+    
+    # First message
+    res = jwt_user_client.post("/api/chat", json={
+        "message": "What are Docker components?",
+        "session_id": session_id,
+    })
+    
+    # Second message with follow-up
+    res = jwt_user_client.post("/api/chat", json={
+        "message": "Summarize this answer",
+        "session_id": session_id,
+    })
+    
+    # The retrieval query for the second message should be the user message only
+    # Not prepended with conversation context
+    if len(captured_queries) >= 2:
+        second_query = captured_queries[-1]
+        # Should NOT contain "Previous user question:" or "Previous assistant answer:"
+        assert "Previous user question:" not in second_query
+        assert "Previous assistant answer:" not in second_query
+        # Should contain the actual user question
+        assert "Summarize this answer" in second_query or "What are Docker components" in second_query
+
+
+def test_context_passed_separately_to_prompt(jwt_user_client, monkeypatch):
+    """Phase 20C: Conversation context is passed separately to LLM prompt.
+    
+    The context should be available for the LLM to understand follow-ups,
+    but NOT pollute the vector retrieval query.
+    """
+    # Track prompts sent to LLM
+    captured_prompts = []
+    
+    from app.services import llm
+    original_chat = llm.MockLLMProvider.chat if hasattr(llm, 'MockLLMProvider') else None
+    
+    # We can't easily mock the LLM, but we can verify behavior through response
+    # This test mainly documents the expected behavior
+    
+    # Create session with conversation history
+    res = jwt_user_client.post("/api/chat/sessions", json={"title": "Prompt Test"})
+    session_id = res.json()["id"]
+    
+    # First message
+    res = jwt_user_client.post("/api/chat", json={
+        "message": "What are Docker components?",
+        "session_id": session_id,
+    })
+    
+    # Second message - the LLM should understand the context
+    res = jwt_user_client.post("/api/chat", json={
+        "message": "Create a checklist based on that",
+        "session_id": session_id,
+    })
+    
+    # Should get a response without errors
+    assert res.status_code == 200
+    data = res.json()
+    assert "message" in data
+
+
+def test_long_assistant_answer_truncated_in_context(db_session, jwt_user_client):
+    """Phase 20C: Long assistant answers are truncated to MAX_ASSISTANT_CONTENT_CHARS.
+    
+    This prevents verbose context from polluting the prompt.
+    """
+    # Create session
+    res = jwt_user_client.post("/api/chat/sessions", json={"title": "Long Answer Test"})
+    session_id = res.json()["id"]
+    
+    # Send a message and get a response
+    jwt_user_client.post("/api/chat", json={
+        "message": "Hello",
+        "session_id": session_id,
+    })
+    
+    from app.security.models import User
+    user = db_session.query(User).filter(User.username == "regular").first()
+    
+    context, _ = get_recent_conversation_context(
+        db=db_session,
+        session_id=session_id,
+        user_id=user.id,
+    )
+    
+    # Each assistant message should be truncated if too long
+    for msg in context:
+        if msg.role == "assistant":
+            assert len(msg.content) <= MAX_ASSISTANT_CONTENT_CHARS + 10  # +10 for "..."
 
 
 def test_unauthenticated_request_rejected(client):

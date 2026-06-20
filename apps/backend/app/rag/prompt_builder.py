@@ -6,15 +6,21 @@ appropriate instructions for the LLM.
 """
 
 
-def build_rag_prompt(query: str, chunks: list[dict], include_citations: bool = True) -> str:
+def build_rag_prompt(
+    query: str,
+    chunks: list[dict],
+    include_citations: bool = True,
+    conversation_context: str = "",
+) -> str:
     """
     Build a RAG prompt from user query and retrieved chunks.
     Includes context instructions, citations format, and the user's question.
-    
+
     Args:
         query: User's question.
         chunks: List of retrieved context chunks.
         include_citations: If True, instruct the model to cite sources.
+        conversation_context: Optional formatted conversation context for follow-up questions.
     """
     if not chunks:
         return f"""You are a helpful support assistant. The user asked: {query}
@@ -22,20 +28,31 @@ def build_rag_prompt(query: str, chunks: list[dict], include_citations: bool = T
 I could not find enough relevant information in the knowledge base to answer this question.
 
 If you don't know the answer, say so clearly and honestly. Do not make up information."""
-    
+
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
         source = chunk.get("source_file_name", "Unknown")
         content = chunk.get("content", "")[:500]  # Truncate for prompt size
         context_parts.append(f"[{i}] Source: {source}\n{content}")
-    
+
     context = "\n\n".join(context_parts)
-    
+
     citation_instruction = """- Cite your answer using [1], [2], etc. to reference the numbered sources
 - Format citations like: "According to [1], ..." or "[1] states that ..."
 - Place citations near the claim they support" """ if include_citations else ""
-    
-    return f"""You are a helpful, concise support assistant. Answer the user's question using ONLY the information provided below.
+
+    # Build conversation context section if provided
+    context_section = f"""
+
+CONVERSATION CONTEXT:
+{conversation_context}
+
+For follow-up questions about "this answer", "the previous response", or similar references,
+use the conversation context above to understand what is being asked about.
+Base your answer on both the conversation context and the retrieved document information.
+""" if conversation_context else ""
+
+    return f"""You are a helpful, concise support assistant. Answer the user's question using ONLY the information provided below.{context_section}
 
 INFORMATION:
 {context}
@@ -60,12 +77,12 @@ ANSWER:"""
 def build_general_chat_prompt(query: str) -> str:
     """
     Build a prompt for General Chat mode (no RAG, no sources).
-    
+
     Provides instructions for clean, concise, business-user friendly answers.
-    
+
     Args:
         query: User's question.
-        
+
     Returns:
         Formatted prompt for general chat response.
     """
@@ -88,33 +105,38 @@ ANSWER:"""
 def build_knowledge_base_prompt(query: str, chunks: list[dict]) -> str:
     """
     Build a prompt for Knowledge Base mode (RAG with citations).
-    
+
     This is an alias for build_rag_prompt with citations enabled.
-    
+
     Args:
         query: User's question.
         chunks: List of retrieved context chunks.
-        
+
     Returns:
         Formatted prompt for knowledge base response.
     """
     return build_rag_prompt(query, chunks, include_citations=True)
 
 
-def build_strict_citation_prompt(query: str, chunks: list[dict]) -> str:
+def build_strict_citation_prompt(
+    query: str,
+    chunks: list[dict],
+    conversation_context: str = "",
+) -> str:
     """
     Build a strict RAG prompt requiring explicit citations for every factual claim.
-    
+
     This is used for retry when the initial LLM response omitted required citations.
     The prompt enforces:
     - Citation markers [1], [2], [3] on every factual statement
     - Insufficient-information fallback if no citation can be provided
     - Only information from retrieved source chunks (no hallucination)
-    
+
     Args:
         query: User's question.
         chunks: List of retrieved context chunks.
-        
+        conversation_context: Optional formatted conversation context for follow-up questions.
+
     Returns:
         Formatted strict prompt requiring citations.
     """
@@ -124,16 +146,27 @@ def build_strict_citation_prompt(query: str, chunks: list[dict]) -> str:
 I could not find enough relevant information in the knowledge base to answer this question.
 
 If you don't know the answer, say so clearly and honestly. Do not make up information."""
-    
+
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
         source = chunk.get("source_file_name", "Unknown")
         content = chunk.get("content", "")[:500]  # Truncate for prompt size
         context_parts.append(f"[{i}] Source: {source}\n{content}")
-    
+
     context = "\n\n".join(context_parts)
-    
-    return f"""You are a precise support assistant. Answer the user's question using ONLY the information provided below.
+
+    # Build conversation context section if provided
+    context_section = f"""
+
+CONVERSATION CONTEXT:
+{conversation_context}
+
+For follow-up questions about "this answer", "the previous response", or similar references,
+use the conversation context above to understand what is being asked about.
+Base your answer on both the conversation context and the retrieved document information.
+""" if conversation_context else ""
+
+    return f"""You are a precise support assistant. Answer the user's question using ONLY the information provided below.{context_section}
 
 INFORMATION:
 {context}

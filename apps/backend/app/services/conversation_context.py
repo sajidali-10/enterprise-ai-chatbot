@@ -1,7 +1,7 @@
 """
 Conversation Context Service
 
-Phase 20C — Limited Conversation Context.
+Phase 20C — Limited Conversation Context (refined).
 
 Provides recent conversation history for chat sessions.
 Used to give the LLM limited context when continuing a conversation.
@@ -24,8 +24,10 @@ from app.models.chat_session import ChatSessionMode as DBChatSessionMode, Messag
 # Configuration
 # ==============================================================================
 
-MAX_RECENT_MESSAGES = 8  # Maximum number of recent messages to include
-MAX_CONTEXT_CHARACTERS = 6000  # Maximum characters in context
+# Tighter limits to prevent verbose context from polluting retrieval
+MAX_RECENT_MESSAGES = 6  # Maximum number of recent messages to include
+MAX_CONTEXT_CHARACTERS = 3500  # Maximum characters in context
+MAX_ASSISTANT_CONTENT_CHARS = 1200  # Truncate long assistant answers
 
 
 # ==============================================================================
@@ -40,10 +42,6 @@ class ConversationMessage:
 
     def to_dict(self) -> dict:
         return {"role": self.role, "content": self.content}
-
-    def to_prompt_format(self) -> str:
-        prefix = "user" if self.role == "user" else "assistant"
-        return f"[{prefix}] {self.content}"
 
 
 # ==============================================================================
@@ -116,7 +114,11 @@ def get_recent_conversation_context(
     context_messages = []
     for msg in messages:
         role = "user" if msg.role == DBMessageRole.USER else "assistant"
-        context_messages.append(ConversationMessage(role=role, content=msg.content))
+        content = msg.content
+        # Truncate long assistant messages to prevent verbose context
+        if role == "assistant" and len(content) > MAX_ASSISTANT_CONTENT_CHARS:
+            content = content[:MAX_ASSISTANT_CONTENT_CHARS] + "..."
+        context_messages.append(ConversationMessage(role=role, content=content))
 
     # Truncate if too long
     if max_characters > 0:
@@ -131,6 +133,10 @@ def format_conversation_context_for_prompt(
     """
     Format conversation messages for inclusion in an LLM prompt.
 
+    Uses a structured format that helps the LLM understand references
+    like "this", "that", "second point" without treating conversation
+    history as document evidence.
+
     Args:
         messages: List of ConversationMessage objects
 
@@ -140,8 +146,29 @@ def format_conversation_context_for_prompt(
     if not messages:
         return ""
 
-    formatted = "\n".join(msg.to_prompt_format() for msg in messages)
-    return f"\n\nRecent conversation context:\n{formatted}\n\nRules:\n- The conversation above provides context for follow-up questions.\n- Retrieved document context (if available) is authoritative for factual answers.\n- If the conversation conflicts with retrieved documents, use the retrieved documents.\n"
+    # Build structured context with clear labels
+    parts = []
+    for msg in messages:
+        if msg.role == "user":
+            parts.append(f"Previous user question: {msg.content}")
+        else:
+            # Truncate assistant content more aggressively for prompt
+            content = msg.content
+            if len(content) > MAX_ASSISTANT_CONTENT_CHARS:
+                content = content[:MAX_ASSISTANT_CONTENT_CHARS] + "..."
+            parts.append(f"Previous assistant answer: {content}")
+
+    formatted = "\n\n".join(parts)
+
+    return f"""{formatted}
+
+---
+
+Rules for using conversation context:
+- Use this context to resolve references like "this", "that", "the previous answer", or "second point"
+- Do NOT treat the conversation above as document evidence — use retrieved documents for factual claims
+- If the conversation context conflicts with retrieved documents, prefer the retrieved documents
+- For summaries/checklists based on a previous answer, be concise (3-6 bullets) and do not repeat the full previous answer"""
 
 
 def _truncate_context(
@@ -163,10 +190,12 @@ def _truncate_context(
     current_chars = 0
 
     for msg in reversed(messages):
-        if current_chars + len(msg.content) + 50 > max_characters:  # +50 for formatting
+        # Estimate overhead for formatting
+        overhead = 30 if msg.role == "user" else 35
+        if current_chars + len(msg.content) + overhead > max_characters:
             break
         truncated.insert(0, msg)
-        current_chars += len(msg.content) + 50  # Approximate formatting overhead
+        current_chars += len(msg.content) + overhead
 
     return truncated
 
