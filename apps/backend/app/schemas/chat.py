@@ -1,4 +1,4 @@
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from enum import Enum
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,17 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="User message text")
     mode: str = Field(default="general_chat", description="Chat mode: 'general_chat', 'knowledge_base', or 'debug'")
     session_id: Optional[int] = Field(default=None, description="Existing session ID to continue; creates a new session if omitted")
+
+
+# Phase 20C: Typed suggestion interface for type safety
+SuggestionType = Literal["question", "frontend_action", "contextual_action"]
+
+
+class Suggestion(BaseModel):
+    """A typed suggestion with label, prompt, and type."""
+    label: str = Field(..., description="Display label for the suggestion button")
+    prompt: str = Field(..., description="Text to send to LLM if type is 'question' or 'contextual_action'")
+    type: SuggestionType = Field(..., description="Suggestion type: 'question', 'frontend_action', or 'contextual_action'")
 
 
 class GroupedSource(BaseModel):
@@ -53,4 +64,5 @@ class ChatResponse(BaseModel):
     grouped_sources: Optional[List[GroupedSource]] = Field(default=None, description="Grouped sources by document for user-friendly display")
     debug_info: Optional[dict[str, Any]] = Field(default=None, description="Debug info about retrieval when debug=true or mode=debug")
     observation_id: Optional[int] = Field(default=None, description="ID for this observation - used for feedback submission")
-    suggested_followups: Optional[List[str]] = Field(default=None, description="Suggested follow-up prompts the user can click to continue the conversation")
+    # Phase 20C: Now returns typed suggestion objects, not string[]
+    suggested_followups: Optional[List[Suggestion]] = Field(default=None, description="Suggested follow-up prompts with label, prompt, and type")

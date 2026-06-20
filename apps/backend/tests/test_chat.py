@@ -101,3 +101,68 @@ def test_suggested_followups_session_id_returned():
     data = response.json()
     # session_id may be None if sessions are disabled, or an integer if enabled
     assert data.get("session_id") is None or isinstance(data["session_id"], int)
+
+
+# ==============================================================================
+# Phase 20C — Contextual Follow-ups and Formatting Tests
+# ==============================================================================
+
+def test_rag_fallback_suggestions_no_contextual_actions():
+    """RAG fallback responses should NOT include contextual_action suggestions."""
+    response = client.post("/api/chat", json={"message": "xyznonexistent", "mode": "knowledge_base"})
+    assert response.status_code == 200
+    data = response.json()
+    suggestions = data.get("suggested_followups", [])
+    # Fallback should only have frontend_action, no contextual_action
+    for suggestion in suggestions:
+        assert suggestion["type"] != "contextual_action", \
+            "Fallback responses should not include contextual_action suggestions"
+
+
+def test_rag_with_session_includes_contextual_suggestions():
+    """RAG responses WITH conversation context include contextual_action suggestions."""
+    # Create a session first
+    create_resp = client.post("/api/chat/sessions", json={"title": "Test Contextual"})
+    assert create_resp.status_code == 201
+    session_id = create_resp.json()["id"]
+
+    # First message
+    response1 = client.post("/api/chat", json={
+        "message": "What are Docker components?",
+        "mode": "knowledge_base",
+        "session_id": session_id
+    })
+    assert response1.status_code == 200
+
+    # Second message with context should have contextual suggestions
+    response2 = client.post("/api/chat", json={
+        "message": "Summarize for management",
+        "mode": "knowledge_base",
+        "session_id": session_id
+    })
+    assert response2.status_code == 200
+    data = response2.json()
+    # With conversation context, contextual_action suggestions may appear
+    # (The exact behavior depends on whether it was a fallback or not)
+    # This test mainly verifies it doesn't crash
+    assert "suggested_followups" in data
+    assert isinstance(data["suggested_followups"], list)
+
+
+def test_suggestion_labels_are_concise():
+    """Suggestion labels should be short (40 chars or less)."""
+    response = client.post("/api/chat", json={"message": "hello", "mode": "general_chat"})
+    assert response.status_code == 200
+    data = response.json()
+    for suggestion in data["suggested_followups"]:
+        assert len(suggestion["label"]) <= 40, \
+            f"Suggestion label too long: {suggestion['label']}"
+
+
+def test_no_duplicate_suggestions():
+    """Suggestions should not have duplicate labels."""
+    response = client.post("/api/chat", json={"message": "hello", "mode": "general_chat"})
+    assert response.status_code == 200
+    data = response.json()
+    labels = [s["label"] for s in data["suggested_followups"]]
+    assert len(labels) == len(set(labels)), "Duplicate suggestion labels found"

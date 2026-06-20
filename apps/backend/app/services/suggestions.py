@@ -37,92 +37,86 @@ class Suggestion:
 # ==============================================================================
 
 # Contextual action suggestions - shown when conversation context exists
-# These reference "the previous answer" and depend on having context to reference
+# Phase 20C (refined): More focused, concise prompts for contextual actions
 CONTEXTUAL_ACTIONS: List[Suggestion] = [
     Suggestion(
-        label="Summarize this for management",
-        prompt="Summarize the previous answer in 3-5 bullet points for management",
+        label="Summarize for management",
+        prompt="Summarize the previous answer in 3-5 concise bullet points for management. Use executive tone. Do not repeat the full previous answer unless explicitly asked. Do not include long citations.",
         type="contextual_action",
     ),
     Suggestion(
-        label="Create an action checklist",
-        prompt="Create a concise action checklist (3-6 items) based on the previous answer",
+        label="Create action checklist",
+        prompt="Create a concise action checklist (4-7 checkbox-style items) based on the previous answer. Keep each item to 1 line. Be specific and actionable.",
         type="contextual_action",
     ),
     Suggestion(
         label="What evidence supports this?",
-        prompt="What specific evidence from the sources supports the previous answer?",
+        prompt="List the key evidence from the source documents that supports the previous answer. Do not rerun the full answer. Keep it to 3-5 bullet points with source references.",
         type="contextual_action",
     ),
     Suggestion(
-        label="What risks or gaps are missing?",
-        prompt="Based on the previous answer and sources, what risks or gaps are missing?",
+        label="What risks or gaps exist?",
+        prompt="Based on the previous answer and sources, list any missing information, uncertainties, or gaps. If there is not enough source info, say what specific information is missing. Keep it concise.",
         type="contextual_action",
     ),
 ]
 
 # RAG answers WITH citations
-# - frontend_action: scroll to sources, navigate to documents
-# - question: standalone questions about the documents
+# Phase 20C (refined): Focused suggestions for RAG with citations
 RAG_WITH_CITATIONS: List[Suggestion] = [
     Suggestion(
         label="Show cited sources",
-        prompt="Show the cited source documents",
+        prompt="Scroll to and display the cited sources section",
         type="frontend_action",
     ),
     Suggestion(
-        label="Show documents I can access",
-        prompt="Show documents I can access",
+        label="Open Documents",
+        prompt="Navigate to the Documents page",
         type="frontend_action",
     ),
     Suggestion(
-        label="What topics are covered?",
-        prompt="What topics are covered in the uploaded documents?",
-        type="question",
+        label="Summarize for management",
+        prompt="Summarize the previous answer in 3-5 concise bullet points for management. Use executive tone. Do not repeat the full previous answer.",
+        type="contextual_action",
     ),
     Suggestion(
-        label="Ask about another document",
-        prompt="What information is in another document?",
-        type="question",
+        label="Create action checklist",
+        prompt="Create a concise action checklist (4-7 checkbox-style items) based on the previous answer. Keep each item to 1 line.",
+        type="contextual_action",
     ),
 ]
 
 # RAG fallback / no-context / unsupported answers
-# Only safe standalone actions — no contextual suggestions
+# Phase 20C (refined): Limited suggestions - no contextual actions for fallback
 RAG_FALLBACK: List[Suggestion] = [
+    Suggestion(
+        label="Rephrase the question",
+        prompt="",  # frontend_action, handled specially by frontend
+        type="frontend_action",
+    ),
     Suggestion(
         label="Upload a document",
         prompt="",  # frontend_action, no prompt needed
         type="frontend_action",
     ),
     Suggestion(
-        label="Rephrase the question",
-        prompt="",  # Will be handled specially by frontend
+        label="Open Documents",
+        prompt="Navigate to the Documents page",
         type="frontend_action",
-    ),
-    Suggestion(
-        label="Show my documents",
-        prompt="Show documents I can access",
-        type="frontend_action",
-    ),
-    Suggestion(
-        label="Ask about another topic",
-        prompt="What topics are covered in the uploaded documents?",
-        type="question",
     ),
 ]
 
 # General chat suggestions
-# All are standalone questions — no context dependency
+# Phase 20C (refined): Concise suggestions with no overlap
 GENERAL_CHAT: List[Suggestion] = [
     Suggestion(
         label="Explain in simpler terms",
-        prompt="Explain this in simpler terms",
+        prompt="Explain this in simpler terms with a brief example if helpful",
         type="question",
     ),
     Suggestion(
-        label="Step-by-step instructions",
-        prompt="Create step-by-step instructions based on this",
+        label="Create step-by-step instructions",
+        prompt="Create clear step-by-step instructions based on this",
         type="question",
     ),
     Suggestion(
@@ -132,12 +126,12 @@ GENERAL_CHAT: List[Suggestion] = [
     ),
     Suggestion(
         label="Create a checklist",
-        prompt="Create a checklist based on this",
+        prompt="Create a concise checklist (4-7 items) based on this",
         type="question",
     ),
     Suggestion(
         label="What should I do next?",
-        prompt="What should I do next based on this?",
+        prompt="What specific next steps would you recommend based on this?",
         type="question",
     ),
 ]

@@ -52,6 +52,20 @@ use the conversation context above to understand what is being asked about.
 Base your answer on both the conversation context and the retrieved document information.
 """ if conversation_context else ""
 
+    # Phase 20C: Enhanced formatting rules for RAG answers
+    formatting_rules = """
+ANSWER FORMATTING RULES:
+- For list/component questions (e.g., "What are the components of X?"): use numbered lists
+- For summaries, comparisons, or overviews: use bullet points
+- Keep each bullet/numbered item concise (1-3 sentences max)
+- Avoid long paragraphs - break information into scannable chunks
+- Do not repeat citations after every phrase - cite once per major point
+- If answering "What are the components of X?", structure as:
+  1. Component Name - brief explanation
+  2. Component Name - brief explanation
+  etc.
+"""
+
     return f"""You are a helpful, concise support assistant. Answer the user's question using ONLY the information provided below.{context_section}
 
 INFORMATION:
@@ -65,8 +79,7 @@ IMPORTANT GUIDELINES:
 - If the information does not directly support a specific answer, say: "I could not find enough information in the provided sources to answer this question."
 - Do NOT say "based on my knowledge" or "in general" - only use information from [1], [2], etc.
 - Do NOT reference the sources as "the provided information" or "the context" - use [1], [2], etc.
-- Format your answer with bullet points for list-style responses
-- Be concise and direct - avoid long paragraphs
+{formatting_rules}
 {citation_instruction}
 - Focus on being helpful to a user seeking support
 - If you're unsure, admit it rather than guessing
@@ -166,6 +179,20 @@ use the conversation context above to understand what is being asked about.
 Base your answer on both the conversation context and the retrieved document information.
 """ if conversation_context else ""
 
+    # Phase 20C: Enhanced formatting rules for RAG answers
+    formatting_rules = """
+ANSWER FORMATTING RULES:
+- For list/component questions (e.g., "What are the components of X?"): use numbered lists
+- For summaries, comparisons, or overviews: use bullet points
+- Keep each bullet/numbered item concise (1-3 sentences max)
+- Avoid long paragraphs - break information into scannable chunks
+- Do not repeat citations after every phrase - cite once per major point
+- If answering "What are the components of X?", structure as:
+  1. Component Name - brief explanation
+  2. Component Name - brief explanation
+  etc.
+"""
+
     return f"""You are a precise support assistant. Answer the user's question using ONLY the information provided below.{context_section}
 
 INFORMATION:
@@ -189,8 +216,7 @@ RULES:
 - Answer ONLY from the information provided above in the INFORMATION section
 - Use ONLY the numbered citations [1], [2], etc. - do not use other citation formats
 - Each bullet point must contain at least one [N] citation
-- Write bullet points for list-style responses
-- Be concise and direct
+{formatting_rules}
 - If you're unsure, admit it rather than guessing
 
 ANSWER:"""

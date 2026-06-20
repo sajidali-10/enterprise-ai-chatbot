@@ -44,12 +44,66 @@ interface Message {
 }
 
 // Phase 20B UX Fix: Typed suggestion interface
+// Phase 20C: Normalizer added to handle old session data safely
 type SuggestionType = 'question' | 'frontend_action' | 'contextual_action'
 
 interface Suggestion {
   label: string
   prompt: string
   type: SuggestionType
+}
+
+// Phase 20C: Normalize suggested_followups from any format to safe typed array
+function normalizeSuggestedFollowups(value: unknown): Suggestion[] {
+  // Handle missing/null/undefined
+  if (value === null || value === undefined) {
+    return []
+  }
+
+  // Handle non-array values
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  // Normalize each item to typed Suggestion
+  const normalized: Suggestion[] = []
+  for (const item of value) {
+    // Handle string items (old format: string[])
+    if (typeof item === 'string') {
+      normalized.push({
+        label: item,
+        prompt: item,
+        type: 'question',
+      })
+      continue
+    }
+
+    // Handle object items
+    if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>
+      const label = typeof obj.label === 'string' && obj.label.length > 0
+        ? obj.label
+        : typeof obj.prompt === 'string' && obj.prompt.length > 0
+          ? obj.prompt
+          : null
+
+      if (label !== null) {
+        const type = (obj.type as SuggestionType) || 'question'
+        // Validate type is one of the allowed values
+        const safeType: SuggestionType = ['question', 'frontend_action', 'contextual_action'].includes(type)
+          ? type
+          : 'question'
+
+        normalized.push({
+          label,
+          prompt: typeof obj.prompt === 'string' ? obj.prompt : label,
+          type: safeType,
+        })
+      }
+    }
+  }
+
+  return normalized
 }
 
 interface ChatSession {
@@ -173,6 +227,7 @@ function ChatPageInner() {
       if (res.ok) {
         const data = await res.json()
         // Convert stored messages to UI format
+        // Phase 20C: Added defensive handling for missing/undefined fields
         const loadedMessages: Message[] = data.messages.map((m: {
           role: string
           content: string
@@ -180,14 +235,39 @@ function ChatPageInner() {
           retrieved_documents_json?: string
           debug_info?: Record<string, unknown>
           observation_id?: number
-        }) => ({
-          role: m.role as 'user' | 'assistant',
-          text: m.content,
-          citations: m.citations_json ? safeParseJson(m.citations_json) : undefined,
-          grouped_sources: m.retrieved_documents_json ? safeParseGroupedSources(m.retrieved_documents_json) : undefined,
-          debug_info: m.debug_info,
-          observation_id: m.observation_id,
-        }))
+          suggested_followups?: unknown  // Phase 20C: may be old format
+        }) => {
+          // Safely parse citations
+          let citations: Citation[] | undefined = undefined
+          if (m.citations_json) {
+            const parsed = safeParseJson(m.citations_json)
+            if (Array.isArray(parsed)) {
+              citations = parsed as Citation[]
+            }
+          }
+
+          // Safely parse grouped sources
+          let groupedSources: GroupedSource[] | undefined = undefined
+          if (m.retrieved_documents_json) {
+            const parsed = safeParseGroupedSources(m.retrieved_documents_json)
+            if (Array.isArray(parsed)) {
+              groupedSources = parsed as GroupedSource[]
+            }
+          }
+
+          // Phase 20C: Normalize suggested_followups from any format
+          const suggestedFollowups = normalizeSuggestedFollowups(m.suggested_followups)
+
+          return {
+            role: (m.role === 'user' || m.role === 'assistant') ? m.role : 'assistant',
+            text: typeof m.content === 'string' ? m.content : String(m.content || ''),
+            citations,
+            grouped_sources: groupedSources,
+            debug_info: m.debug_info && typeof m.debug_info === 'object' ? m.debug_info : undefined,
+            observation_id: typeof m.observation_id === 'number' ? m.observation_id : undefined,
+            suggested_followups: suggestedFollowups.length > 0 ? suggestedFollowups : undefined,
+          }
+        })
         setMessages(loadedMessages)
         // Update session title in case it changed
         setSessions(prev => prev.map(s =>
@@ -319,6 +399,9 @@ function ChatPageInner() {
         await loadSessions()
       }
 
+      // Phase 20C: Normalize suggested_followups from any format (including old stored data)
+      const normalizedFollowups = normalizeSuggestedFollowups(data.suggested_followups)
+
       const assistantMessage: Message = {
         role: 'assistant',
         text: data.message,
@@ -326,7 +409,7 @@ function ChatPageInner() {
         grouped_sources: data.grouped_sources,
         debug_info: data.debug_info,
         observation_id: data.observation_id,
-        suggested_followups: data.suggested_followups || undefined,
+        suggested_followups: normalizedFollowups.length > 0 ? normalizedFollowups : undefined,
       }
 
       setMessages(prev => [...prev, assistantMessage])
@@ -1015,8 +1098,22 @@ function FeedbackButtons({ observationId }: { observationId: number }) {
 // ---------------------------------------------------------------------------
 
 function SuggestedFollowups({ suggestions, onSelect }: { suggestions: Suggestion[]; onSelect: (suggestion: Suggestion) => void }) {
-  // Phase 20C: contextual_action types are now supported
-  const visibleSuggestions = suggestions
+  // Phase 20C: Defensive handling - normalize and filter to safe items only
+  if (!suggestions || !Array.isArray(suggestions)) {
+    return null
+  }
+
+  // Filter to only valid suggestions with required fields
+  const visibleSuggestions = suggestions.filter((s): s is Suggestion => {
+    return (
+      s !== null &&
+      typeof s === 'object' &&
+      typeof s.label === 'string' &&
+      s.label.length > 0 &&
+      typeof s.type === 'string' &&
+      ['question', 'frontend_action', 'contextual_action'].includes(s.type)
+    )
+  })
 
   if (visibleSuggestions.length === 0) {
     return null
