@@ -210,7 +210,7 @@ Supported file types:
 - Markdown (`.md`)
 - Word (`.docx`)
 
-Maximum file size: 10 MB (configurable via `UPLOAD_MAX_SIZE_MB`)
+Maximum file size: 20 MB (configurable via `UPLOAD_MAX_SIZE_MB`)
 
 ### Upload Flow
 

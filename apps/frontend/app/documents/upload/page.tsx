@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { useAuthFetch } from '@/hooks/useApi'
 
 const ALLOWED_TYPES = ['.pdf', '.txt', '.md', '.docx']
-const MAX_SIZE = 10 * 1024 * 1024 // 10MB
+const MAX_SIZE_MB = 20
+const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024
 
 export default function DocumentUploadPage() {
   const [file, setFile] = useState<File | null>(null)
@@ -22,7 +23,7 @@ export default function DocumentUploadPage() {
       return `Invalid file type. Allowed types: ${ALLOWED_TYPES.join(', ')}`
     }
     if (file.size > MAX_SIZE) {
-      return `File too large. Maximum size is 10MB.`
+      return `File too large. Maximum size is ${MAX_SIZE_MB}MB.`
     }
     return null
   }
@@ -159,7 +160,7 @@ export default function DocumentUploadPage() {
                 <span className="text-blue-500 font-medium">browse</span>
               </span>
               <span className="text-sm text-gray-400 mt-2">
-                Allowed types: {ALLOWED_TYPES.join(', ')} | Max size: 10MB
+Allowed types: {ALLOWED_TYPES.join(', ')} | Max size: {MAX_SIZE_MB}MB
               </span>
             </label>
           </div>
