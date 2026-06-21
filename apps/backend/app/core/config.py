@@ -38,6 +38,26 @@ class Settings(BaseSettings):
     # Phase 10 - Answer Grounding & Hallucination Prevention
     RAG_MIN_RELEVANCE_SCORE: float = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0.3"))
 
+    # Phase 21 - RAG Configuration Layer
+    RAG_PIPELINE_PROVIDER: str = os.getenv("RAG_PIPELINE_PROVIDER", "custom")
+    DOCUMENT_LOADER_PROVIDER: str = os.getenv("DOCUMENT_LOADER_PROVIDER", "custom")
+    TEXT_SPLITTER_PROVIDER: str = os.getenv("TEXT_SPLITTER_PROVIDER", "custom")
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+    VECTOR_STORE_PROVIDER: str = os.getenv("VECTOR_STORE_PROVIDER", "qdrant")
+    RETRIEVER_PROVIDER: str = os.getenv("RETRIEVER_PROVIDER", "custom")
+    RERANKER_PROVIDER: str = os.getenv("RERANKER_PROVIDER", "none")
+    RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "6"))
+    RAG_SCORE_THRESHOLD: float = float(os.getenv("RAG_SCORE_THRESHOLD", "0.35"))
+    RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "1000"))
+    RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "150"))
+    RAG_CONTEXT_MAX_CHUNKS: int = int(os.getenv("RAG_CONTEXT_MAX_CHUNKS", "6"))
+    RAG_CONTEXT_MAX_CHARACTERS: int = int(os.getenv("RAG_CONTEXT_MAX_CHARACTERS", "12000"))
+    RAG_CONVERSATION_CONTEXT_ENABLED: bool = os.getenv("RAG_CONVERSATION_CONTEXT_ENABLED", "true").lower() in ("true", "1", "yes")
+    RAG_CONVERSATION_CONTEXT_MAX_MESSAGES: int = int(os.getenv("RAG_CONVERSATION_CONTEXT_MAX_MESSAGES", "6"))
+    RAG_CONVERSATION_CONTEXT_MAX_CHARACTERS: int = int(os.getenv("RAG_CONVERSATION_CONTEXT_MAX_CHARACTERS", "3500"))
+
     # Security settings (Phase 6 - Authentication & Authorization)
     AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
     DEV_AUTH_ENABLED: bool = os.getenv("DEV_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")

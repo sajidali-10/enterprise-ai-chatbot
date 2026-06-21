@@ -124,6 +124,12 @@ const NAV_ITEMS: NavItem[] = [
     permission: 'canAccessObservability',
     matchPath: (p) => p === '/admin/audit-logs',
   },
+  {
+    href: '/admin/rag',
+    label: 'RAG Config',
+    permission: 'canAccessObservability',
+    matchPath: (p) => p === '/admin/rag',
+  },
 ]
 
 export default function AppHeader() {

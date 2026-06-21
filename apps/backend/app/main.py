@@ -13,6 +13,7 @@ from app.api import admin_documents as admin_documents_router
 from app.api import admin_audit as admin_audit_router
 from app.api import admin_security as admin_security_router
 from app.api import admin_status as admin_status_router
+from app.api import admin_rag_config as admin_rag_config_router
 from app.db.base import Base, engine
 from app.core.config import settings
 from app.core.startup_validation import validate_startup
@@ -58,6 +59,7 @@ app.include_router(admin_router.router)
 app.include_router(admin_documents_router.router)
 app.include_router(admin_audit_router.router)
 app.include_router(admin_status_router.router)
+app.include_router(admin_rag_config_router.router)
 app.include_router(admin_security_router.router)
 
 
