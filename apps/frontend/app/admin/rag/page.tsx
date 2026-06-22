@@ -285,9 +285,14 @@ export default function RAGConfigPage() {
               highlight={config.provider_status.provider_switching_ready ? 'success' : 'error'}
             />
             <ConfigRow
-              label="LangChain Available"
-              value={config.provider_status.langchain_available ? 'Yes' : 'No'}
-              highlight={config.provider_status.langchain_available ? 'warning' : 'neutral'}
+              label="LangChain Package"
+              value={config.provider_status.langchain_available ? 'Installed' : 'Not Installed'}
+              highlight={config.provider_status.langchain_available ? 'success' : 'warning'}
+            />
+            <ConfigRow
+              label="LangChain Active"
+              value={config.provider_status.langchain_enabled ? 'Yes — in use' : 'No — using custom'}
+              highlight={config.provider_status.langchain_enabled ? 'warning' : 'neutral'}
             />
             <ConfigRow
               label="Unsupported Providers"
@@ -306,6 +311,16 @@ export default function RAGConfigPage() {
               ))}
             </div>
           </div>
+          {/* Phase 24: langchain switching affects future uploads only */}
+          {config.provider_status.langchain_available && !config.provider_status.langchain_enabled && (
+            <div className="mt-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+              <p className="text-xs text-blue-700 dark:text-blue-400">
+                <strong>Note:</strong> Switching the Document Loader or Text Splitter provider affects future
+                document uploads only — existing indexed content is not re-processed automatically.
+                To re-process existing documents, use the reindex script after changing providers.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Note */}

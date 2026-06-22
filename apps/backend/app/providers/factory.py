@@ -5,12 +5,13 @@ Factory functions that resolve provider names (from environment settings) to
 provider instances. Raises ValueError on unknown provider names — fail-fast
 is intentional since a misconfigured provider is a deployment error.
 
-Phase 22 supported providers:
+Phase 22/24 supported providers:
   - custom        → CustomDocumentLoaderProvider, CustomTextSplitterProvider,
                     CustomRetrieverProvider, CustomRagPipelineProvider
   - local         → CustomEmbeddingProvider  (sentence-transformers)
   - qdrant        → CustomVectorStoreProvider
   - none          → NoOpRerankerProvider
+  - langchain     → LangChainDocumentLoaderProvider, LangChainTextSplitterProvider
 
 Phase 23 adds embedding upgrade foundation:
   - Future embedding providers (openai, cohere, voyage, bge, e5) listed as "planned"
@@ -21,12 +22,12 @@ Phase 23 adds embedding upgrade foundation:
 from app.core.config import settings
 
 # ---------------------------------------------------------------------------
-# Supported providers per module (Phase 22/23 foundation)
+# Supported providers per module
 # ---------------------------------------------------------------------------
 
-AVAILABLE_DOCUMENT_LOADER_PROVIDERS = ["custom"]
-AVAILABLE_TEXT_SPLITTER_PROVIDERS = ["custom"]
-AVAILABLE_EMBEDDING_PROVIDERS = ["local"]          # Phase 23: future providers listed in future_providers, not here
+AVAILABLE_DOCUMENT_LOADER_PROVIDERS = ["custom", "langchain"]
+AVAILABLE_TEXT_SPLITTER_PROVIDERS = ["custom", "langchain"]
+AVAILABLE_EMBEDDING_PROVIDERS = ["local"]
 AVAILABLE_VECTOR_STORE_PROVIDERS = ["qdrant"]
 AVAILABLE_RETRIEVER_PROVIDERS = ["custom"]
 AVAILABLE_RERANKER_PROVIDERS = ["none"]
@@ -34,12 +35,22 @@ AVAILABLE_RAG_PIPELINE_PROVIDERS = ["custom"]
 
 # Future embedding providers — planned but not yet implemented/available
 FUTURE_EMBEDDING_PROVIDERS = {
-    "openai": "planned",    # OpenAI text-embedding-3-small / text-embedding-3-large
-    "cohere": "planned",    # Cohere embed-multilingual-v3.0
-    "voyage": "planned",    # Voyage AI embed-3-large
-    "bge": "planned",       # BAAI/bge-* models (local or API)
-    "e5": "planned",        # Microsoft e5-* models
+    "openai": "planned",
+    "cohere": "planned",
+    "voyage": "planned",
+    "bge": "planned",
+    "e5": "planned",
 }
+
+
+def _is_langchain_available() -> bool:
+    """Detect whether langchain and langchain-community are importable."""
+    try:
+        import langchain  # noqa: F401
+        import langchain_community  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def _resolve(name: str, available: list[str], provider_kind: str) -> str:
@@ -58,7 +69,7 @@ def _resolve(name: str, available: list[str], provider_kind: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Factory functions  (lazy imports to avoid loading sentence-transformers at import time)
+# Factory functions  (lazy imports to avoid loading heavy deps at import time)
 # ---------------------------------------------------------------------------
 
 
@@ -72,6 +83,15 @@ def get_document_loader_provider():
     if name == "custom":
         from app.providers.custom.document_loader import CustomDocumentLoaderProvider
         return CustomDocumentLoaderProvider()
+    if name == "langchain":
+        if not _is_langchain_available():
+            raise ValueError(
+                "DOCUMENT_LOADER_PROVIDER=langchain is set but langchain or "
+                "langchain-community is not installed. Run: "
+                "pip install langchain>=0.4.0 langchain-community>=0.4.0"
+            )
+        from app.providers.langchain import LangChainDocumentLoaderProvider
+        return LangChainDocumentLoaderProvider()
     raise ValueError(f"Document loader provider '{name}' not implemented.")
 
 
@@ -85,6 +105,15 @@ def get_text_splitter_provider():
     if name == "custom":
         from app.providers.custom.text_splitter import CustomTextSplitterProvider
         return CustomTextSplitterProvider()
+    if name == "langchain":
+        if not _is_langchain_available():
+            raise ValueError(
+                "TEXT_SPLITTER_PROVIDER=langchain is set but langchain or "
+                "langchain-community is not installed. Run: "
+                "pip install langchain>=0.4.0 langchain-community>=0.4.0"
+            )
+        from app.providers.langchain import LangChainTextSplitterProvider
+        return LangChainTextSplitterProvider()
     raise ValueError(f"Text splitter provider '{name}' not implemented.")
 
 
@@ -183,7 +212,6 @@ def get_embedding_reindex_status() -> dict:
         from app.services.vector.qdrant_service import get_qdrant_client
         client = get_qdrant_client()
         collection_info = client.get_collection(collection_name=settings.QDRANT_COLLECTION)
-        # vectors is a VectorParams object with .size attribute
         vectors_config = collection_info.config.params.vectors
         if vectors_config and hasattr(vectors_config, "size"):
             result["collection_dimension"] = vectors_config.size
@@ -205,6 +233,7 @@ def get_provider_status() -> dict:
     No API keys, tokens, or secrets are included.
     """
     reindex_status = get_embedding_reindex_status()
+    langchain_available = _is_langchain_available()
 
     return {
         "available_providers": {
@@ -225,9 +254,13 @@ def get_provider_status() -> dict:
             "reranker": settings.RERANKER_PROVIDER,
             "rag_pipeline": settings.RAG_PIPELINE_PROVIDER,
         },
-        "langchain_available": False,
-        "langchain_enabled": False,
-        "provider_switching_ready": True,   # foundation ready; UI switching in future phase
+        "langchain_available": langchain_available,
+        "langchain_enabled": langchain_available
+        and (
+            settings.DOCUMENT_LOADER_PROVIDER.strip().lower() == "langchain"
+            or settings.TEXT_SPLITTER_PROVIDER.strip().lower() == "langchain"
+        ),
+        "provider_switching_ready": True,
         "unsupported_providers_disabled": True,
         # Phase 23: Embedding upgrade foundation
         "embedding_status": {

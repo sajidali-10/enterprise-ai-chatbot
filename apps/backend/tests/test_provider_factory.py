@@ -75,8 +75,53 @@ class TestProviderFactoryDefaults:
 class TestProviderFactoryErrors:
     """Factory raises ValueError on unknown provider names."""
 
-    def test_unknown_document_loader_raises(self, monkeypatch):
+    def test_langchain_document_loader_resolves_when_available(self, monkeypatch):
+        """Phase 24: langchain is now a known document loader provider.
+
+        Verifies that when DOCUMENT_LOADER_PROVIDER=langchain and langchain
+        packages are installed, the factory returns LangChainDocumentLoaderProvider.
+        """
         monkeypatch.setenv("DOCUMENT_LOADER_PROVIDER", "langchain")
+        import importlib
+        import app.core.config
+        importlib.reload(app.core.config)
+        import app.providers.factory
+        importlib.reload(app.providers.factory)
+        from app.providers.factory import get_document_loader_provider
+        from app.providers.langchain.document_loader import LangChainDocumentLoaderProvider
+
+        provider = get_document_loader_provider()
+        assert isinstance(provider, LangChainDocumentLoaderProvider)
+
+        monkeypatch.delenv("DOCUMENT_LOADER_PROVIDER", raising=False)
+        importlib.reload(app.core.config)
+        importlib.reload(app.providers.factory)
+
+    def test_langchain_document_loader_missing_deps_raises(self, monkeypatch):
+        """Phase 24: if langchain is set but packages are missing → ValueError with install hint."""
+        import importlib
+        import app.core.config
+        import app.providers.factory
+
+        monkeypatch.setenv("DOCUMENT_LOADER_PROVIDER", "langchain")
+        importlib.reload(app.core.config)
+        importlib.reload(app.providers.factory)
+        # Apply patch AFTER reload, THEN import the function (so function __globals__ sees patched name)
+        original_fn = app.providers.factory._is_langchain_available
+        app.providers.factory._is_langchain_available = lambda: False
+        try:
+            from app.providers.factory import get_document_loader_provider
+            with pytest.raises(ValueError, match="langchain.*not installed"):
+                get_document_loader_provider()
+        finally:
+            app.providers.factory._is_langchain_available = original_fn
+            monkeypatch.delenv("DOCUMENT_LOADER_PROVIDER", raising=False)
+            importlib.reload(app.core.config)
+            importlib.reload(app.providers.factory)
+
+    def test_unknown_document_loader_raises(self, monkeypatch):
+        """An arbitrary unknown provider name still raises ValueError."""
+        monkeypatch.setenv("DOCUMENT_LOADER_PROVIDER", "nonexistent_provider")
         import importlib
         import app.core.config
         importlib.reload(app.core.config)
@@ -91,8 +136,52 @@ class TestProviderFactoryErrors:
         importlib.reload(app.core.config)
         importlib.reload(app.providers.factory)
 
-    def test_unknown_text_splitter_raises(self, monkeypatch):
+    def test_langchain_text_splitter_resolves_when_available(self, monkeypatch):
+        """Phase 24: langchain is now a known text splitter provider.
+
+        Verifies that when TEXT_SPLITTER_PROVIDER=langchain and langchain
+        packages are installed, the factory returns LangChainTextSplitterProvider.
+        """
         monkeypatch.setenv("TEXT_SPLITTER_PROVIDER", "langchain")
+        import importlib
+        import app.core.config
+        importlib.reload(app.core.config)
+        import app.providers.factory
+        importlib.reload(app.providers.factory)
+        from app.providers.factory import get_text_splitter_provider
+        from app.providers.langchain.text_splitter import LangChainTextSplitterProvider
+
+        provider = get_text_splitter_provider()
+        assert isinstance(provider, LangChainTextSplitterProvider)
+
+        monkeypatch.delenv("TEXT_SPLITTER_PROVIDER", raising=False)
+        importlib.reload(app.core.config)
+        importlib.reload(app.providers.factory)
+
+    def test_langchain_text_splitter_missing_deps_raises(self, monkeypatch):
+        """Phase 24: if langchain is set but packages are missing → ValueError with install hint."""
+        import importlib
+        import app.core.config
+        import app.providers.factory
+
+        monkeypatch.setenv("TEXT_SPLITTER_PROVIDER", "langchain")
+        importlib.reload(app.core.config)
+        importlib.reload(app.providers.factory)
+        original_fn = app.providers.factory._is_langchain_available
+        app.providers.factory._is_langchain_available = lambda: False
+        try:
+            from app.providers.factory import get_text_splitter_provider
+            with pytest.raises(ValueError, match="langchain.*not installed"):
+                get_text_splitter_provider()
+        finally:
+            app.providers.factory._is_langchain_available = original_fn
+            monkeypatch.delenv("TEXT_SPLITTER_PROVIDER", raising=False)
+            importlib.reload(app.core.config)
+            importlib.reload(app.providers.factory)
+
+    def test_unknown_text_splitter_raises(self, monkeypatch):
+        """An arbitrary unknown provider name still raises ValueError."""
+        monkeypatch.setenv("TEXT_SPLITTER_PROVIDER", "nonexistent_provider")
         import importlib
         import app.core.config
         importlib.reload(app.core.config)
@@ -202,12 +291,26 @@ class TestProviderStatus:
         found = [kw for kw in secret_keywords if kw in raw]
         assert not found, f"Potential secret keyword(s) found in provider_status: {found}"
 
-    def test_provider_status_langchain_not_enabled(self):
+    def test_provider_status_langchain_fields_present(self):
+        """Phase 24: langchain_available and langchain_enabled must be in status."""
         from app.providers.factory import get_provider_status
 
         status = get_provider_status()
-        assert status["langchain_available"] is False
-        assert status["langchain_enabled"] is False
+        # Both fields must exist (values depend on whether langchain is installed)
+        assert "langchain_available" in status
+        assert "langchain_enabled" in status
+        # langchain_enabled must be a bool
+        assert isinstance(status["langchain_available"], bool)
+        assert isinstance(status["langchain_enabled"], bool)
+
+    def test_provider_status_langchain_not_enabled_when_custom_default(self):
+        """When both providers are 'custom', langchain_enabled must be False."""
+        from app.providers.factory import get_provider_status
+
+        status = get_provider_status()
+        active = status["active_providers"]
+        if active["document_loader"] == "custom" and active["text_splitter"] == "custom":
+            assert status["langchain_enabled"] is False
 
     def test_provider_status_switching_ready(self):
         from app.providers.factory import get_provider_status
