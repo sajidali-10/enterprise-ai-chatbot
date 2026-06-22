@@ -25,3 +25,11 @@ redis==5.0.6
 # langchain-community includes PyPDFLoader, UnstructuredWordDocumentLoader, TextLoader
 langchain>=0.4.0
 langchain-community>=0.4.0
+
+# Phase 26 — RAGAS Evaluation Foundation
+# ragas: RAG evaluation framework (faithfulness, answer_relevancy, context_precision)
+# Pinned to 0.2.15 — later versions (>=0.3) have broken langchain-community imports
+# with langchain-community>=0.4.0 that ships in this project.
+# The script detects availability at runtime and falls back to manual metric
+# computation if ragas cannot be imported.
+ragas>=0.2.0,<0.3.0

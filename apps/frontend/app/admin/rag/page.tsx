@@ -31,6 +31,14 @@ interface RetrievalStatus {
   future_rerankers: Record<string, string>
 }
 
+interface RAGASStatus {
+  ragas_enabled: boolean
+  ragas_available: boolean
+  evaluator_provider: string
+  evaluator_model: string
+  report_dir: string
+}
+
 interface ProviderStatus {
   available_providers: Record<string, string[]>
   active_providers: Record<string, string>
@@ -40,6 +48,7 @@ interface ProviderStatus {
   unsupported_providers_disabled: boolean
   embedding_status: EmbeddingStatus
   retrieval_status: RetrievalStatus
+  ragas_status: RAGASStatus
 }
 
 interface RAGConfig {
@@ -397,6 +406,24 @@ export default function RAGConfigPage() {
               value={config.provider_status.unsupported_providers_disabled ? 'Disabled' : 'Allowed'}
               highlight={config.provider_status.unsupported_providers_disabled ? 'success' : 'error'}
             />
+            {/* Phase 26: RAGAS Evaluation Foundation */}
+            <ConfigRow
+              label="RAGAS Status"
+              value={
+                config.provider_status.ragas_status.ragas_enabled
+                  ? 'Available'
+                  : 'Disabled'
+              }
+              highlight={
+                config.provider_status.ragas_status.ragas_enabled
+                  ? 'success'
+                  : 'neutral'
+              }
+            />
+            <ConfigRow
+              label="RAGAS Evaluator"
+              value={`${config.provider_status.ragas_status.evaluator_provider} / ${config.provider_status.ragas_status.evaluator_model}`}
+            />
           </div>
           <div className="mt-3 pt-3 border-t border-hiplink-border dark:border-dark-border">
             <p className="text-xs font-medium text-hiplink-dark dark:text-dark-text mb-2">Available Providers</p>
@@ -416,6 +443,18 @@ export default function RAGConfigPage() {
                 <strong>Note:</strong> Switching the Document Loader or Text Splitter provider affects future
                 document uploads only — existing indexed content is not re-processed automatically.
                 To re-process existing documents, use the reindex script after changing providers.
+              </p>
+            </div>
+          )}
+          {/* Phase 26: RAGAS is an additive evaluation layer, not a replacement */}
+          {config.provider_status.ragas_status.ragas_available && (
+            <div className="mt-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+              <p className="text-xs text-blue-700 dark:text-blue-400">
+                <strong>Phase 26 Note:</strong> RAGAS is an <em>additive</em> evaluation layer — it runs in
+                addition to the existing custom RAG evaluation (run_rag_evaluation.py). Enable with
+                RAGAS_ENABLED=true and run <code>python scripts/run_ragas_evaluation.py</code> to
+                compute faithfulness, answer_relevancy, and context_precision. Context_recall and
+                answer_correctness are skipped (dataset has no ground_truth).
               </p>
             </div>
           )}

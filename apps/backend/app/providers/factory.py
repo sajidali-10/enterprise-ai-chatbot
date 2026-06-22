@@ -68,6 +68,15 @@ def _is_langchain_available() -> bool:
         return False
 
 
+def _is_ragas_available() -> bool:
+    """Detect whether ragas is importable and its top-level init succeeds."""
+    try:
+        import ragas  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _resolve(name: str, available: list[str], provider_kind: str) -> str:
     """
     Validate a provider name against the available list.
@@ -249,6 +258,7 @@ def get_provider_status() -> dict:
     """
     reindex_status = get_embedding_reindex_status()
     langchain_available = _is_langchain_available()
+    ragas_available = _is_ragas_available()
 
     return {
         "available_providers": {
@@ -304,5 +314,13 @@ def get_provider_status() -> dict:
             "reranker_top_n": settings.RERANKER_TOP_N,
             "reranker_model": settings.RERANKER_MODEL,
             "future_rerankers": dict(FUTURE_RERANKER_PROVIDERS),
+        },
+        # Phase 26: RAGAS evaluation foundation
+        "ragas_status": {
+            "ragas_enabled": settings.RAGAS_ENABLED,
+            "ragas_available": ragas_available,
+            "evaluator_provider": settings.RAGAS_EVALUATOR_PROVIDER,
+            "evaluator_model": settings.RAGAS_EVALUATOR_MODEL,
+            "report_dir": settings.RAGAS_REPORT_DIR,
         },
     }

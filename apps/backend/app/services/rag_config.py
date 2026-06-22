@@ -6,7 +6,7 @@ No secrets, API keys, tokens, or raw .env values are exposed.
 """
 
 from app.core.config import settings
-from app.providers.factory import get_provider_status
+from app.providers.factory import get_provider_status, _is_ragas_available
 
 
 def get_rag_config() -> dict:
@@ -60,5 +60,13 @@ def get_rag_config() -> dict:
             "reranker_enabled": settings.RERANKER_ENABLED,
             "reranker_top_n": settings.RERANKER_TOP_N,
             "reranker_model": settings.RERANKER_MODEL,
+        },
+        # Phase 26: RAGAS evaluation foundation
+        "ragas_status": {
+            "ragas_enabled": settings.RAGAS_ENABLED,
+            "ragas_available": _is_ragas_available(),
+            "evaluator_provider": settings.RAGAS_EVALUATOR_PROVIDER,
+            "evaluator_model": settings.RAGAS_EVALUATOR_MODEL,
+            "report_dir": settings.RAGAS_REPORT_DIR,
         },
     }

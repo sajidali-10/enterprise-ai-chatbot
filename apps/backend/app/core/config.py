@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     # Hybrid search: disabled by default (future phases will enable)
     HYBRID_SEARCH_ENABLED: bool = os.getenv("HYBRID_SEARCH_ENABLED", "false").lower() in ("true", "1", "yes")
 
+    # Phase 26 — RAGAS Evaluation Foundation
+    # Evaluator LLM provider for RAGAS metrics (faithfulness, answer_relevancy, context_precision)
+    RAGAS_ENABLED: bool = os.getenv("RAGAS_ENABLED", "false").lower() in ("true", "1", "yes")
+    RAGAS_EVALUATOR_PROVIDER: str = os.getenv("RAGAS_EVALUATOR_PROVIDER", "litellm")  # litellm | openrouter | openai
+    RAGAS_EVALUATOR_MODEL: str = os.getenv("RAGAS_EVALUATOR_MODEL", "openrouter-gpt-oss")
+    RAGAS_REPORT_DIR: str = os.getenv("RAGAS_REPORT_DIR", "/app/evals/ragas")
+    RAGAS_MAX_CASES: int = int(os.getenv("RAGAS_MAX_CASES", "20"))
+    RAGAS_SAVE_RESULTS: bool = os.getenv("RAGAS_SAVE_RESULTS", "true").lower() in ("true", "1", "yes")
+
     # Security settings (Phase 6 - Authentication & Authorization)
     AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
     DEV_AUTH_ENABLED: bool = os.getenv("DEV_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
