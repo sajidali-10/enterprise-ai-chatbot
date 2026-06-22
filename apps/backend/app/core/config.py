@@ -107,6 +107,18 @@ class Settings(BaseSettings):
     REDIS_HOST: str = os.getenv("REDIS_HOST", "redis")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
 
+    # Phase 27 — LangSmith Observability Foundation
+    # Disabled by default — no external calls when LANGSMITH_TRACING=false
+    LANGSMITH_TRACING: bool = os.getenv("LANGSMITH_TRACING", "false").lower() in ("true", "1", "yes")
+    LANGSMITH_PROJECT: str = os.getenv("LANGSMITH_PROJECT", "hiplink-ai-assistant")
+    LANGSMITH_ENDPOINT: str = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+    # LANGSMITH_API_KEY is read directly from env at runtime, NOT stored in settings
+    LANGSMITH_LOG_FULL_PROMPT: bool = os.getenv("LANGSMITH_LOG_FULL_PROMPT", "false").lower() in ("true", "1", "yes")
+    LANGSMITH_LOG_DOCUMENT_TEXT: bool = os.getenv("LANGSMITH_LOG_DOCUMENT_TEXT", "false").lower() in ("true", "1", "yes")
+    LANGSMITH_LOG_USER_INPUT: bool = os.getenv("LANGSMITH_LOG_USER_INPUT", "true").lower() in ("true", "1", "yes")
+    LANGSMITH_LOG_RETRIEVED_CONTEXT: bool = os.getenv("LANGSMITH_LOG_RETRIEVED_CONTEXT", "false").lower() in ("true", "1", "yes")
+    LANGSMITH_SAMPLE_RATE: float = float(os.getenv("LANGSMITH_SAMPLE_RATE", "1.0"))
+
     def get_cors_origins(self) -> list[str]:
         """Return the list of allowed CORS origins based on configuration."""
         if self.AUTH_MODE == "dev":

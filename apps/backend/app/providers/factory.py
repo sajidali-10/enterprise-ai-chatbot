@@ -24,6 +24,8 @@ Phase 25 adds retriever/reranker upgrade foundation:
     hybrid search, reranker settings, and future reranker placeholders
 """
 
+import os
+
 from app.core.config import settings
 
 # ---------------------------------------------------------------------------
@@ -76,6 +78,15 @@ def _is_ragas_available() -> bool:
     """
     import importlib.util
     return importlib.util.find_spec("ragas") is not None
+
+
+def _langsmith_endpoint_host() -> str:
+    """Return the hostname from LANGSMITH_ENDPOINT for safe display."""
+    try:
+        from urllib.parse import urlparse
+        return urlparse(settings.LANGSMITH_ENDPOINT).hostname or "unknown"
+    except Exception:
+        return "unknown"
 
 
 def _resolve(name: str, available: list[str], provider_kind: str) -> str:
@@ -323,5 +334,24 @@ def get_provider_status() -> dict:
             "evaluator_provider": settings.RAGAS_EVALUATOR_PROVIDER,
             "evaluator_model": settings.RAGAS_EVALUATOR_MODEL,
             "report_dir": settings.RAGAS_REPORT_DIR,
+        },
+        # Phase 27: LangSmith observability foundation
+        # Built directly from settings (no lazy import) — no langsmith package import here
+        "langsmith_status": {
+            "langsmith_tracing": settings.LANGSMITH_TRACING,
+            "langsmith_available": True,
+            "project": settings.LANGSMITH_PROJECT,
+            "endpoint_host": _langsmith_endpoint_host(),
+            "log_full_prompt": settings.LANGSMITH_LOG_FULL_PROMPT,
+            "log_document_text": settings.LANGSMITH_LOG_DOCUMENT_TEXT,
+            "log_user_input": settings.LANGSMITH_LOG_USER_INPUT,
+            "log_retrieved_context": settings.LANGSMITH_LOG_RETRIEVED_CONTEXT,
+            "sample_rate": settings.LANGSMITH_SAMPLE_RATE,
+            "has_tracing_key": bool(os.environ.get("LANGSMITH_API_KEY", "").strip()),
+            "warning": (
+                "LangSmith tracing is enabled but LANGSMITH_API_KEY is not set. Traces will not be sent."
+                if settings.LANGSMITH_TRACING and not os.environ.get("LANGSMITH_API_KEY", "").strip()
+                else None
+            ),
         },
     }

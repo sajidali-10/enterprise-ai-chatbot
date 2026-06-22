@@ -33,3 +33,9 @@ langchain-community>=0.4.0
 # The script detects availability at runtime and falls back to manual metric
 # computation if ragas cannot be imported.
 ragas>=0.2.0,<0.3.0
+
+# Phase 27 — LangSmith Observability Foundation
+# langsmith: tracing and observability for chat/RAG workflows
+# Disabled by default (LANGSMITH_TRACING=false). Only activates when enabled
+# and LANGSMITH_API_KEY is set. No heavy LangChain extras.
+langsmith>=0.8.0

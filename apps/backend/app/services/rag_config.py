@@ -5,8 +5,19 @@ Provides a safe, read-only summary of current RAG settings.
 No secrets, API keys, tokens, or raw .env values are exposed.
 """
 
+import os
+
 from app.core.config import settings
 from app.providers.factory import get_provider_status, _is_ragas_available
+
+
+def _langsmith_endpoint_host_safe() -> str:
+    """Return hostname from LANGSMITH_ENDPOINT for safe display."""
+    try:
+        from urllib.parse import urlparse
+        return urlparse(settings.LANGSMITH_ENDPOINT).hostname or "unknown"
+    except Exception:
+        return "unknown"
 
 
 def get_rag_config() -> dict:
@@ -68,5 +79,18 @@ def get_rag_config() -> dict:
             "evaluator_provider": settings.RAGAS_EVALUATOR_PROVIDER,
             "evaluator_model": settings.RAGAS_EVALUATOR_MODEL,
             "report_dir": settings.RAGAS_REPORT_DIR,
+        },
+        # Phase 27: LangSmith observability foundation
+        "langsmith_status": {
+            "langsmith_tracing": settings.LANGSMITH_TRACING,
+            "langsmith_available": True,
+            "project": settings.LANGSMITH_PROJECT,
+            "endpoint_host": _langsmith_endpoint_host_safe(),
+            "log_full_prompt": settings.LANGSMITH_LOG_FULL_PROMPT,
+            "log_document_text": settings.LANGSMITH_LOG_DOCUMENT_TEXT,
+            "log_user_input": settings.LANGSMITH_LOG_USER_INPUT,
+            "log_retrieved_context": settings.LANGSMITH_LOG_RETRIEVED_CONTEXT,
+            "sample_rate": settings.LANGSMITH_SAMPLE_RATE,
+            "has_tracing_key": bool(os.environ.get("LANGSMITH_API_KEY", "").strip()),
         },
     }

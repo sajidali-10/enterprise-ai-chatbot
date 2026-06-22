@@ -39,6 +39,20 @@ interface RAGASStatus {
   report_dir: string
 }
 
+interface LangSmithStatus {
+  langsmith_tracing: boolean
+  langsmith_available: boolean
+  project: string
+  endpoint_host: string
+  log_full_prompt: boolean
+  log_document_text: boolean
+  log_user_input: boolean
+  log_retrieved_context: boolean
+  sample_rate: number
+  has_tracing_key: boolean
+  warning?: string | null
+}
+
 interface ProviderStatus {
   available_providers: Record<string, string[]>
   active_providers: Record<string, string>
@@ -49,6 +63,7 @@ interface ProviderStatus {
   embedding_status: EmbeddingStatus
   retrieval_status: RetrievalStatus
   ragas_status: RAGASStatus
+  langsmith_status: LangSmithStatus
 }
 
 interface RAGConfig {
@@ -424,6 +439,25 @@ export default function RAGConfigPage() {
               label="RAGAS Evaluator"
               value={`${config.provider_status.ragas_status.evaluator_provider} / ${config.provider_status.ragas_status.evaluator_model}`}
             />
+            {/* Phase 27: LangSmith Observability Foundation */}
+            <ConfigRow
+              label="LangSmith Tracing"
+              value={config.provider_status.langsmith_status.langsmith_tracing ? 'Enabled' : 'Disabled'}
+              highlight={config.provider_status.langsmith_status.langsmith_tracing ? 'success' : 'neutral'}
+            />
+            <ConfigRow
+              label="LangSmith Project"
+              value={config.provider_status.langsmith_status.project}
+            />
+            <ConfigRow
+              label="LangSmith API Key"
+              value={config.provider_status.langsmith_status.has_tracing_key ? 'Configured' : 'Not Set'}
+              highlight={
+                config.provider_status.langsmith_status.langsmith_tracing && !config.provider_status.langsmith_status.has_tracing_key
+                  ? 'warning'
+                  : 'neutral'
+              }
+            />
           </div>
           <div className="mt-3 pt-3 border-t border-hiplink-border dark:border-dark-border">
             <p className="text-xs font-medium text-hiplink-dark dark:text-dark-text mb-2">Available Providers</p>
@@ -455,6 +489,16 @@ export default function RAGConfigPage() {
                 RAGAS_ENABLED=true and run <code>python scripts/run_ragas_evaluation.py</code> to
                 compute faithfulness, answer_relevancy, and context_precision. Context_recall and
                 answer_correctness are skipped (dataset has no ground_truth).
+              </p>
+            </div>
+          )}
+          {/* Phase 27: LangSmith tracing is disabled by default */}
+          {config.provider_status.langsmith_status.langsmith_tracing &&
+           !config.provider_status.langsmith_status.has_tracing_key && (
+            <div className="mt-3 p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800">
+              <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                <strong>Phase 27 Warning:</strong> LangSmith tracing is enabled but LANGSMITH_API_KEY is not
+                set. Traces will not be sent. Set LANGSMITH_API_KEY to activate tracing.
               </p>
             </div>
           )}
