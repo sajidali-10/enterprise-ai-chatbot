@@ -157,8 +157,13 @@ class TestAdminRAGConfigEndpoint:
         assert data["langchain_enabled"] is False
 
     def test_rag_config_reranker_enabled_when_not_none(self, monkeypatch):
-        """reranker_enabled must be True when reranker provider is set."""
+        """reranker_enabled must be True when both RERANKER_PROVIDER is set and RERANKER_ENABLED=true.
+
+        Phase 25: reranker_enabled is controlled by RERANKER_ENABLED setting, not inferred
+        from RERANKER_PROVIDER. Both must be set to activate reranking.
+        """
         monkeypatch.setenv("RERANKER_PROVIDER", "cohere")
+        monkeypatch.setenv("RERANKER_ENABLED", "true")
         import importlib
         import app.core.config
         import app.services.rag_config
@@ -168,11 +173,13 @@ class TestAdminRAGConfigEndpoint:
         from app.services.rag_config import get_rag_config
 
         assert settings.RERANKER_PROVIDER == "cohere"
+        assert settings.RERANKER_ENABLED is True
         config = get_rag_config()
         assert config["reranker_enabled"] is True
 
         # Cleanup: reset env and reload so subsequent tests are unaffected
         monkeypatch.delenv("RERANKER_PROVIDER", raising=False)
+        monkeypatch.delenv("RERANKER_ENABLED", raising=False)
         importlib.reload(app.core.config)
         importlib.reload(app.services.rag_config)
 

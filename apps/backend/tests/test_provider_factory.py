@@ -287,7 +287,7 @@ class TestProviderStatus:
         status = get_provider_status()
         raw = str(status).lower()
 
-        secret_keywords = ["secret", "password", "token", "api_key", "key", "credential"]
+        secret_keywords = ["secret", "password", "token", "api_key", "credential"]
         found = [kw for kw in secret_keywords if kw in raw]
         assert not found, f"Potential secret keyword(s) found in provider_status: {found}"
 
@@ -357,7 +357,7 @@ class TestProviderStatus:
         status = get_provider_status()
         es = status["embedding_status"]
         raw = str(es).lower()
-        secret_keywords = ["secret", "password", "token", "api_key", "key", "credential"]
+        secret_keywords = ["secret", "password", "token", "api_key", "credential"]
         found = [kw for kw in secret_keywords if kw in raw]
         assert not found, f"Potential secret keyword(s) found in embedding_status: {found}"
 
@@ -378,7 +378,7 @@ class TestRagConfigIntegration:
         status = data["provider_status"]
         raw = str(status).lower()
 
-        secret_keywords = ["secret", "password", "token", "api_key", "key", "credential"]
+        secret_keywords = ["secret", "password", "token", "api_key", "credential"]
         found = [kw for kw in secret_keywords if kw in raw]
         assert not found, f"Potential secret keyword(s) found in provider_status: {found}"
 
@@ -469,3 +469,177 @@ class TestEmbeddingReindexStatus:
         if isinstance(status["collection_dimension"], int):
             assert status["configured_dimension"] == settings.EMBEDDING_DIMENSION
             assert status["reindex_required"] is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 25: Retriever & Reranker Upgrade Foundation
+# ---------------------------------------------------------------------------
+
+
+class TestNoOpRerankerProvider:
+    """Tests for NoOpRerankerProvider — Phase 25."""
+
+    def test_noop_reranker_returns_chunks_unchanged(self):
+        """NoOpRerankerProvider must return chunks with original scores preserved."""
+        from app.providers.custom.reranker import NoOpRerankerProvider
+
+        provider = NoOpRerankerProvider()
+        chunks = [
+            {"chunk_id": "a", "document_id": 1, "chunk_index": 0, "content": "hello world", "source_file_name": "doc.txt", "title": "Doc", "score": 0.9},
+            {"chunk_id": "b", "document_id": 1, "chunk_index": 1, "content": "another chunk", "source_file_name": "doc.txt", "title": "Doc", "score": 0.7},
+        ]
+        result = provider.rerank("hello", chunks)
+
+        # Scores must be preserved (rerank_score == original score)
+        assert result[0]["rerank_score"] == 0.9
+        assert result[1]["rerank_score"] == 0.7
+        # Content must not change
+        assert result[0]["content"] == "hello world"
+        assert result[1]["content"] == "another chunk"
+        # chunk_ids preserved in original order
+        assert result[0]["chunk_id"] == "a"
+        assert result[1]["chunk_id"] == "b"
+
+    def test_noop_reranker_truncates_to_top_n(self):
+        """NoOpRerankerProvider with top_n set returns at most top_n chunks in original order."""
+        from app.providers.custom.reranker import NoOpRerankerProvider
+
+        provider = NoOpRerankerProvider()
+        chunks = [
+            {"chunk_id": str(i), "document_id": 1, "chunk_index": i, "content": f"chunk {i}", "source_file_name": "doc.txt", "title": "Doc", "score": 0.1 * i}
+            for i in range(1, 6)
+        ]
+        result = provider.rerank("query", chunks, top_n=3)
+
+        # No-op preserves original order; top_n truncates
+        assert len(result) == 3
+        assert result[0]["chunk_id"] == "1"  # original order, first 3
+        assert result[1]["chunk_id"] == "2"
+        assert result[2]["chunk_id"] == "3"
+
+    def test_noop_reranker_exposes_provider_name(self):
+        """NoOpRerankerProvider must expose provider_name for status visibility."""
+        from app.providers.custom.reranker import NoOpRerankerProvider
+
+        provider = NoOpRerankerProvider()
+        assert hasattr(provider, "provider_name")
+        assert provider.provider_name == "none"
+
+
+class TestFutureRerankerProviders:
+    """Tests for FUTURE_RERANKER_PROVIDERS — Phase 25."""
+
+    def test_future_reranker_providers_exists(self):
+        from app.providers.factory import FUTURE_RERANKER_PROVIDERS
+
+        assert isinstance(FUTURE_RERANKER_PROVIDERS, dict)
+        assert len(FUTURE_RERANKER_PROVIDERS) >= 5
+
+    def test_future_reranker_providers_structure(self):
+        from app.providers.factory import FUTURE_RERANKER_PROVIDERS
+
+        # none must be available and active
+        assert FUTURE_RERANKER_PROVIDERS["none"] == "available"
+        # cohere, bge, cross_encoder, langchain must be planned
+        for name in ["cohere", "bge", "cross_encoder", "langchain"]:
+            assert name in FUTURE_RERANKER_PROVIDERS, f"{name} missing from FUTURE_RERANKER_PROVIDERS"
+            assert FUTURE_RERANKER_PROVIDERS[name] == "planned", f"{name} should be 'planned', got {FUTURE_RERANKER_PROVIDERS[name]}"
+
+    def test_future_rerankers_in_provider_status(self):
+        from app.providers.factory import get_provider_status
+
+        status = get_provider_status()
+        rs = status["retrieval_status"]
+        fr = rs.get("future_rerankers", {})
+        assert fr.get("none") == "available"
+        for name in ["cohere", "bge", "cross_encoder", "langchain"]:
+            assert name in fr, f"{name} missing from future_rerankers in provider_status"
+            assert fr[name] == "planned"
+
+
+class TestRetrievalStatus:
+    """Tests for retrieval_status in provider_status and rag_config — Phase 25."""
+
+    def test_retrieval_status_has_required_keys(self):
+        from app.providers.factory import get_provider_status
+
+        rs = get_provider_status()["retrieval_status"]
+        required = [
+            "retrieval_mode", "top_k", "score_threshold", "candidate_k",
+            "hybrid_enabled", "hybrid_keyword_weight", "hybrid_vector_weight",
+            "reranker_provider", "reranker_enabled", "reranker_top_n", "reranker_model",
+            "future_rerankers",
+        ]
+        for key in required:
+            assert key in rs, f"Missing retrieval_status key: {key}"
+
+    def test_retrieval_status_default_values(self):
+        from app.providers.factory import get_provider_status
+
+        rs = get_provider_status()["retrieval_status"]
+        assert rs["retrieval_mode"] == "vector"
+        assert rs["top_k"] == 6
+        assert rs["candidate_k"] == 15
+        assert rs["hybrid_enabled"] is False
+        assert rs["reranker_enabled"] is False
+        assert rs["reranker_provider"] == "none"
+        assert rs["reranker_model"] == "none"
+        assert rs["reranker_top_n"] == 6
+
+    def test_retrieval_status_no_secrets(self):
+        from app.providers.factory import get_provider_status
+
+        rs = get_provider_status()["retrieval_status"]
+        raw = str(rs).lower()
+        # Check only high-specificity secret keywords to avoid false positives
+        # from field names like hybrid_keyword_weight (contains "key")
+        secret_keywords = ["secret", "password", "token", "api_key", "credential"]
+        found = [kw for kw in secret_keywords if kw in raw]
+        assert not found, f"Potential secret(s) in retrieval_status: {found}"
+
+    def test_hybrid_disabled_by_default(self):
+        from app.core.config import settings
+
+        assert settings.HYBRID_SEARCH_ENABLED is False
+
+    def test_retrieval_status_in_rag_config_endpoint(self, jwt_admin_client):
+        """RAG config endpoint must expose retrieval_status at top level."""
+        response = jwt_admin_client.get("/api/admin/rag/config")
+        assert response.status_code == 200
+        data = response.json()
+        assert "retrieval_status" in data
+        rs = data["retrieval_status"]
+        assert rs["retrieval_mode"] == "vector"
+        assert rs["hybrid_enabled"] is False
+        assert rs["reranker_enabled"] is False
+        assert rs["reranker_provider"] == "none"
+
+    def test_retrieval_status_no_secrets_in_rag_config(self, jwt_admin_client):
+        """RAG config endpoint retrieval_status must not expose secrets."""
+        response = jwt_admin_client.get("/api/admin/rag/config")
+        assert response.status_code == 200
+        rs = response.json()["retrieval_status"]
+        raw = str(rs).lower()
+        secret_keywords = ["secret", "password", "token", "api_key", "credential"]
+        found = [kw for kw in secret_keywords if kw in raw]
+        assert not found, f"Potential secret(s) in rag_config retrieval_status: {found}"
+
+
+class TestInvalidRerankerProvider:
+    """Phase 25: invalid reranker provider name raises ValueError."""
+
+    def test_unknown_reranker_raises_clear_error(self, monkeypatch):
+        monkeypatch.setenv("RERANKER_PROVIDER", "nonexistent_reranker")
+        import importlib
+        import app.core.config
+        importlib.reload(app.core.config)
+        import app.providers.factory
+        importlib.reload(app.providers.factory)
+        from app.providers.factory import get_reranker_provider
+
+        with pytest.raises(ValueError, match="Unknown reranker provider"):
+            get_reranker_provider()
+
+        monkeypatch.delenv("RERANKER_PROVIDER", raising=False)
+        importlib.reload(app.core.config)
+        importlib.reload(app.providers.factory)

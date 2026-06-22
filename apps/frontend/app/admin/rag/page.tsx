@@ -16,6 +16,21 @@ interface EmbeddingStatus {
   future_providers: Record<string, string>
 }
 
+interface RetrievalStatus {
+  retrieval_mode: string
+  top_k: number
+  score_threshold: number
+  candidate_k: number
+  hybrid_enabled: boolean
+  hybrid_keyword_weight: number
+  hybrid_vector_weight: number
+  reranker_provider: string
+  reranker_enabled: boolean
+  reranker_top_n: number
+  reranker_model: string
+  future_rerankers: Record<string, string>
+}
+
 interface ProviderStatus {
   available_providers: Record<string, string[]>
   active_providers: Record<string, string>
@@ -24,6 +39,7 @@ interface ProviderStatus {
   provider_switching_ready: boolean
   unsupported_providers_disabled: boolean
   embedding_status: EmbeddingStatus
+  retrieval_status: RetrievalStatus
 }
 
 interface RAGConfig {
@@ -48,6 +64,7 @@ interface RAGConfig {
   langchain_enabled: boolean
   reranker_enabled: boolean
   provider_status: ProviderStatus
+  retrieval_status: RetrievalStatus
 }
 
 interface ConfigRowProps {
@@ -215,6 +232,87 @@ export default function RAGConfigPage() {
           <div className="space-y-1">
             <ConfigRow label="Provider" value={config.vector_store_provider} highlight="blue" />
           </div>
+        </div>
+
+        {/* Retrieval Strategy — Phase 25 */}
+        <div className="card dark:bg-dark-card p-4">
+          <h2 className="text-lg font-semibold text-hiplink-dark dark:text-dark-text mb-3">Retrieval Strategy</h2>
+          <div className="space-y-1">
+            <ConfigRow
+              label="Retrieval Mode"
+              value={config.retrieval_status.retrieval_mode}
+              highlight="blue"
+            />
+            <ConfigRow
+              label="Active Retriever"
+              value={config.retriever_provider}
+              highlight="blue"
+            />
+            <ConfigRow label="Top K" value={config.retrieval_status.top_k} highlight="neutral" />
+            <ConfigRow label="Score Threshold" value={config.retrieval_status.score_threshold} highlight="neutral" />
+            <ConfigRow label="Candidate K" value={config.retrieval_status.candidate_k} highlight="neutral" />
+          </div>
+          <div className="mt-3 pt-3 border-t border-hiplink-border dark:border-dark-border">
+            <p className="text-xs font-medium text-hiplink-dark dark:text-dark-text mb-2">Hybrid Search</p>
+            <div className="space-y-1">
+              <ConfigRow
+                label="Enabled"
+                value={config.retrieval_status.hybrid_enabled}
+                highlight={config.retrieval_status.hybrid_enabled ? 'warning' : 'neutral'}
+              />
+              <ConfigRow label="Keyword Weight" value={config.retrieval_status.hybrid_keyword_weight} highlight="neutral" />
+              <ConfigRow label="Vector Weight" value={config.retrieval_status.hybrid_vector_weight} highlight="neutral" />
+            </div>
+          </div>
+          {!config.retrieval_status.hybrid_enabled && (
+            <div className="mt-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+              <p className="text-xs text-blue-700 dark:text-blue-400">
+                <strong>Note:</strong> Hybrid search (vector + keyword) is disabled. Active behavior is
+                vector-only retrieval. Enable <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">HYBRID_SEARCH_ENABLED=true</code> to
+                activate hybrid retrieval in a future phase.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Reranker — Phase 25 */}
+        <div className="card dark:bg-dark-card p-4">
+          <h2 className="text-lg font-semibold text-hiplink-dark dark:text-dark-text mb-3">Reranker</h2>
+          <div className="space-y-1">
+            <ConfigRow
+              label="Active Reranker"
+              value={config.retrieval_status.reranker_provider}
+              highlight={config.retrieval_status.reranker_enabled ? 'warning' : 'neutral'}
+            />
+            <ConfigRow
+              label="Reranker Enabled"
+              value={config.retrieval_status.reranker_enabled}
+              highlight={config.retrieval_status.reranker_enabled ? 'warning' : 'neutral'}
+            />
+            <ConfigRow label="Reranker Top N" value={config.retrieval_status.reranker_top_n} highlight="neutral" />
+            <ConfigRow label="Reranker Model" value={config.retrieval_status.reranker_model} highlight="neutral" />
+          </div>
+          <div className="mt-3 pt-3 border-t border-hiplink-border dark:border-dark-border">
+            <p className="text-xs font-medium text-hiplink-dark dark:text-dark-text mb-2">Future Rerankers</p>
+            <div className="space-y-1">
+              {Object.entries(config.provider_status.retrieval_status?.future_rerankers || {}).map(([name, status]) => (
+                <ConfigRow
+                  key={name}
+                  label={name.replace('_', ' ').toUpperCase()}
+                  value={name === 'none' ? 'Available / Active' : `${status} / Not enabled`}
+                  highlight={name === 'none' ? 'success' : 'neutral'}
+                />
+              ))}
+            </div>
+          </div>
+          {!config.retrieval_status.reranker_enabled && (
+            <div className="mt-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+              <p className="text-xs text-blue-700 dark:text-blue-400">
+                <strong>Note:</strong> Reranking is disabled. Active behavior is vector retrieval without re-ranking.
+                Enable <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">RERANKER_ENABLED=true</code> and set a reranker provider in a future phase.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Retrieval Behavior */}

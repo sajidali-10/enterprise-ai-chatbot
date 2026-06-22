@@ -44,7 +44,21 @@ def get_rag_config() -> dict:
         "conversation_context_max_characters": settings.RAG_CONVERSATION_CONTEXT_MAX_CHARACTERS,
         # Feature flags (no secrets — these are booleans only)
         "langchain_enabled": False,
-        "reranker_enabled": settings.RERANKER_PROVIDER.lower() not in ("none", ""),
+        "reranker_enabled": settings.RERANKER_ENABLED,
         # Phase 22: Provider interface foundation status
         "provider_status": get_provider_status(),
+        # Phase 25: Retrieval & Reranker upgrade foundation
+        "retrieval_status": {
+            "retrieval_mode": settings.RETRIEVAL_MODE,
+            "top_k": settings.RAG_TOP_K,
+            "score_threshold": settings.RAG_SCORE_THRESHOLD,
+            "candidate_k": settings.RETRIEVAL_CANDIDATE_K,
+            "hybrid_enabled": settings.HYBRID_SEARCH_ENABLED,
+            "hybrid_keyword_weight": settings.RETRIEVAL_KEYWORD_WEIGHT,
+            "hybrid_vector_weight": settings.RETRIEVAL_VECTOR_WEIGHT,
+            "reranker_provider": settings.RERANKER_PROVIDER,
+            "reranker_enabled": settings.RERANKER_ENABLED,
+            "reranker_top_n": settings.RERANKER_TOP_N,
+            "reranker_model": settings.RERANKER_MODEL,
+        },
     }

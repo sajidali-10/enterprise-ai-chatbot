@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     RAG_CONVERSATION_CONTEXT_MAX_MESSAGES: int = int(os.getenv("RAG_CONVERSATION_CONTEXT_MAX_MESSAGES", "6"))
     RAG_CONVERSATION_CONTEXT_MAX_CHARACTERS: int = int(os.getenv("RAG_CONVERSATION_CONTEXT_MAX_CHARACTERS", "3500"))
 
+    # Phase 25 — Retriever & Reranker Upgrade Foundation
+    # Retrieval strategy: vector (default) or hybrid (keyword + vector)
+    RETRIEVAL_MODE: str = os.getenv("RETRIEVAL_MODE", "vector")  # vector | hybrid
+    # Candidate K: number of results to fetch before final top_k truncation / reranking
+    RETRIEVAL_CANDIDATE_K: int = int(os.getenv("RETRIEVAL_CANDIDATE_K", "15"))
+    # Reranker settings (disabled by default — future phases will enable)
+    RERANKER_ENABLED: bool = os.getenv("RERANKER_ENABLED", "false").lower() in ("true", "1", "yes")
+    RERANKER_TOP_N: int = int(os.getenv("RERANKER_TOP_N", "6"))
+    RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "none")  # none | cohere | bge | cross_encoder
+    # Hybrid search: disabled by default (future phases will enable)
+    HYBRID_SEARCH_ENABLED: bool = os.getenv("HYBRID_SEARCH_ENABLED", "false").lower() in ("true", "1", "yes")
+
     # Security settings (Phase 6 - Authentication & Authorization)
     AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
     DEV_AUTH_ENABLED: bool = os.getenv("DEV_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")

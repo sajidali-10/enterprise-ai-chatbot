@@ -17,6 +17,11 @@ Phase 23 adds embedding upgrade foundation:
   - Future embedding providers (openai, cohere, voyage, bge, e5) listed as "planned"
   - Embedding reindex status with Qdrant dimension safety check
   - Phase 23 new settings: EMBEDDING_NORMALIZE, EMBEDDING_BATCH_SIZE, EMBEDDING_DEVICE
+
+Phase 25 adds retriever/reranker upgrade foundation:
+  - Future reranker providers (cohere, bge, cross_encoder, langchain) listed as "planned" / "disabled"
+  - Retrieval strategy status with retrieval mode, top_k, score threshold, candidate K,
+    hybrid search, reranker settings, and future reranker placeholders
 """
 
 from app.core.config import settings
@@ -40,6 +45,16 @@ FUTURE_EMBEDDING_PROVIDERS = {
     "voyage": "planned",
     "bge": "planned",
     "e5": "planned",
+}
+
+# Future reranker providers — planned but not yet implemented/available (Phase 25)
+# Status values: "planned" + "disabled" (requires API key / external dependency)
+FUTURE_RERANKER_PROVIDERS = {
+    "none": "available",  # active default — no-op reranker
+    "cohere": "planned",
+    "bge": "planned",
+    "cross_encoder": "planned",
+    "langchain": "planned",
 }
 
 
@@ -274,5 +289,20 @@ def get_provider_status() -> dict:
             "collection_dimension": reindex_status["collection_dimension"],
             "reindex_required": reindex_status["reindex_required"],
             "future_providers": dict(FUTURE_EMBEDDING_PROVIDERS),
+        },
+        # Phase 25: Retriever & Reranker upgrade foundation
+        "retrieval_status": {
+            "retrieval_mode": settings.RETRIEVAL_MODE,
+            "top_k": settings.RAG_TOP_K,
+            "score_threshold": settings.RAG_SCORE_THRESHOLD,
+            "candidate_k": settings.RETRIEVAL_CANDIDATE_K,
+            "hybrid_enabled": settings.HYBRID_SEARCH_ENABLED,
+            "hybrid_keyword_weight": settings.RETRIEVAL_KEYWORD_WEIGHT,
+            "hybrid_vector_weight": settings.RETRIEVAL_VECTOR_WEIGHT,
+            "reranker_provider": settings.RERANKER_PROVIDER,
+            "reranker_enabled": settings.RERANKER_ENABLED,
+            "reranker_top_n": settings.RERANKER_TOP_N,
+            "reranker_model": settings.RERANKER_MODEL,
+            "future_rerankers": dict(FUTURE_RERANKER_PROVIDERS),
         },
     }

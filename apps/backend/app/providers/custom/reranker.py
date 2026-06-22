@@ -12,11 +12,15 @@ from app.providers.base import RerankerProvider, ChunkDict
 
 class NoOpRerankerProvider(RerankerProvider):
     """
-    Phase 22 only active reranker: identity pass-through.
+    Phase 22/25 active reranker: identity pass-through.
 
     The underlying NoOpReranker returns chunks unchanged with their
-    original scores preserved as rerank_score.
+    original scores preserved as rerank_score. Supports optional top_n
+    truncation to limit output size without changing scores.
     """
+
+    provider_name: str = "none"
+    """Reranker provider name exposed in status for admin visibility."""
 
     def __init__(self):
         self._impl = _NoOpReranker()
