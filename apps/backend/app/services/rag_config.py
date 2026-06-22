@@ -6,6 +6,7 @@ No secrets, API keys, tokens, or raw .env values are exposed.
 """
 
 from app.core.config import settings
+from app.providers.factory import get_provider_status
 
 
 def get_rag_config() -> dict:
@@ -44,4 +45,6 @@ def get_rag_config() -> dict:
         # Feature flags (no secrets — these are booleans only)
         "langchain_enabled": False,
         "reranker_enabled": settings.RERANKER_PROVIDER.lower() not in ("none", ""),
+        # Phase 22: Provider interface foundation status
+        "provider_status": get_provider_status(),
     }

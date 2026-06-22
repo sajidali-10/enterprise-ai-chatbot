@@ -3,6 +3,15 @@
 import { useState, useEffect } from 'react'
 import { useAuthFetch } from '@/hooks/useApi'
 
+interface ProviderStatus {
+  available_providers: Record<string, string[]>
+  active_providers: Record<string, string>
+  langchain_available: boolean
+  langchain_enabled: boolean
+  provider_switching_ready: boolean
+  unsupported_providers_disabled: boolean
+}
+
 interface RAGConfig {
   rag_pipeline_provider: string
   document_loader_provider: string
@@ -24,6 +33,7 @@ interface RAGConfig {
   conversation_context_max_characters: number
   langchain_enabled: boolean
   reranker_enabled: boolean
+  provider_status: ProviderStatus
 }
 
 interface ConfigRowProps {
@@ -196,6 +206,39 @@ export default function RAGConfigPage() {
               value={config.reranker_enabled}
               highlight={config.reranker_enabled ? 'warning' : 'neutral'}
             />
+          </div>
+        </div>
+
+        {/* Provider Interface Foundation */}
+        <div className="card dark:bg-dark-card p-4">
+          <h2 className="text-lg font-semibold text-hiplink-dark dark:text-dark-text mb-3">Provider Interface Foundation</h2>
+          <div className="space-y-1">
+            <ConfigRow
+              label="Provider Switching"
+              value={config.provider_status.provider_switching_ready ? 'Ready (Foundation Only)' : 'Not Ready'}
+              highlight={config.provider_status.provider_switching_ready ? 'success' : 'error'}
+            />
+            <ConfigRow
+              label="LangChain Available"
+              value={config.provider_status.langchain_available ? 'Yes' : 'No'}
+              highlight={config.provider_status.langchain_available ? 'warning' : 'neutral'}
+            />
+            <ConfigRow
+              label="Unsupported Providers"
+              value={config.provider_status.unsupported_providers_disabled ? 'Disabled' : 'Allowed'}
+              highlight={config.provider_status.unsupported_providers_disabled ? 'success' : 'error'}
+            />
+          </div>
+          <div className="mt-3 pt-3 border-t border-hiplink-border dark:border-dark-border">
+            <p className="text-xs font-medium text-hiplink-dark dark:text-dark-text mb-2">Available Providers</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {Object.entries(config.provider_status.available_providers).map(([key, values]) => (
+                <div key={key} className="flex items-center gap-1">
+                  <span className="text-hiplink-secondary dark:text-dark-text-muted capitalize">{key.replace('_', ' ')}:</span>
+                  <span className="font-medium text-hiplink-dark dark:text-dark-text">{values.join(', ') || '—'}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
