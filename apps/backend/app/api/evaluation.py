@@ -24,6 +24,7 @@ from app.schemas.evaluation import (
     BlockedObservation,
     LowConfidenceObservation,
     FeedbackRequest,
+    RAGASSummaryResponse,
 )
 
 router = APIRouter(prefix="/api", tags=["Evaluation & Observability"])
@@ -388,6 +389,134 @@ def get_evaluation_runs(
     )
 
 
+@router.get("/admin/evaluations/ragas-summary", response_model=RAGASSummaryResponse)
+def get_ragas_summary(
+    auth: AuthContext = Depends(require_admin),
+):
+    """
+    Return RAGAS evaluation summary for the admin Evaluations page.
+
+    Reads the latest RAGAS JSON report from RAGAS_REPORT_DIR.
+    Returns safe, read-only fields — no secrets, no full paths.
+
+    Always returns 200: missing report is a graceful "no report yet" state,
+    not an error.
+    """
+    import json
+    import os
+    from app.core.config import settings
+    from app.schemas.evaluation import RAGASScoreMetrics
+
+    _ = auth  # admin check
+    warnings: list[str] = []
+
+    # 1. Basic availability
+    # RAGAS package detection — use find_spec like factory.py to avoid uvloop issue
+    import importlib.util
+    ragas_available = importlib.util.find_spec("ragas") is not None
+
+    enabled = settings.RAGAS_ENABLED and ragas_available
+    if not ragas_available:
+        warnings.append("RAGAS package is not installed. Run: pip install ragas>=0.2.0,<0.3.0")
+    if settings.RAGAS_ENABLED and not ragas_available:
+        warnings.append("RAGAS is enabled (RAGAS_ENABLED=true) but the ragas package is not installed.")
+
+    report_dir_configured = bool(settings.RAGAS_REPORT_DIR)
+
+    # 2. Try to read latest report
+    latest_report_name: Optional[str] = None
+    latest_timestamp: Optional[str] = None
+    metrics: Optional[RAGASScoreMetrics] = None
+    skipped_metrics: list[str] = ["context_recall", "answer_correctness"]
+    latest_report_found = False
+
+    if ragas_available and report_dir_configured:
+        report_dir = settings.RAGAS_REPORT_DIR
+        # Only expose the configured dir name, not full system paths
+        report_dir_short = report_dir.split("/")[-1] if "/" in report_dir else report_dir
+
+        try:
+            report_path = os.path.join(report_dir, "latest.json")
+            if os.path.exists(report_path):
+                with open(report_path, "r") as f:
+                    report = json.load(f)
+
+                latest_report_found = True
+                # Strip directory prefix from report name for safe display
+                report_basename = os.path.basename(report_path)
+                latest_report_name = report_basename
+                latest_timestamp = report.get("timestamp", None)
+
+                # Extract metric averages
+                avg_scores = report.get("avg_scores", {})
+                threshold_summary = report.get("threshold_summary", {})
+
+                def _safe_float(val) -> Optional[float]:
+                    if val is None:
+                        return None
+                    try:
+                        f = float(val)
+                        if f != f:  # NaN
+                            return None
+                        return round(f, 4)
+                    except (TypeError, ValueError):
+                        return None
+
+                metrics = RAGASScoreMetrics(
+                    faithfulness=_safe_float(avg_scores.get("faithfulness", {}).get("avg")),
+                    answer_relevancy=_safe_float(avg_scores.get("answer_relevancy", {}).get("avg")),
+                    context_precision=_safe_float(avg_scores.get("context_precision", {}).get("avg")),
+                    # context_recall and answer_correctness are always skipped
+                    context_recall=None,
+                    answer_correctness=None,
+                )
+
+                # Add warning if no real evaluation has been run yet
+                if not latest_report_found:
+                    warnings.append(
+                        "No RAGAS report found yet. Run RAGAS evaluation without --dry-run "
+                        "to generate scores: python scripts/run_ragas_evaluation.py"
+                    )
+            else:
+                warnings.append(
+                    "No RAGAS report found yet. Run RAGAS evaluation without --dry-run "
+                    "to generate scores: python scripts/run_ragas_evaluation.py"
+                )
+        except json.JSONDecodeError:
+            warnings.append("RAGAS report exists but could not be parsed.")
+            latest_report_name = None
+            latest_timestamp = None
+        except OSError as exc:
+            warnings.append(f"Could not read RAGAS report directory: {exc}")
+            latest_report_name = None
+            latest_timestamp = None
+    elif not report_dir_configured:
+        warnings.append("RAGAS report directory is not configured (RAGAS_REPORT_DIR is empty).")
+
+    # 3. Load thresholds from settings
+    # Import here to avoid heavy import chain at module load
+    _THRESHOLDS = {
+        "faithfulness": float(os.getenv("RAGAS_THRESHOLD_FAITHFULNESS", "0.5")),
+        "answer_relevancy": float(os.getenv("RAGAS_THRESHOLD_ANSWER_RELEVANCY", "0.5")),
+        "context_precision": float(os.getenv("RAGAS_THRESHOLD_CONTEXT_PRECISION", "0.5")),
+    }
+
+    return RAGASSummaryResponse(
+        available=ragas_available,
+        enabled=enabled,
+        evaluator_provider=settings.RAGAS_EVALUATOR_PROVIDER,
+        evaluator_model=settings.RAGAS_EVALUATOR_MODEL,
+        report_dir_configured=report_dir_configured,
+        latest_report_found=latest_report_found,
+        latest_report_name=latest_report_name,
+        latest_timestamp=latest_timestamp,
+        metrics=metrics,
+        skipped_metrics=skipped_metrics,
+        threshold_faithfulness=_THRESHOLDS["faithfulness"],
+        threshold_answer_relevancy=_THRESHOLDS["answer_relevancy"],
+        threshold_context_precision=_THRESHOLDS["context_precision"],
+        warnings=warnings,
+    )
 @router.get("/admin/evaluations/{run_id}", response_model=EvaluationRunDetail)
 def get_evaluation_run(
     run_id: int,
@@ -476,12 +605,14 @@ def trigger_evaluation_run(
 ):
     """
     Trigger a new evaluation run.
-    
+
     Note: This is a placeholder. The actual evaluation should be run from CLI.
     """
     require_admin(auth)
-    
+
     raise HTTPException(
         status_code=501,
         detail="Evaluation must be run from CLI: docker compose exec backend python /app/scripts/run_rag_evaluation.py"
     )
+
+

@@ -128,6 +128,36 @@ class LowConfidenceObservation(BaseModel):
     created_at: datetime
     question: str
     top_score: Optional[float]
-    citation_count: Optional[int]
-    feedback_rating: Optional[str]
-    block_reason: Optional[str]
+
+
+class RAGASScoreMetrics(BaseModel):
+    """Individual metric scores from a RAGAS report."""
+    faithfulness: Optional[float] = None
+    answer_relevancy: Optional[float] = None
+    context_precision: Optional[float] = None
+    context_recall: Optional[float] = None
+    answer_correctness: Optional[float] = None
+
+
+class RAGASSummaryResponse(BaseModel):
+    """RAGAS summary for the admin Evaluations page.
+
+    Safe, read-only. No secrets, no full paths.
+    """
+    available: bool
+    enabled: bool
+    evaluator_provider: str
+    evaluator_model: str
+    report_dir_configured: bool
+    latest_report_found: bool
+    latest_report_name: Optional[str] = None
+    latest_timestamp: Optional[str] = None
+    metrics: Optional[RAGASScoreMetrics] = None
+    skipped_metrics: List[str] = Field(default_factory=list)
+    threshold_faithfulness: float
+    threshold_answer_relevancy: float
+    threshold_context_precision: float
+    warnings: List[str] = Field(default_factory=list)
+#    citation_count: Optional[int]
+#    feedback_rating: Optional[str]
+#    block_reason: Optional[str]

@@ -55,7 +55,32 @@ interface EvaluationRunDetail {
 interface MetricCardProps {
   label: string
   value: string | number
-  highlight?: 'success' | 'error' | 'warning' | 'blue'
+  highlight?: 'success' | 'error' | 'warning' | 'blue' | 'neutral'
+}
+
+interface RAGASScoreMetrics {
+  faithfulness: number | null
+  answer_relevancy: number | null
+  context_precision: number | null
+  context_recall: number | null
+  answer_correctness: number | null
+}
+
+interface RAGASSummary {
+  available: boolean
+  enabled: boolean
+  evaluator_provider: string
+  evaluator_model: string
+  report_dir_configured: boolean
+  latest_report_found: boolean
+  latest_report_name: string | null
+  latest_timestamp: string | null
+  metrics: RAGASScoreMetrics | null
+  skipped_metrics: string[]
+  threshold_faithfulness: number
+  threshold_answer_relevancy: number
+  threshold_context_precision: number
+  warnings: string[]
 }
 
 function MetricCard({ label, value, highlight }: MetricCardProps) {
@@ -64,6 +89,7 @@ function MetricCard({ label, value, highlight }: MetricCardProps) {
     error: 'text-hiplink-error dark:text-red-400',
     warning: 'text-hiplink-warning dark:text-amber-400',
     blue: 'text-hiplink-blue dark:text-sky-400',
+    neutral: 'text-hiplink-dark dark:text-dark-text',
   }
 
   return (
@@ -82,7 +108,8 @@ export default function EvaluationsPage() {
   const [selectedRun, setSelectedRun] = useState<EvaluationRunDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'latest' | 'runs' | 'details'>('latest')
+  const [activeTab, setActiveTab] = useState<'latest' | 'runs' | 'details' | 'ragas'>('latest')
+  const [ragasSummary, setRagasSummary] = useState<RAGASSummary | null>(null)
   const authFetch = useAuthFetch()
 
   useEffect(() => {
@@ -93,9 +120,10 @@ export default function EvaluationsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [latestRes, runsRes] = await Promise.all([
+      const [latestRes, runsRes, ragasRes] = await Promise.all([
         authFetch('/api/admin/evaluations/latest'),
         authFetch('/api/admin/evaluations/runs'),
+        authFetch('/api/admin/evaluations/ragas-summary'),
       ])
 
       if (!latestRes.ok || !runsRes.ok) {
@@ -109,6 +137,11 @@ export default function EvaluationsPage() {
 
       setLatestEval(latestData)
       setRuns(runsData.runs)
+
+      // RAGAS summary: 200 even when no report exists
+      if (ragasRes.ok) {
+        setRagasSummary(await ragasRes.json())
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -180,6 +213,7 @@ export default function EvaluationsPage() {
           { key: 'latest' as const, label: 'Latest Run', disabled: false },
           { key: 'runs' as const, label: 'All Runs', disabled: false },
           { key: 'details' as const, label: 'Run Details', disabled: !selectedRun },
+          { key: 'ragas' as const, label: 'RAGAS Scores', disabled: false },
         ]).map(({ key, label, disabled }) => (
           <button
             key={key}
@@ -547,6 +581,113 @@ export default function EvaluationsPage() {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* RAGAS Scores Tab */}
+      {activeTab === 'ragas' && (
+        <div>
+          <div className="mb-4 flex items-center gap-2">
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+              ragasSummary?.enabled
+                ? 'bg-green-100 dark:bg-green-900/30 text-hiplink-success dark:text-green-400'
+                : 'bg-gray-100 dark:bg-dark-elevated text-hiplink-secondary dark:text-dark-text-muted'
+            }`}>
+              {ragasSummary?.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <span className="text-xs text-hiplink-secondary dark:text-dark-text-dim">
+              RAGAS is an additive quality layer — custom evaluation (20/20) remains the regression gate.
+            </span>
+          </div>
+
+          {/* Status Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <MetricCard
+              label="RAGAS Status"
+              value={!ragasSummary ? 'Loading…' : ragasSummary.available ? 'Available' : 'Not Installed'}
+              highlight={!ragasSummary ? 'neutral' : ragasSummary.available ? 'success' : 'warning'}
+            />
+            <MetricCard
+              label="Evaluator"
+              value={ragasSummary?.evaluator_provider ? `${ragasSummary.evaluator_provider} / ${ragasSummary.evaluator_model}` : '—'}
+            />
+            <MetricCard
+              label="Latest Report"
+              value={!ragasSummary ? '—' : ragasSummary.latest_report_found ? (ragasSummary.latest_report_name || 'Found') : 'None'}
+              highlight={!ragasSummary ? 'neutral' : ragasSummary.latest_report_found ? 'success' : 'warning'}
+            />
+            <MetricCard
+              label="Last Run"
+              value={
+                !ragasSummary?.latest_timestamp
+                  ? 'Never'
+                  : new Date(ragasSummary.latest_timestamp).toLocaleDateString()
+              }
+            />
+          </div>
+
+          {/* Skipped Metrics Note */}
+          {ragasSummary?.skipped_metrics && ragasSummary.skipped_metrics.length > 0 && (
+            <div className="mb-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400">
+              <strong>Note:</strong> The following metrics are skipped because the evaluation dataset has no ground_truth: {ragasSummary.skipped_metrics.join(', ')}.
+            </div>
+          )}
+
+          {/* Metric Score Cards */}
+          {ragasSummary?.metrics ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              {[
+                { key: 'faithfulness', label: 'Faithfulness', value: ragasSummary.metrics.faithfulness, threshold: ragasSummary.threshold_faithfulness },
+                { key: 'answer_relevancy', label: 'Answer Relevancy', value: ragasSummary.metrics.answer_relevancy, threshold: ragasSummary.threshold_answer_relevancy },
+                { key: 'context_precision', label: 'Context Precision', value: ragasSummary.metrics.context_precision, threshold: ragasSummary.threshold_context_precision },
+              ].map(({ key, label, value, threshold }) => {
+                const num = value ?? null
+                const pass = num !== null && num >= threshold
+                const highlight = num === null ? 'neutral' : pass ? 'success' : 'error'
+                return (
+                  <MetricCard
+                    key={key}
+                    label={`${label} (threshold ${threshold})`}
+                    value={num !== null ? num.toFixed(4) : 'N/A'}
+                    highlight={highlight}
+                  />
+                )
+              })}
+            </div>
+          ) : null}
+
+          {/* Warnings */}
+          {ragasSummary?.warnings && ragasSummary.warnings.length > 0 && (
+            <div className="card dark:bg-dark-card p-4 border border-yellow-200 dark:border-yellow-800">
+              <h3 className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">Notes</h3>
+              <ul className="space-y-1">
+                {ragasSummary.warnings.map((w, i) => (
+                  <li key={i} className="text-xs text-yellow-700 dark:text-yellow-300 flex items-start gap-2">
+                    <span className="mt-0.5">•</span>
+                    <span>{w}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* No Report Yet */}
+          {ragasSummary && !ragasSummary.latest_report_found && (
+            <div className="card dark:bg-dark-card p-6 text-center">
+              <div className="w-14 h-14 bg-gray-100 dark:bg-dark-elevated rounded-full flex items-center justify-center mx-auto mb-3">
+                <svg className="w-7 h-7 text-gray-400 dark:text-dark-text-dim" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-hiplink-secondary dark:text-dark-text mb-1">No RAGAS report generated yet</p>
+              <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-3">
+                Run <code className="bg-hiplink-background dark:bg-dark-elevated px-1.5 py-0.5 rounded text-xs">python scripts/run_ragas_evaluation.py</code> to generate RAGAS quality scores.
+              </p>
+              <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim">
+                Custom evaluation ({latestEval?.latest_run?.total_tests || 20}/{latestEval?.latest_run?.passed_tests || 20}) remains the primary regression gate.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>
