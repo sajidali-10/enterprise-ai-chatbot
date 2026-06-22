@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react'
 import { useAuthFetch } from '@/hooks/useApi'
-import AdminLayout from '@/app/admin/layout'
 
 interface RAGConfig {
   rag_pipeline_provider: string
@@ -86,29 +85,24 @@ export default function RAGConfigPage() {
 
   if (loading) {
     return (
-      <AdminLayout>
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-pulse text-hiplink-secondary dark:text-dark-text-muted">Loading...</div>
-        </div>
-      </AdminLayout>
+      <div className="flex items-center justify-center py-12">
+        <div className="animate-pulse text-hiplink-secondary dark:text-dark-text-muted">Loading...</div>
+      </div>
     )
   }
 
   if (error) {
     return (
-      <AdminLayout>
-        <div className="card dark:bg-dark-card p-6 text-center">
-          <p className="text-hiplink-error dark:text-red-400">Failed to load RAG configuration: {error}</p>
-        </div>
-      </AdminLayout>
+      <div className="card dark:bg-dark-card p-6 text-center">
+        <p className="text-hiplink-error dark:text-red-400">Failed to load RAG configuration: {error}</p>
+      </div>
     )
   }
 
   if (!config) return null
 
   return (
-    <AdminLayout>
-      <div className="space-y-6">
+    <div className="space-y-6">
         {/* Page Header */}
         <div>
           <h1 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text">RAG Configuration</h1>
@@ -210,6 +204,5 @@ export default function RAGConfigPage() {
           This page is read-only. RAG settings are configured via environment variables.
         </p>
       </div>
-    </AdminLayout>
-  )
-}
+    )
+  }
