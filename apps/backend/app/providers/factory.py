@@ -69,12 +69,13 @@ def _is_langchain_available() -> bool:
 
 
 def _is_ragas_available() -> bool:
-    """Detect whether ragas is importable and its top-level init succeeds."""
-    try:
-        import ragas  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    """Detect whether ragas is installed without importing it.
+
+    Uses importlib.util.find_spec to avoid triggering ragas's nest_asyncio
+    import which patches uvloop.Loop and crashes inside FastAPI/uvicorn.
+    """
+    import importlib.util
+    return importlib.util.find_spec("ragas") is not None
 
 
 def _resolve(name: str, available: list[str], provider_kind: str) -> str:
