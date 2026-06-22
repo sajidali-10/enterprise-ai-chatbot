@@ -12,22 +12,34 @@ Phase 22 supported providers:
   - qdrant        → CustomVectorStoreProvider
   - none          → NoOpRerankerProvider
 
-Future phases will add LangChain adapters and additional provider variants.
+Phase 23 adds embedding upgrade foundation:
+  - Future embedding providers (openai, cohere, voyage, bge, e5) listed as "planned"
+  - Embedding reindex status with Qdrant dimension safety check
+  - Phase 23 new settings: EMBEDDING_NORMALIZE, EMBEDDING_BATCH_SIZE, EMBEDDING_DEVICE
 """
 
 from app.core.config import settings
 
 # ---------------------------------------------------------------------------
-# Supported providers per module (Phase 22 foundation only)
+# Supported providers per module (Phase 22/23 foundation)
 # ---------------------------------------------------------------------------
 
 AVAILABLE_DOCUMENT_LOADER_PROVIDERS = ["custom"]
 AVAILABLE_TEXT_SPLITTER_PROVIDERS = ["custom"]
-AVAILABLE_EMBEDDING_PROVIDERS = ["local"]          # "openai" coming in future phase
+AVAILABLE_EMBEDDING_PROVIDERS = ["local"]          # Phase 23: future providers listed in future_providers, not here
 AVAILABLE_VECTOR_STORE_PROVIDERS = ["qdrant"]
 AVAILABLE_RETRIEVER_PROVIDERS = ["custom"]
 AVAILABLE_RERANKER_PROVIDERS = ["none"]
 AVAILABLE_RAG_PIPELINE_PROVIDERS = ["custom"]
+
+# Future embedding providers — planned but not yet implemented/available
+FUTURE_EMBEDDING_PROVIDERS = {
+    "openai": "planned",    # OpenAI text-embedding-3-small / text-embedding-3-large
+    "cohere": "planned",    # Cohere embed-multilingual-v3.0
+    "voyage": "planned",    # Voyage AI embed-3-large
+    "bge": "planned",       # BAAI/bge-* models (local or API)
+    "e5": "planned",        # Microsoft e5-* models
+}
 
 
 def _resolve(name: str, available: list[str], provider_kind: str) -> str:
@@ -142,6 +154,47 @@ def get_rag_pipeline_provider():
 
 
 # ---------------------------------------------------------------------------
+# Embedding reindex status  (Phase 23)
+# ---------------------------------------------------------------------------
+
+def get_embedding_reindex_status() -> dict:
+    """
+    Safely inspect the Qdrant collection to determine if a reindex is required.
+
+    Returns a dict with:
+      - collection_name: Qdrant collection name from settings
+      - collection_dimension: int from Qdrant, or "unknown" if inspection fails
+      - configured_dimension: int from settings.EMBEDDING_DIMENSION
+      - reindex_required: bool — True if dimensions mismatch
+      - error: str or None — error message if Qdrant inspection failed
+
+    This function NEVER raises — all failures are caught and reported as
+    safe "unknown" values so the admin config endpoint remains functional.
+    """
+    result = {
+        "collection_name": settings.QDRANT_COLLECTION,
+        "collection_dimension": "unknown",
+        "configured_dimension": settings.EMBEDDING_DIMENSION,
+        "reindex_required": "unknown",
+        "error": None,
+    }
+
+    try:
+        from app.services.vector.qdrant_service import get_qdrant_client
+        client = get_qdrant_client()
+        collection_info = client.get_collection(collection_name=settings.QDRANT_COLLECTION)
+        # vectors is a VectorParams object with .size attribute
+        vectors_config = collection_info.config.params.vectors
+        if vectors_config and hasattr(vectors_config, "size"):
+            result["collection_dimension"] = vectors_config.size
+            result["reindex_required"] = vectors_config.size != settings.EMBEDDING_DIMENSION
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Provider status summary (safe, no secrets)
 # ---------------------------------------------------------------------------
 
@@ -151,6 +204,8 @@ def get_provider_status() -> dict:
 
     No API keys, tokens, or secrets are included.
     """
+    reindex_status = get_embedding_reindex_status()
+
     return {
         "available_providers": {
             "document_loader": AVAILABLE_DOCUMENT_LOADER_PROVIDERS,
@@ -174,4 +229,17 @@ def get_provider_status() -> dict:
         "langchain_enabled": False,
         "provider_switching_ready": True,   # foundation ready; UI switching in future phase
         "unsupported_providers_disabled": True,
+        # Phase 23: Embedding upgrade foundation
+        "embedding_status": {
+            "active_provider": settings.EMBEDDING_PROVIDER,
+            "active_model": settings.EMBEDDING_MODEL,
+            "active_dimension": settings.EMBEDDING_DIMENSION,
+            "normalize": settings.EMBEDDING_NORMALIZE,
+            "batch_size": settings.EMBEDDING_BATCH_SIZE,
+            "device": settings.EMBEDDING_DEVICE,
+            "collection_name": reindex_status["collection_name"],
+            "collection_dimension": reindex_status["collection_dimension"],
+            "reindex_required": reindex_status["reindex_required"],
+            "future_providers": dict(FUTURE_EMBEDDING_PROVIDERS),
+        },
     }

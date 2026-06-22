@@ -215,6 +215,49 @@ class TestProviderStatus:
         status = get_provider_status()
         assert status["provider_switching_ready"] is True
 
+    def test_provider_status_embedding_status_present(self):
+        """embedding_status dict must be present in provider_status."""
+        from app.providers.factory import get_provider_status
+
+        status = get_provider_status()
+        assert "embedding_status" in status
+
+    def test_provider_status_embedding_status_has_required_keys(self):
+        """embedding_status must contain all required Phase 23 fields."""
+        from app.providers.factory import get_provider_status
+
+        status = get_provider_status()
+        es = status["embedding_status"]
+        required = [
+            "active_provider", "active_model", "active_dimension",
+            "normalize", "batch_size", "device",
+            "collection_name", "collection_dimension",
+            "reindex_required", "future_providers",
+        ]
+        for key in required:
+            assert key in es, f"Missing embedding_status key: {key}"
+
+    def test_provider_status_embedding_status_future_providers(self):
+        """Future embedding providers must be listed as 'planned'."""
+        from app.providers.factory import get_provider_status
+
+        status = get_provider_status()
+        fp = status["embedding_status"]["future_providers"]
+        for provider in ["openai", "cohere", "voyage", "bge", "e5"]:
+            assert provider in fp, f"Missing future provider: {provider}"
+            assert fp[provider] == "planned", f"Future provider {provider} should be 'planned', got {fp[provider]}"
+
+    def test_provider_status_embedding_status_no_secrets(self):
+        """embedding_status must not expose API keys or secrets."""
+        from app.providers.factory import get_provider_status
+
+        status = get_provider_status()
+        es = status["embedding_status"]
+        raw = str(es).lower()
+        secret_keywords = ["secret", "password", "token", "api_key", "key", "credential"]
+        found = [kw for kw in secret_keywords if kw in raw]
+        assert not found, f"Potential secret keyword(s) found in embedding_status: {found}"
+
 
 class TestRagConfigIntegration:
     """RAG config endpoint includes provider_status and remains backward-compatible."""
@@ -257,3 +300,69 @@ class TestRagConfigIntegration:
         ]
         for field in expected:
             assert field in data, f"Missing field: {field}"
+
+    def test_rag_config_embedding_status_in_provider_status(self, jwt_admin_client):
+        """RAG config endpoint must expose embedding_status via provider_status."""
+        response = jwt_admin_client.get("/api/admin/rag/config")
+        assert response.status_code == 200
+        data = response.json()
+        es = data["provider_status"]["embedding_status"]
+        assert es["active_provider"] == "local"
+        assert es["active_model"] == "sentence-transformers/all-MiniLM-L6-v2"
+        assert es["active_dimension"] == 384
+        assert "collection_name" in es
+        assert "future_providers" in es
+
+
+class TestEmbeddingReindexStatus:
+    """Tests for get_embedding_reindex_status()."""
+
+    def test_get_embedding_reindex_status_returns_dict(self):
+        from app.providers.factory import get_embedding_reindex_status
+
+        status = get_embedding_reindex_status()
+        assert isinstance(status, dict)
+        assert "collection_name" in status
+        assert "collection_dimension" in status
+        assert "configured_dimension" in status
+        assert "reindex_required" in status
+        assert "error" in status
+
+    def test_get_embedding_reindex_status_safe_on_qdrant_error(self, monkeypatch):
+        """get_embedding_reindex_status must never raise — returns safe values on Qdrant failure."""
+        import importlib
+        import app.services.vector.qdrant_service as qsvc
+
+        # Simulate Qdrant being unavailable: set nonexistent host, clear client cache,
+        # and reload config so settings pick up the new env var
+        monkeypatch.setenv("QDRANT_HOST", "nonexistent-host")
+        qsvc._client = None
+        import app.core.config
+        importlib.reload(app.core.config)
+        importlib.reload(qsvc)
+        import app.providers.factory
+        importlib.reload(app.providers.factory)
+        from app.providers.factory import get_embedding_reindex_status
+
+        # Must not raise — returns safe "unknown" values on connection failure
+        status = get_embedding_reindex_status()
+        assert status["collection_dimension"] == "unknown"
+        assert status["reindex_required"] == "unknown"
+        assert status["error"] is not None
+
+        monkeypatch.delenv("QDRANT_HOST", raising=False)
+        qsvc._client = None
+        importlib.reload(app.core.config)
+        importlib.reload(qsvc)
+        importlib.reload(app.providers.factory)
+
+    def test_get_embedding_reindex_status_local_dimensions_match(self):
+        """When local provider is active and dimensions match, reindex not required."""
+        from app.providers.factory import get_embedding_reindex_status
+        from app.core.config import settings
+
+        status = get_embedding_reindex_status()
+        # Local/sentence-transformers dimension must match collection when no change made
+        if isinstance(status["collection_dimension"], int):
+            assert status["configured_dimension"] == settings.EMBEDDING_DIMENSION
+            assert status["reindex_required"] is False

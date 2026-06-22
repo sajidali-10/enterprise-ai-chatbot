@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
+    # Phase 23 — Embedding provider upgrade foundation
+    EMBEDDING_NORMALIZE: bool = os.getenv("EMBEDDING_NORMALIZE", "true").lower() in ("true", "1", "yes")
+    EMBEDDING_BATCH_SIZE: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+    EMBEDDING_DEVICE: str = os.getenv("EMBEDDING_DEVICE", "cpu")  # cpu | cuda | mps
     VECTOR_STORE_PROVIDER: str = os.getenv("VECTOR_STORE_PROVIDER", "qdrant")
     RETRIEVER_PROVIDER: str = os.getenv("RETRIEVER_PROVIDER", "custom")
     RERANKER_PROVIDER: str = os.getenv("RERANKER_PROVIDER", "none")

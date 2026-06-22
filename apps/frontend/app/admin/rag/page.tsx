@@ -3,6 +3,19 @@
 import { useState, useEffect } from 'react'
 import { useAuthFetch } from '@/hooks/useApi'
 
+interface EmbeddingStatus {
+  active_provider: string
+  active_model: string
+  active_dimension: number
+  normalize: boolean
+  batch_size: number
+  device: string
+  collection_name: string
+  collection_dimension: number | string
+  reindex_required: boolean | string
+  future_providers: Record<string, string>
+}
+
 interface ProviderStatus {
   available_providers: Record<string, string[]>
   active_providers: Record<string, string>
@@ -10,6 +23,7 @@ interface ProviderStatus {
   langchain_enabled: boolean
   provider_switching_ready: boolean
   unsupported_providers_disabled: boolean
+  embedding_status: EmbeddingStatus
 }
 
 interface RAGConfig {
@@ -137,9 +151,61 @@ export default function RAGConfigPage() {
         <div className="card dark:bg-dark-card p-4">
           <h2 className="text-lg font-semibold text-hiplink-dark dark:text-dark-text mb-3">Embedding</h2>
           <div className="space-y-1">
-            <ConfigRow label="Provider" value={config.embedding_provider} highlight="blue" />
-            <ConfigRow label="Model" value={config.embedding_model} highlight="neutral" />
-            <ConfigRow label="Dimension" value={config.embedding_dimension} highlight="neutral" />
+            <ConfigRow label="Provider" value={config.provider_status.embedding_status.active_provider} highlight="blue" />
+            <ConfigRow label="Model" value={config.provider_status.embedding_status.active_model} highlight="neutral" />
+            <ConfigRow label="Dimension" value={config.provider_status.embedding_status.active_dimension} highlight="neutral" />
+            <ConfigRow label="Normalize" value={config.provider_status.embedding_status.normalize} highlight="neutral" />
+            <ConfigRow label="Batch Size" value={config.provider_status.embedding_status.batch_size} highlight="neutral" />
+            <ConfigRow label="Device" value={config.provider_status.embedding_status.device} highlight="neutral" />
+          </div>
+          <div className="mt-3 pt-3 border-t border-hiplink-border dark:border-dark-border">
+            <p className="text-xs font-medium text-hiplink-dark dark:text-dark-text mb-2">Qdrant Collection</p>
+            <div className="space-y-1">
+              <ConfigRow label="Collection" value={config.provider_status.embedding_status.collection_name} highlight="neutral" />
+              <ConfigRow
+                label="Collection Dimension"
+                value={config.provider_status.embedding_status.collection_dimension}
+                highlight="neutral"
+              />
+              <ConfigRow
+                label="Reindex Required"
+                value={
+                  config.provider_status.embedding_status.reindex_required === true
+                    ? 'Yes — reindex needed'
+                    : config.provider_status.embedding_status.reindex_required === false
+                    ? 'No'
+                    : 'Unknown'
+                }
+                highlight={
+                  config.provider_status.embedding_status.reindex_required === true
+                    ? 'error'
+                    : config.provider_status.embedding_status.reindex_required === false
+                    ? 'success'
+                    : 'warning'
+                }
+              />
+            </div>
+          </div>
+          {/* Reindex warning */}
+          {(config.provider_status.embedding_status.reindex_required === true ||
+            config.provider_status.embedding_status.reindex_required === 'unknown') && (
+            <div className="mt-3 p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800">
+              <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                <strong>Warning:</strong> Changing the embedding model or dimension requires a full document reindex.
+                All existing vectors will be deleted and recreated with the new model.
+                Run <code className="bg-yellow-100 dark:bg-yellow-900/40 px-1 rounded">python scripts/reindex_embeddings.py</code> for details.
+              </p>
+            </div>
+          )}
+          {/* Future embedding providers */}
+          <div className="mt-3 pt-3 border-t border-hiplink-border dark:border-dark-border">
+            <p className="text-xs font-medium text-hiplink-dark dark:text-dark-text mb-2">Available Embedding Providers</p>
+            <div className="space-y-1">
+              <ConfigRow label="local (MiniLM)" value="Active" highlight="success" />
+              {Object.entries(config.provider_status.embedding_status.future_providers).map(([provider, status]) => (
+                <ConfigRow key={provider} label={provider.toUpperCase()} value={status === 'planned' ? 'Planned / Not enabled' : status} highlight="neutral" />
+              ))}
+            </div>
           </div>
         </div>
 
