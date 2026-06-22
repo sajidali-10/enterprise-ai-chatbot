@@ -107,6 +107,8 @@ def auth_client(db_session):
 @pytest.fixture(scope="function")
 def jwt_admin_client(db_session, client):
     """Test client authenticated as admin via JWT Bearer token."""
+    # Remove X-Dev-User header so it doesn't conflict with JWT auth
+    client.headers.pop("X-Dev-User", None)
     _create_test_user(db_session, "admin", "admin@test.com", "adminpass", role=UserRole.ADMIN)
     token = _login_user(client, "admin", "adminpass")
     client.headers["Authorization"] = f"Bearer {token}"
@@ -117,6 +119,8 @@ def jwt_admin_client(db_session, client):
 @pytest.fixture(scope="function")
 def jwt_user_client(db_session, client):
     """Test client authenticated as regular user via JWT Bearer token."""
+    # Remove X-Dev-User header so it doesn't conflict with JWT auth
+    client.headers.pop("X-Dev-User", None)
     _create_test_user(db_session, "regular", "user@test.com", "userpass", role=UserRole.USER)
     token = _login_user(client, "regular", "userpass")
     client.headers["Authorization"] = f"Bearer {token}"

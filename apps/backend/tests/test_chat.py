@@ -119,15 +119,15 @@ def test_rag_fallback_suggestions_no_contextual_actions():
             "Fallback responses should not include contextual_action suggestions"
 
 
-def test_rag_with_session_includes_contextual_suggestions():
+def test_rag_with_session_includes_contextual_suggestions(jwt_user_client):
     """RAG responses WITH conversation context include contextual_action suggestions."""
-    # Create a session first
-    create_resp = client.post("/api/chat/sessions", json={"title": "Test Contextual"})
+    # Create a session first (authenticated via jwt_user_client)
+    create_resp = jwt_user_client.post("/api/chat/sessions", json={"title": "Test Contextual"})
     assert create_resp.status_code == 201
     session_id = create_resp.json()["id"]
 
     # First message
-    response1 = client.post("/api/chat", json={
+    response1 = jwt_user_client.post("/api/chat", json={
         "message": "What are Docker components?",
         "mode": "knowledge_base",
         "session_id": session_id
@@ -135,7 +135,7 @@ def test_rag_with_session_includes_contextual_suggestions():
     assert response1.status_code == 200
 
     # Second message with context should have contextual suggestions
-    response2 = client.post("/api/chat", json={
+    response2 = jwt_user_client.post("/api/chat", json={
         "message": "Summarize for management",
         "mode": "knowledge_base",
         "session_id": session_id
