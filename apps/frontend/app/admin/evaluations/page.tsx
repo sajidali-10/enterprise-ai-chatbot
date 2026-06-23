@@ -102,6 +102,69 @@ function MetricCard({ label, value, highlight }: MetricCardProps) {
   )
 }
 
+interface RAGASMetricCardProps {
+  name: string
+  purpose: string
+  score: number | null
+  threshold: number
+  skipped: boolean
+  skippedReason?: string
+}
+
+function RAGASMetricCard({ name, purpose, score, threshold, skipped, skippedReason }: RAGASMetricCardProps) {
+  const getStatusDisplay = () => {
+    if (skipped || skippedReason) {
+      return {
+        badge: 'Skipped',
+        badgeClass: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
+        valueDisplay: skippedReason || 'ground_truth required',
+        valueClass: 'text-amber-600 dark:text-amber-400',
+      }
+    }
+    if (score === null) {
+      return {
+        badge: 'Pending',
+        badgeClass: 'bg-gray-100 dark:bg-dark-elevated text-hiplink-secondary dark:text-dark-text-muted',
+        valueDisplay: 'No report',
+        valueClass: 'text-hiplink-secondary dark:text-dark-text-dim',
+      }
+    }
+    const pass = score >= threshold
+    return {
+      badge: pass ? 'Pass' : 'Fail',
+      badgeClass: pass
+        ? 'bg-green-100 dark:bg-green-900/30 text-hiplink-success dark:text-green-400'
+        : 'bg-red-100 dark:bg-red-900/30 text-hiplink-error dark:text-red-400',
+      valueDisplay: score.toFixed(4),
+      valueClass: pass ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400',
+    }
+  }
+
+  const status = getStatusDisplay()
+
+  return (
+    <div className="card dark:bg-dark-card p-4 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between mb-2">
+        <h4 className="font-semibold text-hiplink-dark dark:text-dark-text text-sm">{name}</h4>
+        <span className={`px-2 py-0.5 rounded text-xs font-medium ${status.badgeClass}`}>
+          {status.badge}
+        </span>
+      </div>
+      <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-3">{purpose}</p>
+      <div className="flex items-baseline gap-1">
+        <span className={`text-xl font-bold ${status.valueClass}`}>
+          {status.valueDisplay}
+        </span>
+        {!skipped && !skippedReason && score !== null && (
+          <span className="text-xs text-hiplink-secondary dark:text-dark-text-dim">
+            / {threshold} threshold
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function EvaluationsPage() {
   const [latestEval, setLatestEval] = useState<EvaluationLatestResponse | null>(null)
   const [runs, setRuns] = useState<EvaluationRunSummary[]>([])
@@ -626,39 +689,82 @@ export default function EvaluationsPage() {
             />
           </div>
 
-          {/* Skipped Metrics Note */}
-          {ragasSummary?.skipped_metrics && ragasSummary.skipped_metrics.length > 0 && (
-            <div className="mb-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400">
-              <strong>Note:</strong> The following metrics are skipped because the evaluation dataset has no ground_truth: {ragasSummary.skipped_metrics.join(', ')}.
+          {/* RAGAS Test Parameters Section */}
+          <div className="mb-6">
+            <h3 className="text-base font-semibold text-hiplink-dark dark:text-dark-text mb-4">
+              RAGAS Test Parameters
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <RAGASMetricCard
+                name="Faithfulness"
+                purpose="Checks whether the answer is grounded in the retrieved context."
+                score={ragasSummary?.metrics?.faithfulness ?? null}
+                threshold={ragasSummary?.threshold_faithfulness ?? 0.5}
+                skipped={false}
+              />
+              <RAGASMetricCard
+                name="Answer Relevancy"
+                purpose="Checks whether the answer directly addresses the user question."
+                score={ragasSummary?.metrics?.answer_relevancy ?? null}
+                threshold={ragasSummary?.threshold_answer_relevancy ?? 0.5}
+                skipped={false}
+              />
+              <RAGASMetricCard
+                name="Context Precision"
+                purpose="Checks whether retrieved context is relevant and useful."
+                score={ragasSummary?.metrics?.context_precision ?? null}
+                threshold={ragasSummary?.threshold_context_precision ?? 0.5}
+                skipped={false}
+              />
+              <RAGASMetricCard
+                name="Context Recall"
+                purpose="Checks whether all required supporting context was retrieved."
+                score={ragasSummary?.metrics?.context_recall ?? null}
+                threshold={0.5}
+                skipped={true}
+                skippedReason="ground_truth required"
+              />
+              <RAGASMetricCard
+                name="Answer Correctness"
+                purpose="Checks final answer correctness against ground_truth."
+                score={ragasSummary?.metrics?.answer_correctness ?? null}
+                threshold={0.5}
+                skipped={true}
+                skippedReason="ground_truth required"
+              />
             </div>
-          )}
+          </div>
 
-          {/* Metric Score Cards */}
-          {ragasSummary?.metrics ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              {[
-                { key: 'faithfulness', label: 'Faithfulness', value: ragasSummary.metrics.faithfulness, threshold: ragasSummary.threshold_faithfulness },
-                { key: 'answer_relevancy', label: 'Answer Relevancy', value: ragasSummary.metrics.answer_relevancy, threshold: ragasSummary.threshold_answer_relevancy },
-                { key: 'context_precision', label: 'Context Precision', value: ragasSummary.metrics.context_precision, threshold: ragasSummary.threshold_context_precision },
-              ].map(({ key, label, value, threshold }) => {
-                const num = value ?? null
-                const pass = num !== null && num >= threshold
-                const highlight = num === null ? 'neutral' : pass ? 'success' : 'error'
-                return (
-                  <MetricCard
-                    key={key}
-                    label={`${label} (threshold ${threshold})`}
-                    value={num !== null ? num.toFixed(4) : 'N/A'}
-                    highlight={highlight}
-                  />
-                )
-              })}
+          {/* Thresholds Section */}
+          <div className="mb-6 card dark:bg-dark-card p-4">
+            <h3 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text mb-3">
+              Thresholds
+            </h3>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <div className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-1">Faithfulness</div>
+                <div className="text-lg font-semibold text-hiplink-dark dark:text-dark-text">
+                  {ragasSummary?.threshold_faithfulness != null ? ragasSummary.threshold_faithfulness : 'Not configured'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-1">Answer Relevancy</div>
+                <div className="text-lg font-semibold text-hiplink-dark dark:text-dark-text">
+                  {ragasSummary?.threshold_answer_relevancy != null ? ragasSummary.threshold_answer_relevancy : 'Not configured'}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-1">Context Precision</div>
+                <div className="text-lg font-semibold text-hiplink-dark dark:text-dark-text">
+                  {ragasSummary?.threshold_context_precision != null ? ragasSummary.threshold_context_precision : 'Not configured'}
+                </div>
+              </div>
             </div>
-          ) : null}
+          </div>
 
           {/* Warnings */}
           {ragasSummary?.warnings && ragasSummary.warnings.length > 0 && (
-            <div className="card dark:bg-dark-card p-4 border border-yellow-200 dark:border-yellow-800">
+            <div className="mb-6 card dark:bg-dark-card p-4 border border-yellow-200 dark:border-yellow-800">
               <h3 className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">Notes</h3>
               <ul className="space-y-1">
                 {ragasSummary.warnings.map((w, i) => (
@@ -671,17 +777,19 @@ export default function EvaluationsPage() {
             </div>
           )}
 
-          {/* No Report Yet */}
+          {/* No Report Yet - Improved messaging */}
           {ragasSummary && !ragasSummary.latest_report_found && (
-            <div className="card dark:bg-dark-card p-6 text-center">
-              <div className="w-14 h-14 bg-gray-100 dark:bg-dark-elevated rounded-full flex items-center justify-center mx-auto mb-3">
-                <svg className="w-7 h-7 text-gray-400 dark:text-dark-text-dim" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="card dark:bg-dark-card p-6 text-center border border-blue-200 dark:border-blue-800">
+              <div className="w-14 h-14 bg-blue-50 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-3">
+                <svg className="w-7 h-7 text-blue-500 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
               </div>
-              <p className="text-sm font-medium text-hiplink-secondary dark:text-dark-text mb-1">No RAGAS report generated yet</p>
-              <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-3">
-                Run <code className="bg-hiplink-background dark:bg-dark-elevated px-1.5 py-0.5 rounded text-xs">python scripts/run_ragas_evaluation.py</code> to generate RAGAS quality scores.
+              <p className="text-sm font-medium text-hiplink-secondary dark:text-dark-text mb-1">
+                No RAGAS report generated yet.
+              </p>
+              <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-4 max-w-md mx-auto">
+                RAGAS is available, but only dry-run validation has been performed. Run RAGAS without --dry-run to generate actual metric scores.
               </p>
               <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim">
                 Custom evaluation ({latestEval?.latest_run?.total_tests || 20}/{latestEval?.latest_run?.passed_tests || 20}) remains the primary regression gate.
