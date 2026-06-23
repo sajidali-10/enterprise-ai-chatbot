@@ -158,6 +158,22 @@ class RAGASSummaryResponse(BaseModel):
     threshold_answer_relevancy: float
     threshold_context_precision: float
     warnings: List[str] = Field(default_factory=list)
-#    citation_count: Optional[int]
-#    feedback_rating: Optional[str]
-#    block_reason: Optional[str]
+
+
+class LangSmithSummaryResponse(BaseModel):
+    """LangSmith tracing summary for the admin Observability page.
+
+    Safe, read-only. No API keys, secrets, or raw trace content.
+    """
+    available: bool
+    tracing_enabled: bool
+    project: str
+    endpoint_host: str
+    has_tracing_key: bool
+    sample_rate: float
+    log_full_prompt: bool
+    log_document_text: bool
+    log_user_input: bool
+    log_retrieved_context: bool
+    privacy_mode: str
+    warnings: List[str] = Field(default_factory=list)

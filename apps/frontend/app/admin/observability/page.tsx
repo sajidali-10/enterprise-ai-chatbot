@@ -55,10 +55,25 @@ interface LowConfidenceObservation {
   block_reason: string | null
 }
 
+interface LangSmithSummary {
+  available: boolean
+  tracing_enabled: boolean
+  project: string
+  endpoint_host: string
+  has_tracing_key: boolean
+  sample_rate: number
+  log_full_prompt: boolean
+  log_document_text: boolean
+  log_user_input: boolean
+  log_retrieved_context: boolean
+  privacy_mode: string
+  warnings: string[]
+}
+
 interface MetricCardProps {
   label: string
   value: string | number
-  highlight?: 'success' | 'warning' | 'error' | 'blue'
+  highlight?: 'success' | 'warning' | 'error' | 'blue' | 'neutral'
   icon?: React.ReactNode
 }
 
@@ -68,6 +83,7 @@ function MetricCard({ label, value, highlight, icon }: MetricCardProps) {
     warning: 'text-hiplink-warning dark:text-amber-400',
     error: 'text-hiplink-error dark:text-red-400',
     blue: 'text-hiplink-blue dark:text-sky-400',
+    neutral: 'text-hiplink-dark dark:text-dark-text',
   }
 
   return (
@@ -94,9 +110,10 @@ export default function ObservabilityPage() {
   const [recentObs, setRecentObs] = useState<Observation[]>([])
   const [blockedObs, setBlockedObs] = useState<BlockedObservation[]>([])
   const [lowConfObs, setLowConfObs] = useState<LowConfidenceObservation[]>([])
+  const [langSmithSummary, setLangSmithSummary] = useState<LangSmithSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'recent' | 'blocked' | 'low-confidence'>('recent')
+  const [activeTab, setActiveTab] = useState<'recent' | 'blocked' | 'low-confidence' | 'langsmith'>('recent')
   const authFetch = useAuthFetch()
 
   useEffect(() => {
@@ -107,11 +124,12 @@ export default function ObservabilityPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryRes, recentRes, blockedRes, lowConfRes] = await Promise.all([
+      const [summaryRes, recentRes, blockedRes, lowConfRes, langSmithRes] = await Promise.all([
         authFetch('/api/admin/observability/summary'),
         authFetch('/api/admin/observability/recent?limit=50'),
         authFetch('/api/admin/observability/blocked?limit=50'),
         authFetch('/api/admin/observability/low-confidence?limit=50'),
+        authFetch('/api/admin/observability/langsmith-summary'),
       ])
 
       if (!summaryRes.ok || !recentRes.ok || !blockedRes.ok || !lowConfRes.ok) {
@@ -127,6 +145,12 @@ export default function ObservabilityPage() {
 
       setSummary(summaryData)
       setRecentObs(recentData)
+      setBlockedObs(blockedData)
+      setLowConfObs(lowConfData)
+
+      if (langSmithRes.ok) {
+        setLangSmithSummary(await langSmithRes.json())
+      }
       setBlockedObs(blockedData)
       setLowConfObs(lowConfData)
     } catch (err) {
@@ -276,10 +300,11 @@ export default function ObservabilityPage() {
       {/* Tab Navigation */}
       <div className="flex space-x-2 mb-4">
         {([
-          { key: 'recent', label: 'Recent Questions', icon: '📋' },
-          { key: 'blocked', label: 'Blocked', icon: '🚫' },
-          { key: 'low-confidence', label: 'Low Confidence', icon: '⚠️' },
-        ] as const).map(({ key, label, icon }) => (
+          { key: 'recent' as const, label: 'Recent Questions', icon: '📋' },
+          { key: 'blocked' as const, label: 'Blocked', icon: '🚫' },
+          { key: 'low-confidence' as const, label: 'Low Confidence', icon: '⚠️' },
+          { key: 'langsmith' as const, label: 'LangSmith Tracing', icon: '🔍' },
+        ]).map(({ key, label, icon }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
@@ -421,6 +446,135 @@ export default function ObservabilityPage() {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* LangSmith Tracing Tab */}
+        {activeTab === 'langsmith' && (
+          <div className="p-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <MetricCard
+                label="Tracing Status"
+                value={!langSmithSummary ? 'Loading…' : langSmithSummary.tracing_enabled ? 'Enabled' : 'Disabled'}
+                highlight={!langSmithSummary ? 'neutral' : langSmithSummary.tracing_enabled ? 'success' : 'warning'}
+              />
+              <MetricCard
+                label="LangSmith Availability"
+                value={!langSmithSummary ? '—' : langSmithSummary.available ? 'Available' : 'Not Installed'}
+                highlight={!langSmithSummary ? 'neutral' : langSmithSummary.available ? 'success' : 'warning'}
+              />
+              <MetricCard
+                label="Project"
+                value={langSmithSummary?.project || '—'}
+              />
+              <MetricCard
+                label="Endpoint"
+                value={langSmithSummary?.endpoint_host || '—'}
+              />
+              <MetricCard
+                label="API Key"
+                value={langSmithSummary?.has_tracing_key ? 'Configured' : 'Not Configured'}
+                highlight={langSmithSummary?.has_tracing_key ? 'success' : 'warning'}
+              />
+              <MetricCard
+                label="Sample Rate"
+                value={langSmithSummary?.sample_rate?.toString() || '—'}
+              />
+              <MetricCard
+                label="Privacy Mode"
+                value={langSmithSummary?.privacy_mode || '—'}
+                highlight={langSmithSummary?.privacy_mode === 'Safe' ? 'success' : langSmithSummary?.privacy_mode === 'Restricted' ? 'warning' : 'neutral'}
+              />
+            </div>
+
+            {/* Privacy Controls */}
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-hiplink-dark dark:text-dark-text mb-3">
+                Privacy Controls
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className={`p-3 rounded-lg border ${langSmithSummary?.log_full_prompt ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-hiplink-border dark:border-dark-border bg-hiplink-background dark:bg-dark-elevated'}`}>
+                  <div className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-1">Full Prompt Logging</div>
+                  <div className={`text-sm font-semibold ${langSmithSummary?.log_full_prompt ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-secondary dark:text-dark-text-dim'}`}>
+                    {langSmithSummary?.log_full_prompt ? 'Enabled' : 'Disabled'}
+                  </div>
+                </div>
+                <div className={`p-3 rounded-lg border ${langSmithSummary?.log_document_text ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-hiplink-border dark:border-dark-border bg-hiplink-background dark:bg-dark-elevated'}`}>
+                  <div className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-1">Document Text Logging</div>
+                  <div className={`text-sm font-semibold ${langSmithSummary?.log_document_text ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-secondary dark:text-dark-text-dim'}`}>
+                    {langSmithSummary?.log_document_text ? 'Enabled' : 'Disabled'}
+                  </div>
+                </div>
+                <div className={`p-3 rounded-lg border ${langSmithSummary?.log_user_input ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-hiplink-border dark:border-dark-border bg-hiplink-background dark:bg-dark-elevated'}`}>
+                  <div className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-1">User Input Logging</div>
+                  <div className={`text-sm font-semibold ${langSmithSummary?.log_user_input ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-secondary dark:text-dark-text-dim'}`}>
+                    {langSmithSummary?.log_user_input ? 'Enabled' : 'Disabled'}
+                  </div>
+                </div>
+                <div className={`p-3 rounded-lg border ${langSmithSummary?.log_retrieved_context ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20' : 'border-hiplink-border dark:border-dark-border bg-hiplink-background dark:bg-dark-elevated'}`}>
+                  <div className="text-xs text-hiplink-secondary dark:text-dark-text-dim mb-1">Retrieved Context Logging</div>
+                  <div className={`text-sm font-semibold ${langSmithSummary?.log_retrieved_context ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-secondary dark:text-dark-text-dim'}`}>
+                    {langSmithSummary?.log_retrieved_context ? 'Enabled' : 'Disabled'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Warnings */}
+            {langSmithSummary?.warnings && langSmithSummary.warnings.length > 0 && (
+              <div className="mb-6 card dark:bg-dark-card p-4 border border-yellow-200 dark:border-yellow-800">
+                <h3 className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">Notes</h3>
+                <ul className="space-y-1">
+                  {langSmithSummary.warnings.map((w, i) => (
+                    <li key={i} className="text-xs text-yellow-700 dark:text-yellow-300 flex items-start gap-2">
+                      <span className="mt-0.5">•</span>
+                      <span>{w}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Disabled state */}
+            {langSmithSummary && !langSmithSummary.tracing_enabled && (
+              <div className="card dark:bg-dark-card p-6 text-center border border-blue-200 dark:border-blue-800">
+                <div className="w-14 h-14 bg-blue-50 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-7 h-7 text-blue-500 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <p className="text-sm font-medium text-hiplink-secondary dark:text-dark-text mb-1">
+                  LangSmith tracing is currently disabled.
+                </p>
+                <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim max-w-md mx-auto">
+                  Enable LANGSMITH_TRACING=true and configure LANGSMITH_API_KEY when ready to send traces.
+                </p>
+                <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim mt-3">
+                  LangSmith tracing captures execution metadata for debugging and performance analysis. Sensitive content logging is controlled by privacy flags and is disabled by default where applicable.
+                </p>
+              </div>
+            )}
+
+            {/* Enabled state */}
+            {langSmithSummary && langSmithSummary.tracing_enabled && langSmithSummary.has_tracing_key && (
+              <div className="card dark:bg-dark-card p-6 text-center border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20">
+                <div className="w-14 h-14 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <svg className="w-7 h-7 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-sm font-medium text-hiplink-success dark:text-green-400 mb-1">
+                  LangSmith tracing is active.
+                </p>
+                <p className="text-xs text-green-700 dark:text-green-300 max-w-md mx-auto">
+                  Traces are being captured and sent to the configured LangSmith project. Review trace data at api.smith.langchain.com.
+                </p>
+                <p className="text-xs text-green-700 dark:text-green-300 mt-3">
+                  LangSmith tracing captures execution metadata for debugging and performance analysis. Sensitive content logging is controlled by privacy flags and is disabled by default where applicable.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

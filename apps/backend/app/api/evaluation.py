@@ -25,6 +25,7 @@ from app.schemas.evaluation import (
     LowConfidenceObservation,
     FeedbackRequest,
     RAGASSummaryResponse,
+    LangSmithSummaryResponse,
 )
 
 router = APIRouter(prefix="/api", tags=["Evaluation & Observability"])
@@ -236,6 +237,74 @@ def get_low_confidence_observations(
         )
         for obs in observations
     ]
+
+
+@router.get("/admin/observability/langsmith-summary", response_model=LangSmithSummaryResponse)
+def get_langsmith_summary(
+    auth: AuthContext = Depends(require_admin),
+):
+    """
+    Return LangSmith tracing summary for the admin Observability page.
+
+    Reads safe configuration fields only — no API keys, no trace content,
+    no raw .env values. Privacy-sensitive fields are shown as booleans only.
+    Always returns 200: disabled/missing-key is a normal state, not an error.
+    """
+    from app.services.langsmith_tracing import get_langsmith_status
+    from app.core.config import settings
+
+    _ = auth  # admin check
+
+    status = get_langsmith_status()
+    warnings: list[str] = []
+
+    # Check langsmith package availability using find_spec like other places
+    import importlib.util
+    langsmith_available = importlib.util.find_spec("langsmith") is not None
+
+    if not langsmith_available:
+        warnings.append("LangSmith package is not installed. Run: pip install langsmith")
+
+    if not status["langsmith_tracing"]:
+        warnings.append("LangSmith tracing is disabled. Set LANGSMITH_TRACING=true to enable.")
+    elif status["langsmith_tracing"] and not status["api_key_configured"]:
+        warnings.append("LangSmith tracing is enabled but LANGSMITH_API_KEY is not configured. Traces will not be sent.")
+
+    if not status["log_full_prompt"]:
+        warnings.append("Full prompt logging is disabled for privacy.")
+    if not status["log_document_text"]:
+        warnings.append("Document text logging is disabled for privacy.")
+    if not status["log_retrieved_context"]:
+        warnings.append("Retrieved context logging is disabled for privacy.")
+
+    # Determine privacy mode label
+    enabled_privacy_count = sum([
+        status["log_full_prompt"],
+        status["log_document_text"],
+        status["log_user_input"],
+        status["log_retrieved_context"],
+    ])
+    if enabled_privacy_count == 0:
+        privacy_mode = "Restricted"
+    elif enabled_privacy_count >= 3:
+        privacy_mode = "Safe"
+    else:
+        privacy_mode = "Moderate"
+
+    return LangSmithSummaryResponse(
+        available=langsmith_available,
+        tracing_enabled=status["langsmith_tracing"],
+        project=status["project"],
+        endpoint_host=status["endpoint_host"],
+        has_tracing_key=status["api_key_configured"],
+        sample_rate=status["sample_rate"],
+        log_full_prompt=status["log_full_prompt"],
+        log_document_text=status["log_document_text"],
+        log_user_input=status["log_user_input"],
+        log_retrieved_context=status["log_retrieved_context"],
+        privacy_mode=privacy_mode,
+        warnings=warnings,
+    )
 
 
 @router.post("/chat/{observation_id}/feedback")
