@@ -276,15 +276,6 @@ export default function EvaluationsPage() {
     }
   }
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString()
-  }
-
-  const formatLatency = (ms: number | null) => {
-    if (ms === null) return 'N/A'
-    return `${ms.toFixed(0)}ms`
-  }
-
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
       case 'completed':
@@ -294,6 +285,43 @@ export default function EvaluationsPage() {
       default:
         return 'bg-yellow-100 dark:bg-yellow-900/30 text-hiplink-warning dark:text-yellow-400'
     }
+  }
+
+  // Safe helpers for nullable fields
+  const safeArray = <T,>(value: T[] | null | undefined): T[] =>
+    Array.isArray(value) ? value : []
+
+  const formatDate = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return '—'
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return '—'
+    return d.toLocaleString()
+  }
+
+  const formatPercent = (value: number | null | undefined): string => {
+    if (value == null) return '—'
+    if (typeof value !== 'number' || isNaN(value)) return '—'
+    return `${value.toFixed(1)}%`
+  }
+
+  const formatMs = (value: number | null | undefined): string => {
+    if (value == null) return '—'
+    if (typeof value !== 'number' || isNaN(value)) return '—'
+    return `${value.toFixed(0)}ms`
+  }
+
+  // Kept for compatibility with other tabs (Latest Run, All Runs, Run Details)
+  const formatLatency = (ms: number | null | undefined): string => formatMs(ms)
+
+  const formatScore = (value: number | null | undefined): string => {
+    if (value == null) return '—'
+    if (typeof value !== 'number' || isNaN(value)) return '—'
+    return value.toFixed(4)
+  }
+
+  const formatSkippedMetrics = (value: string[] | null | undefined): string => {
+    if (!Array.isArray(value) || value.length === 0) return 'None'
+    return value.join(', ')
   }
 
   if (loading) {
@@ -859,173 +887,184 @@ export default function EvaluationsPage() {
             </div>
           ) : (
             <div>
-              {/* Summary Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <MetricCard label="Custom Eval Runs" value={historyData.custom_eval_runs.length} />
-                <MetricCard label="Report Files" value={historyData.custom_eval_reports.length} />
-                <MetricCard label="RAGAS Reports" value={historyData.ragas_reports.length} />
-                <MetricCard
-                  label="Latest Report"
-                  value={
-                    historyData.custom_eval_reports.length > 0
-                      ? (() => {
-                          const latest = historyData.custom_eval_reports[0]
-                          return latest.timestamp ? formatDate(latest.timestamp) : 'Unknown'
-                        })()
-                      : 'None'
-                  }
-                />
-              </div>
+              {/* Safe array defaults */}
+              {(() => {
+                const customEvalReports = safeArray(historyData?.custom_eval_reports)
+                const ragasReports = safeArray(historyData?.ragas_reports)
+                const historyWarnings = safeArray(historyData?.warnings)
+                const customEvalRuns = safeArray(historyData?.custom_eval_runs)
+                return (
+                  <>
+                    {/* Summary Cards */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                      <MetricCard label="Custom Eval Runs" value={customEvalRuns.length} />
+                      <MetricCard label="Report Files" value={customEvalReports.length} />
+                      <MetricCard label="RAGAS Reports" value={ragasReports.length} />
+                      <MetricCard
+                        label="Latest Report"
+                        value={
+                          customEvalReports.length > 0
+                            ? (() => {
+                                const latest = customEvalReports[0]
+                                return latest?.timestamp ? formatDate(latest.timestamp) : 'Unknown'
+                              })()
+                            : 'None'
+                        }
+                      />
+                    </div>
 
-              {/* Warnings (non-empty-state only) */}
-              {historyData.warnings && historyData.warnings.length > 0 && (
-                <div className="mb-6 card dark:bg-dark-card p-4 border border-yellow-200 dark:border-yellow-800">
-                  <h3 className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">Notes</h3>
-                  <ul className="space-y-1">
-                    {historyData.warnings.map((w, i) => (
-                      <li key={i} className="text-xs text-yellow-700 dark:text-yellow-300 flex items-start gap-2">
-                        <span className="mt-0.5">•</span>
-                        <span>{w}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                    {/* Warnings (non-empty-state only) */}
+                    {historyWarnings.length > 0 && (
+                      <div className="mb-6 card dark:bg-dark-card p-4 border border-yellow-200 dark:border-yellow-800">
+                        <h3 className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">Notes</h3>
+                        <ul className="space-y-1">
+                          {historyWarnings.map((w, i) => (
+                            <li key={i} className="text-xs text-yellow-700 dark:text-yellow-300 flex items-start gap-2">
+                              <span className="mt-0.5">•</span>
+                              <span>{w}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
-              {/* Custom Evaluation Report Artifacts */}
-              {historyData.custom_eval_reports.length > 0 ? (
-                <div className="mb-8">
-                  <h3 className="text-base font-semibold text-hiplink-dark dark:text-dark-text mb-4">
-                    Custom Evaluation Report Artifacts
-                  </h3>
-                  <div className="card dark:bg-dark-card overflow-hidden">
-                    <table className="min-w-full divide-y divide-hiplink-border dark:divide-dark-border">
-                      <thead className="bg-hiplink-background dark:bg-dark-elevated">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Time</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Report Name</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Type</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Total</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Passed</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Failed</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Pass Rate</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Avg Latency</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Avg Top Score</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-hiplink-border dark:divide-dark-border">
-                        {historyData.custom_eval_reports.map((report) => (
-                          <tr key={report.report_name} className="hover:bg-hiplink-background dark:hover:bg-dark-elevated transition-colors">
-                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim whitespace-nowrap">
-                              {report.timestamp ? formatDate(report.timestamp) : 'N/A'}
-                            </td>
-                            <td className="px-4 py-3 text-xs font-mono text-hiplink-blue dark:text-sky-400">
-                              {report.report_name}
-                              {report.report_type === 'latest_results_json' && (
-                                <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">latest</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
-                              {report.report_type === 'latest_results_json' ? 'latest' : 'timestamped'}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-hiplink-dark dark:text-dark-text">
-                              {report.total_tests ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-hiplink-success dark:text-green-400">
-                              {report.passed ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-hiplink-error dark:text-red-400">
-                              {report.failed ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 text-xs">
-                              {report.pass_rate != null ? (
-                                <span className={report.pass_rate >= 70 ? 'text-hiplink-success dark:text-green-400 font-medium' : 'text-hiplink-error dark:text-red-400 font-medium'}>
-                                  {report.pass_rate.toFixed(1)}%
-                                </span>
-                              ) : '—'}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
-                              {formatLatency(report.avg_latency_ms)}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
-                              {report.avg_top_score != null ? report.avg_top_score.toFixed(4) : '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <div className="mb-8 card dark:bg-dark-card p-6 text-center border border-hiplink-border dark:border-dark-border">
-                  <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim">
-                    No custom evaluation report files found yet.
-                  </p>
-                </div>
-              )}
+                    {/* Custom Evaluation Report Artifacts */}
+                    {customEvalReports.length > 0 ? (
+                      <div className="mb-8">
+                        <h3 className="text-base font-semibold text-hiplink-dark dark:text-dark-text mb-4">
+                          Custom Evaluation Report Artifacts
+                        </h3>
+                        <div className="card dark:bg-dark-card overflow-hidden">
+                          <table className="min-w-full divide-y divide-hiplink-border dark:divide-dark-border">
+                            <thead className="bg-hiplink-background dark:bg-dark-elevated">
+                              <tr>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Time</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Report Name</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Type</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Total</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Passed</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Failed</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Pass Rate</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Avg Latency</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Avg Top Score</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-hiplink-border dark:divide-dark-border">
+                              {customEvalReports.map((report) => (
+                                <tr key={report.report_name} className="hover:bg-hiplink-background dark:hover:bg-dark-elevated transition-colors">
+                                  <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim whitespace-nowrap">
+                                    {formatDate(report.timestamp)}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs font-mono text-hiplink-blue dark:text-sky-400">
+                                    {report.report_name}
+                                    {report.report_type === 'latest_results_json' && (
+                                      <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">latest</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
+                                    {report.report_type === 'latest_results_json' ? 'latest' : 'timestamped'}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-dark dark:text-dark-text">
+                                    {report.total_tests ?? '—'}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-success dark:text-green-400">
+                                    {report.passed ?? '—'}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-error dark:text-red-400">
+                                    {report.failed ?? '—'}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs">
+                                    {report.pass_rate != null ? (
+                                      <span className={report.pass_rate >= 70 ? 'text-hiplink-success dark:text-green-400 font-medium' : 'text-hiplink-error dark:text-red-400 font-medium'}>
+                                        {report.pass_rate.toFixed(1)}%
+                                      </span>
+                                    ) : '—'}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
+                                    {formatMs(report.avg_latency_ms)}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
+                                    {formatScore(report.avg_top_score)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mb-8 card dark:bg-dark-card p-6 text-center border border-hiplink-border dark:border-dark-border">
+                        <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim">
+                          No custom evaluation report files found yet.
+                        </p>
+                      </div>
+                    )}
 
-              {/* RAGAS Report History */}
-              {historyData.ragas_reports.length > 0 ? (
-                <div>
-                  <h3 className="text-base font-semibold text-hiplink-dark dark:text-dark-text mb-4">
-                    RAGAS Report History
-                  </h3>
-                  <div className="card dark:bg-dark-card overflow-hidden">
-                    <table className="min-w-full divide-y divide-hiplink-border dark:divide-dark-border">
-                      <thead className="bg-hiplink-background dark:bg-dark-elevated">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Time</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Report Name</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Evaluator</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Faithfulness</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Answer Relevancy</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Context Precision</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Skipped</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-hiplink-border dark:divide-dark-border">
-                        {historyData.ragas_reports.map((report) => (
-                          <tr key={report.report_name} className="hover:bg-hiplink-background dark:hover:bg-dark-elevated transition-colors">
-                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim whitespace-nowrap">{report.timestamp ? formatDate(report.timestamp) : 'N/A'}</td>
-                            <td className="px-4 py-3 text-xs font-mono text-hiplink-blue dark:text-sky-400">{report.report_name}</td>
-                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">{report.evaluator_provider}/{report.evaluator_model}</td>
-                            <td className="px-4 py-3 text-xs">
-                              {report.metrics?.faithfulness != null ? (
-                                <span className={report.metrics.faithfulness >= (ragasSummary?.threshold_faithfulness ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
-                                  {report.metrics.faithfulness.toFixed(4)}
-                                </span>
-                              ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
-                            </td>
-                            <td className="px-4 py-3 text-xs">
-                              {report.metrics?.answer_relevancy != null ? (
-                                <span className={report.metrics.answer_relevancy >= (ragasSummary?.threshold_answer_relevancy ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
-                                  {report.metrics.answer_relevancy.toFixed(4)}
-                                </span>
-                              ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
-                            </td>
-                            <td className="px-4 py-3 text-xs">
-                              {report.metrics?.context_precision != null ? (
-                                <span className={report.metrics.context_precision >= (ragasSummary?.threshold_context_precision ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
-                                  {report.metrics.context_precision.toFixed(4)}
-                                </span>
-                              ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
-                            </td>
-                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
-                              {report.skipped_metrics?.join(', ') || '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <div className="card dark:bg-dark-card p-6 text-center border border-hiplink-border dark:border-dark-border">
-                  <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim">
-                    No RAGAS reports found yet.
-                  </p>
-                </div>
-              )}
+                    {/* RAGAS Report History */}
+                    {ragasReports.length > 0 ? (
+                      <div>
+                        <h3 className="text-base font-semibold text-hiplink-dark dark:text-dark-text mb-4">
+                          RAGAS Report History
+                        </h3>
+                        <div className="card dark:bg-dark-card overflow-hidden">
+                          <table className="min-w-full divide-y divide-hiplink-border dark:divide-dark-border">
+                            <thead className="bg-hiplink-background dark:bg-dark-elevated">
+                              <tr>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Time</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Report Name</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Evaluator</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Faithfulness</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Answer Relevancy</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Context Precision</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Skipped</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-hiplink-border dark:divide-dark-border">
+                              {ragasReports.map((report) => (
+                                <tr key={report.report_name} className="hover:bg-hiplink-background dark:hover:bg-dark-elevated transition-colors">
+                                  <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim whitespace-nowrap">{formatDate(report.timestamp)}</td>
+                                  <td className="px-4 py-3 text-xs font-mono text-hiplink-blue dark:text-sky-400">{report.report_name}</td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">{report.evaluator_provider}/{report.evaluator_model}</td>
+                                  <td className="px-4 py-3 text-xs">
+                                    {report.metrics?.faithfulness != null ? (
+                                      <span className={report.metrics.faithfulness >= (ragasSummary?.threshold_faithfulness ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
+                                        {formatScore(report.metrics.faithfulness)}
+                                      </span>
+                                    ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs">
+                                    {report.metrics?.answer_relevancy != null ? (
+                                      <span className={report.metrics.answer_relevancy >= (ragasSummary?.threshold_answer_relevancy ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
+                                        {formatScore(report.metrics.answer_relevancy)}
+                                      </span>
+                                    ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs">
+                                    {report.metrics?.context_precision != null ? (
+                                      <span className={report.metrics.context_precision >= (ragasSummary?.threshold_context_precision ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
+                                        {formatScore(report.metrics.context_precision)}
+                                      </span>
+                                    ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
+                                    {formatSkippedMetrics(report.skipped_metrics)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="card dark:bg-dark-card p-6 text-center border border-hiplink-border dark:border-dark-border">
+                        <p className="text-sm text-hiplink-secondary dark:text-dark-text-dim">
+                          No RAGAS reports found yet.
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           )}
         </div>
