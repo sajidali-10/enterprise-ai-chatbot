@@ -194,6 +194,22 @@ class RAGASReportSummary(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
+class CustomEvalReportArtifact(BaseModel):
+    """Artifact file from a completed custom evaluation run.
+
+    Scanned from /app/evaluations/results/ — filenames only, no full paths.
+    """
+    report_name: str  # e.g. evaluation_20250624_120000.json
+    report_type: str  # 'timestamped_results_json' | 'latest_results_json'
+    timestamp: Optional[str] = None
+    total_tests: Optional[int] = None
+    passed: Optional[int] = None
+    failed: Optional[int] = None
+    pass_rate: Optional[float] = None
+    avg_latency_ms: Optional[float] = None
+    avg_top_score: Optional[float] = None
+
+
 class CustomEvalRunSummary(BaseModel):
     """Summary of a custom evaluation run for history listing.
 
@@ -214,9 +230,11 @@ class CustomEvalRunSummary(BaseModel):
 class EvaluationHistoryResponse(BaseModel):
     """Response for evaluation report history endpoint.
 
-    Returns read-only history of custom evaluation runs and RAGAS reports.
-    Always returns 200: empty lists are a normal state, not an error.
+    Returns read-only history of custom evaluation runs, report artifacts,
+    and RAGAS reports. Always returns 200: empty lists are a normal state,
+    not an error.
     """
     custom_eval_runs: List[CustomEvalRunSummary] = Field(default_factory=list)
+    custom_eval_reports: List[CustomEvalReportArtifact] = Field(default_factory=list)
     ragas_reports: List[RAGASReportSummary] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)

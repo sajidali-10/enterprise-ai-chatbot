@@ -29,6 +29,7 @@ from app.schemas.evaluation import (
     LangSmithSummaryResponse,
     EvaluationHistoryResponse,
     CustomEvalRunSummary,
+    CustomEvalReportArtifact,
     RAGASReportSummary,
 )
 
@@ -645,7 +646,102 @@ def get_evaluation_history(
         )
 
     # ------------------------------------------------------------------
-    # 2. RAGAS reports from RAGAS_REPORT_DIR
+    # 2. Custom evaluation report artifacts from /app/evaluations/results/
+    # ------------------------------------------------------------------
+    custom_eval_reports: list[CustomEvalReportArtifact] = []
+
+    results_base_dir = Path(__file__).parent.parent / "evaluations" / "results"
+    if results_base_dir.is_dir():
+        # Collect timestamped evaluation JSON files, newest first
+        eval_files = sorted(
+            [
+                f
+                for f in results_base_dir.iterdir()
+                if f.is_file()
+                and f.name.startswith("evaluation_")
+                and f.name.endswith(".json")
+                and f.name != "latest_results.json"
+            ],
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )[:limit]
+
+        # Also check for latest_results.json separately (latest alias)
+        latest_results_path = results_base_dir / "latest_results.json"
+        has_latest = latest_results_path.is_file()
+
+        def _parse_eval_file(f_path: Path) -> Optional[CustomEvalReportArtifact]:
+            """Parse an evaluation JSON file and return artifact or None on error."""
+            try:
+                with open(f_path, "r") as fh:
+                    data = json.load(fh)
+
+                ts = data.get("timestamp")
+                if not ts:
+                    ts = datetime.fromtimestamp(
+                        f_path.stat().st_mtime, tz=timezone.utc
+                    ).isoformat()
+
+                results = data.get("results", [])
+                total = len(results)
+                if total == 0:
+                    return CustomEvalReportArtifact(
+                        report_name=f_path.name,
+                        report_type="timestamped_results_json",
+                        timestamp=ts,
+                        total_tests=0,
+                        passed=0,
+                        failed=0,
+                        pass_rate=0.0,
+                        avg_latency_ms=None,
+                        avg_top_score=None,
+                    )
+
+                passed = sum(1 for r in results if r.get("passed", False))
+                failed = total - passed
+                pass_rate = round(passed / total * 100, 1) if total > 0 else 0.0
+
+                latencies = [r["latency_ms"] for r in results if "latency_ms" in r]
+                avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else None
+
+                top_scores = [r["top_score"] for r in results if r.get("top_score") is not None]
+                avg_top_score = round(sum(top_scores) / len(top_scores), 4) if top_scores else None
+
+                return CustomEvalReportArtifact(
+                    report_name=f_path.name,
+                    report_type="timestamped_results_json",
+                    timestamp=ts,
+                    total_tests=total,
+                    passed=passed,
+                    failed=failed,
+                    pass_rate=pass_rate,
+                    avg_latency_ms=avg_latency,
+                    avg_top_score=avg_top_score,
+                )
+            except (json.JSONDecodeError, OSError, KeyError, TypeError):
+                warnings.append(f"Could not read evaluation report '{f_path.name}' — skipping.")
+                return None
+
+        # Process timestamped files
+        for f_path in eval_files:
+            artifact = _parse_eval_file(f_path)
+            if artifact is not None:
+                custom_eval_reports.append(artifact)
+
+        # Process latest_results.json if present (labeled as latest alias)
+        if has_latest:
+            artifact = _parse_eval_file(latest_results_path)
+            if artifact is not None:
+                # Override type to mark it as the latest alias
+                artifact.report_type = "latest_results_json"
+                custom_eval_reports.insert(0, artifact)
+    else:
+        warnings.append(
+            f"Custom evaluation results directory is not accessible."
+        )
+
+    # ------------------------------------------------------------------
+    # 3. RAGAS reports from RAGAS_REPORT_DIR
     # ------------------------------------------------------------------
     ragas_reports: list[RAGASReportSummary] = []
 
@@ -734,9 +830,25 @@ def get_evaluation_history(
         )
 
     # ------------------------------------------------------------------
-    # 3. Empty-state warning if nothing was found
+    # 4. Empty-state warning if nothing was found
     # ------------------------------------------------------------------
-    if not custom_eval_runs and not ragas_reports:
+    # No RAGAS reports friendly warning
+    if settings.RAGAS_REPORT_DIR and not ragas_reports:
+        ragas_dir = Path(settings.RAGAS_REPORT_DIR)
+        if ragas_dir.is_dir():
+            ragas_file_count = sum(
+                1
+                for f in ragas_dir.iterdir()
+                if f.is_file() and f.name.startswith("ragas_report_") and f.name.endswith(".json")
+            )
+            if ragas_file_count == 0:
+                warnings.append(
+                    "No RAGAS reports found yet. Run RAGAS evaluation without --dry-run "
+                    "to generate report history."
+                )
+
+    # Empty-state warning if nothing was found
+    if not custom_eval_runs and not custom_eval_reports and not ragas_reports:
         warnings.append(
             "No evaluation history found yet. "
             "Run custom evaluation: docker compose exec backend python /app/scripts/run_rag_evaluation.py\n"
@@ -745,6 +857,7 @@ def get_evaluation_history(
 
     return EvaluationHistoryResponse(
         custom_eval_runs=custom_eval_runs,
+        custom_eval_reports=custom_eval_reports,
         ragas_reports=ragas_reports,
         warnings=warnings,
     )
