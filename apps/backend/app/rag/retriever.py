@@ -12,6 +12,7 @@ from app.services.vector.qdrant_service import search as qdrant_search
 from app.services.embeddings import get_embedding_provider
 from app.rag.hybrid_retriever import (
     retrieve_chunks_hybrid,
+    retrieve_with_strategy,
     RetrievalConfig,
 )
 from app.rag.query_rewriter import get_query_rewriter
@@ -95,9 +96,15 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
         keyword_weight=settings.RETRIEVAL_KEYWORD_WEIGHT,
     )
     
-    chunks, metadata = retrieve_chunks_hybrid(
+    # Phase 30E: Use strategy dispatch (hybrid_mmr by default)
+    # Falls back to hybrid if the configured strategy is invalid.
+    strategy = getattr(settings, "RAG_RETRIEVAL_STRATEGY", "hybrid_mmr")
+    mmr_lambda = getattr(settings, "RAG_MMR_LAMBDA", 0.7)
+    chunks, metadata = retrieve_with_strategy(
         query=rewritten_query,
+        strategy=strategy,
         config=config,
+        mmr_lambda=mmr_lambda,
     )
     
     # Add debug info if requested
@@ -115,6 +122,8 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
             "reranker_type": config.reranker_type,
             "vector_weight": config.vector_weight,
             "keyword_weight": config.keyword_weight,
+            "retrieval_strategy": strategy,
+            "mmr_lambda": mmr_lambda,
         }
         # Add score details for each chunk
         for i, chunk in enumerate(chunks):

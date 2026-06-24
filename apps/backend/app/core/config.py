@@ -74,6 +74,20 @@ class Settings(BaseSettings):
     # Hybrid search: disabled by default (future phases will enable)
     HYBRID_SEARCH_ENABLED: bool = os.getenv("HYBRID_SEARCH_ENABLED", "false").lower() in ("true", "1", "yes")
 
+    # Phase 30E — Retrieval Strategy Abstraction & MMR Diversity
+    # Active retrieval strategy: similarity | hybrid | mmr | hybrid_mmr
+    # Generic, document-agnostic selection. No domain-specific keywords are hardcoded.
+    RAG_RETRIEVAL_STRATEGY: str = os.getenv("RAG_RETRIEVAL_STRATEGY", "hybrid_mmr")
+    # MMR lambda: trade-off between relevance (1.0) and diversity (0.0)
+    RAG_MMR_LAMBDA: float = float(os.getenv("RAG_MMR_LAMBDA", "0.7"))
+    # Generic scoring weights (used by hybrid strategy on top of vector similarity)
+    RAG_KEYWORD_WEIGHT: float = float(os.getenv("RAG_KEYWORD_WEIGHT", "0.3"))
+    RAG_VECTOR_WEIGHT: float = float(os.getenv("RAG_VECTOR_WEIGHT", "0.7"))
+    # Maximum chunks to forward to LLM after final selection
+    RAG_CONTEXT_MAX_CHUNKS: int = int(os.getenv("RAG_CONTEXT_MAX_CHUNKS", "6"))
+    # Minimum score below which a chunk is filtered out before selection
+    RAG_MIN_SCORE: float = float(os.getenv("RAG_MIN_SCORE", "0.1"))
+
     # Phase 26 — RAGAS Evaluation Foundation
     # Evaluator LLM provider for RAGAS metrics (faithfulness, answer_relevancy, context_precision)
     RAGAS_ENABLED: bool = os.getenv("RAGAS_ENABLED", "false").lower() in ("true", "1", "yes")

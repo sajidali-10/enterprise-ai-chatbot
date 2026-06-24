@@ -25,7 +25,7 @@ def build_rag_prompt(
     if not chunks:
         return f"""You are a helpful support assistant. The user asked: {query}
 
-I could not find enough relevant information in the knowledge base to answer this question.
+I could not find enough information in the provided sources to answer this question. Please upload the relevant guide if available, or rephrase the question.
 
 If you don't know the answer, say so clearly and honestly. Do not make up information."""
 
@@ -52,9 +52,18 @@ use the conversation context above to understand what is being asked about.
 Base your answer on both the conversation context and the retrieved document information.
 """ if conversation_context else ""
 
-    # Phase 20C: Enhanced formatting rules for RAG answers
+    # Phase 30E: Cleaner answer structure for business users
     formatting_rules = """
-ANSWER FORMATTING RULES:
+ANSWER STRUCTURE (general):
+- Lead with the direct answer first (one or two sentences).
+- Then add supporting details, using bullets or short numbered lists only when they improve clarity.
+- Avoid dumping raw source text. Paraphrase and summarize.
+- Do not invent details that are not supported by the sources.
+- If sources are partial or only weakly related, say so explicitly (e.g., "Based on the available documentation, ...").
+- If the sources appear to conflict, mention the conflict briefly.
+- If no reliable source supports an answer, fall back to: "I could not find enough information in the provided sources to answer this question. Please upload the relevant guide if available, or rephrase the question."
+
+FORMATTING RULES:
 - For list/component questions (e.g., "What are the components of X?"): use numbered lists
 - For summaries, comparisons, or overviews: use bullet points
 - Keep each bullet/numbered item concise (1-3 sentences max)
@@ -76,7 +85,7 @@ USER QUESTION: {query}
 IMPORTANT GUIDELINES:
 - Answer ONLY from the information provided above in the INFORMATION section
 - Do NOT guess, infer, or make up information that is not directly in the sources
-- If the information does not directly support a specific answer, say: "I could not find enough information in the provided sources to answer this question."
+- If the information does not directly support a specific answer, say: "I could not find enough information in the provided sources to answer this question. Please upload the relevant guide if available, or rephrase the question."
 - Do NOT say "based on my knowledge" or "in general" - only use information from [1], [2], etc.
 - Do NOT reference the sources as "the provided information" or "the context" - use [1], [2], etc.
 {formatting_rules}
@@ -156,7 +165,7 @@ def build_strict_citation_prompt(
     if not chunks:
         return f"""You are a helpful support assistant. The user asked: {query}
 
-I could not find enough relevant information in the knowledge base to answer this question.
+I could not find enough information in the provided sources to answer this question. Please upload the relevant guide if available, or rephrase the question.
 
 If you don't know the answer, say so clearly and honestly. Do not make up information."""
 
@@ -179,9 +188,16 @@ use the conversation context above to understand what is being asked about.
 Base your answer on both the conversation context and the retrieved document information.
 """ if conversation_context else ""
 
-    # Phase 20C: Enhanced formatting rules for RAG answers
+    # Phase 30E: Strict citation prompt with cleaner answer structure
     formatting_rules = """
-ANSWER FORMATTING RULES:
+ANSWER STRUCTURE (general):
+- Lead with the direct answer first (one or two sentences).
+- Then add supporting details using bullets or short numbered lists only when they improve clarity.
+- Avoid dumping raw source text. Paraphrase and summarize.
+- If sources conflict, mention the conflict briefly.
+- If sources are weak, say so explicitly (e.g., "Based on the available documentation, ...").
+
+FORMATTING RULES:
 - For list/component questions (e.g., "What are the components of X?"): use numbered lists
 - For summaries, comparisons, or overviews: use bullet points
 - Keep each bullet/numbered item concise (1-3 sentences max)
@@ -208,7 +224,7 @@ STRICT CITATION REQUIREMENTS:
 - If you cannot support a statement with a citation from the sources above, do NOT make that statement
 
 FALLBACK RULE:
-- If the information does not directly support a specific answer, you MUST say: "I could not find enough information in the provided sources to answer this question."
+- If the information does not directly support a specific answer, you MUST say: "I could not find enough information in the provided sources to answer this question. Please upload the relevant guide if available, or rephrase the question."
 - Do NOT guess or infer information not explicitly in the sources
 - Do NOT say "based on my knowledge" or "in general"
 

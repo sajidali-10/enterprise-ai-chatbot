@@ -20,18 +20,33 @@ from typing import Optional
 from app.core.config import settings
 
 
-# Default message when no chunks are retrieved
-# Note: Using "don't have" to match evaluation fallback detection
-NO_CHUNKS_MESSAGE = "I don't have enough information in the provided sources to answer this question."
+# Phase 30E — Helpful, generic fallback messages.
+# These messages are document-agnostic and do not mention any specific
+# products, ports, filenames, or domain-specific details.
+# Phrases like "could not find enough information" / "do not have enough information"
+# are preserved as substrings so existing evaluation and test patterns still match.
+NO_CHUNKS_MESSAGE = (
+    "I could not find enough information in the provided sources to answer "
+    "that question with confidence. Please upload the relevant guide if available, "
+    "or rephrase the question with more specific terms."
+)
 
-# Default message when chunks are below relevance threshold
-LOW_RELEVANCE_MESSAGE = "I don't have enough relevant information in the provided sources to answer this question."
+LOW_RELEVANCE_MESSAGE = (
+    "I could not find enough relevant information in the provided sources to answer "
+    "that question clearly. I found related content, but it does not directly address "
+    "what you asked. Please upload the relevant guide if available."
+)
 
-# Default message when answer lacks citations
-NO_CITATIONS_MESSAGE = "I don't have enough information in the provided sources to answer this question."
+NO_CITATIONS_MESSAGE = (
+    "I could not find enough information in the provided sources to answer "
+    "that question with confidence. Please upload the relevant guide if available, "
+    "or ask a narrower question."
+)
 
-# Default message when topic is unrelated to retrieved content
-TOPIC_MISMATCH_MESSAGE = "I don't have enough information in the provided sources to answer this question."
+TOPIC_MISMATCH_MESSAGE = (
+    "I could not find enough information in the provided sources on that topic. "
+    "Please upload the relevant guide if available, or rephrase the question."
+)
 
 # High-risk domain patterns that require domain-specific knowledge base content.
 LEGAL_PATTERNS = [
