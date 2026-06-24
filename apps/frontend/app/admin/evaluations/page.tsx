@@ -83,6 +83,36 @@ interface RAGASSummary {
   warnings: string[]
 }
 
+interface CustomEvalRunSummary {
+  run_id: number
+  timestamp: string
+  status: string
+  total_tests: number
+  passed: number
+  failed: number
+  pass_rate: number
+  avg_latency_ms: number | null
+  avg_top_score: number | null
+  report_name: string | null
+}
+
+interface RAGASReportSummary {
+  report_name: string
+  timestamp: string | null
+  metrics: RAGASScoreMetrics | null
+  skipped_metrics: string[]
+  evaluator_provider: string
+  evaluator_model: string
+  total_cases: number | null
+  warnings: string[]
+}
+
+interface EvaluationHistoryResponse {
+  custom_eval_runs: CustomEvalRunSummary[]
+  ragas_reports: RAGASReportSummary[]
+  warnings: string[]
+}
+
 function MetricCard({ label, value, highlight }: MetricCardProps) {
   const colorClasses = {
     success: 'text-hiplink-success dark:text-green-400',
@@ -171,8 +201,9 @@ export default function EvaluationsPage() {
   const [selectedRun, setSelectedRun] = useState<EvaluationRunDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'latest' | 'runs' | 'details' | 'ragas'>('latest')
+  const [activeTab, setActiveTab] = useState<'latest' | 'runs' | 'details' | 'ragas' | 'history'>('latest')
   const [ragasSummary, setRagasSummary] = useState<RAGASSummary | null>(null)
+  const [historyData, setHistoryData] = useState<EvaluationHistoryResponse | null>(null)
   const authFetch = useAuthFetch()
 
   useEffect(() => {
@@ -183,10 +214,11 @@ export default function EvaluationsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [latestRes, runsRes, ragasRes] = await Promise.all([
+      const [latestRes, runsRes, ragasRes, historyRes] = await Promise.all([
         authFetch('/api/admin/evaluations/latest'),
         authFetch('/api/admin/evaluations/runs'),
         authFetch('/api/admin/evaluations/ragas-summary'),
+        authFetch('/api/admin/evaluations/history'),
       ])
 
       if (!latestRes.ok || !runsRes.ok) {
@@ -204,6 +236,11 @@ export default function EvaluationsPage() {
       // RAGAS summary: 200 even when no report exists
       if (ragasRes.ok) {
         setRagasSummary(await ragasRes.json())
+      }
+
+      // Evaluation history: 200 even when no history exists
+      if (historyRes.ok) {
+        setHistoryData(await historyRes.json())
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -277,6 +314,7 @@ export default function EvaluationsPage() {
           { key: 'runs' as const, label: 'All Runs', disabled: false },
           { key: 'details' as const, label: 'Run Details', disabled: !selectedRun },
           { key: 'ragas' as const, label: 'RAGAS Scores', disabled: false },
+          { key: 'history' as const, label: 'Report History', disabled: false },
         ]).map(({ key, label, disabled }) => (
           <button
             key={key}
@@ -794,6 +832,152 @@ export default function EvaluationsPage() {
               <p className="text-xs text-hiplink-secondary dark:text-dark-text-dim">
                 Custom evaluation ({latestEval?.latest_run?.total_tests || 20}/{latestEval?.latest_run?.passed_tests || 20}) remains the primary regression gate.
               </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Report History Tab */}
+      {activeTab === 'history' && (
+        <div>
+          {historyData === null ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="text-hiplink-secondary dark:text-dark-text-dim">Loading history...</div>
+            </div>
+          ) : historyData.custom_eval_runs.length === 0 && historyData.ragas_reports.length === 0 ? (
+            <div className="card dark:bg-dark-card p-8 text-center">
+              <div className="w-16 h-16 bg-gray-100 dark:bg-dark-elevated rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-gray-400 dark:text-dark-text-dim" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <p className="text-hiplink-secondary dark:text-dark-text-dim mb-4">No evaluation history yet.</p>
+              {historyData.warnings.filter(w => w.includes('No evaluation history')).map((w, i) => (
+                <p key={i} className="text-xs text-hiplink-secondary dark:text-dark-text-dim max-w-md mx-auto">{w}</p>
+              ))}
+            </div>
+          ) : (
+            <div>
+              {/* Warnings */}
+              {historyData.warnings && historyData.warnings.length > 0 && (
+                <div className="mb-6 card dark:bg-dark-card p-4 border border-yellow-200 dark:border-yellow-800">
+                  <h3 className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">Notes</h3>
+                  <ul className="space-y-1">
+                    {historyData.warnings.map((w, i) => (
+                      <li key={i} className="text-xs text-yellow-700 dark:text-yellow-300 flex items-start gap-2">
+                        <span className="mt-0.5">•</span>
+                        <span>{w}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Custom Evaluation History */}
+              {historyData.custom_eval_runs.length > 0 && (
+                <div className="mb-8">
+                  <h3 className="text-base font-semibold text-hiplink-dark dark:text-dark-text mb-4">
+                    Custom Evaluation Runs
+                  </h3>
+                  <div className="card dark:bg-dark-card overflow-hidden">
+                    <table className="min-w-full divide-y divide-hiplink-border dark:divide-dark-border">
+                      <thead className="bg-hiplink-background dark:bg-dark-elevated">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Time</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Run ID</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Status</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Total</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Passed</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Failed</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Pass Rate</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Avg Latency</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Avg Top Score</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-hiplink-border dark:divide-dark-border">
+                        {historyData.custom_eval_runs.map((run) => (
+                          <tr key={run.run_id} className="hover:bg-hiplink-background dark:hover:bg-dark-elevated transition-colors">
+                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim whitespace-nowrap">{run.timestamp ? formatDate(run.timestamp) : 'N/A'}</td>
+                            <td className="px-4 py-3 text-xs font-mono text-hiplink-blue dark:text-sky-400">{run.run_id}</td>
+                            <td className="px-4 py-3 text-xs">
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusBadgeClass(run.status)}`}>
+                                {run.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-hiplink-dark dark:text-dark-text">{run.total_tests}</td>
+                            <td className="px-4 py-3 text-xs text-hiplink-success dark:text-green-400">{run.passed}</td>
+                            <td className="px-4 py-3 text-xs text-hiplink-error dark:text-red-400">{run.failed}</td>
+                            <td className="px-4 py-3 text-xs">
+                              <span className={run.pass_rate >= 70 ? 'text-hiplink-success dark:text-green-400 font-medium' : 'text-hiplink-error dark:text-red-400 font-medium'}>
+                                {run.pass_rate.toFixed(1)}%
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">{formatLatency(run.avg_latency_ms)}</td>
+                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">{run.avg_top_score?.toFixed(3) || 'N/A'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* RAGAS Report History */}
+              {historyData.ragas_reports.length > 0 && (
+                <div>
+                  <h3 className="text-base font-semibold text-hiplink-dark dark:text-dark-text mb-4">
+                    RAGAS Reports
+                  </h3>
+                  <div className="card dark:bg-dark-card overflow-hidden">
+                    <table className="min-w-full divide-y divide-hiplink-border dark:divide-dark-border">
+                      <thead className="bg-hiplink-background dark:bg-dark-elevated">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Time</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Report</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Evaluator</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Faithfulness</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Answer Relevancy</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Context Precision</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-hiplink-secondary dark:text-dark-text-dim uppercase tracking-wider">Skipped</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-hiplink-border dark:divide-dark-border">
+                        {historyData.ragas_reports.map((report) => (
+                          <tr key={report.report_name} className="hover:bg-hiplink-background dark:hover:bg-dark-elevated transition-colors">
+                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim whitespace-nowrap">{report.timestamp ? formatDate(report.timestamp) : 'N/A'}</td>
+                            <td className="px-4 py-3 text-xs font-mono text-hiplink-blue dark:text-sky-400">{report.report_name}</td>
+                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">{report.evaluator_provider}/{report.evaluator_model}</td>
+                            <td className="px-4 py-3 text-xs">
+                              {report.metrics?.faithfulness != null ? (
+                                <span className={report.metrics.faithfulness >= (ragasSummary?.threshold_faithfulness ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
+                                  {report.metrics.faithfulness.toFixed(4)}
+                                </span>
+                              ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
+                            </td>
+                            <td className="px-4 py-3 text-xs">
+                              {report.metrics?.answer_relevancy != null ? (
+                                <span className={report.metrics.answer_relevancy >= (ragasSummary?.threshold_answer_relevancy ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
+                                  {report.metrics.answer_relevancy.toFixed(4)}
+                                </span>
+                              ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
+                            </td>
+                            <td className="px-4 py-3 text-xs">
+                              {report.metrics?.context_precision != null ? (
+                                <span className={report.metrics.context_precision >= (ragasSummary?.threshold_context_precision ?? 0.5) ? 'text-hiplink-success dark:text-green-400' : 'text-hiplink-error dark:text-red-400'}>
+                                  {report.metrics.context_precision.toFixed(4)}
+                                </span>
+                              ) : <span className="text-hiplink-secondary dark:text-dark-text-dim">N/A</span>}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-hiplink-secondary dark:text-dark-text-dim">
+                              {report.skipped_metrics?.join(', ') || '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

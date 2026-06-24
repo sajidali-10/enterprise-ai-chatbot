@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from app.db.session import get_db
 from app.security.dependencies import require_admin
@@ -26,6 +27,9 @@ from app.schemas.evaluation import (
     FeedbackRequest,
     RAGASSummaryResponse,
     LangSmithSummaryResponse,
+    EvaluationHistoryResponse,
+    CustomEvalRunSummary,
+    RAGASReportSummary,
 )
 
 router = APIRouter(prefix="/api", tags=["Evaluation & Observability"])
@@ -586,6 +590,166 @@ def get_ragas_summary(
         threshold_context_precision=_THRESHOLDS["context_precision"],
         warnings=warnings,
     )
+
+
+@router.get("/admin/evaluations/history", response_model=EvaluationHistoryResponse)
+def get_evaluation_history(
+    limit: int = Query(default=20, ge=1, le=50, description="Max custom eval runs to return"),
+    auth: AuthContext = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Return read-only history of custom evaluation runs and RAGAS reports.
+
+    - Custom eval runs come from the database (EvaluationRun table) and
+      optionally from JSON files under RAGAS_REPORT_DIR.
+    - RAGAS reports are scanned from RAGAS_REPORT_DIR.
+    - No secrets, no full filesystem paths, no raw prompts or document text.
+    - Always returns 200: empty lists are a normal state, not an error.
+    """
+    import json
+    import os
+    from app.core.config import settings
+    from app.schemas.evaluation import RAGASScoreMetrics
+
+    _ = auth  # admin check
+    warnings: list[str] = []
+
+    # ------------------------------------------------------------------
+    # 1. Custom evaluation runs from database
+    # ------------------------------------------------------------------
+    from app.models.evaluation import EvaluationRun
+
+    db_runs = (
+        db.query(EvaluationRun)
+        .order_by(desc(EvaluationRun.created_at))
+        .limit(limit)
+        .all()
+    )
+
+    custom_eval_runs: list[CustomEvalRunSummary] = []
+    for r in db_runs:
+        custom_eval_runs.append(
+            CustomEvalRunSummary(
+                run_id=r.id,
+                timestamp=r.created_at,
+                status=r.status,
+                total_tests=r.total_tests,
+                passed=r.passed_tests,
+                failed=r.failed_tests,
+                pass_rate=r.pass_percentage,
+                avg_latency_ms=r.average_latency_ms,
+                avg_top_score=r.average_top_score,
+                report_name=None,  # DB runs don't have a file name; run_id is enough
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # 2. RAGAS reports from RAGAS_REPORT_DIR
+    # ------------------------------------------------------------------
+    ragas_reports: list[RAGASReportSummary] = []
+
+    if settings.RAGAS_REPORT_DIR:
+        report_dir = Path(settings.RAGAS_REPORT_DIR)
+        if report_dir.is_dir():
+            # Collect all ragas_report_*.json files (skip latest.json alias)
+            report_files = sorted(
+                [
+                    f
+                    for f in report_dir.iterdir()
+                    if f.is_file()
+                    and f.name.startswith("ragas_report_")
+                    and f.name.endswith(".json")
+                ],
+                key=lambda f: f.stat().st_mtime,
+                reverse=True,
+            )[:limit]
+
+            for report_file in report_files:
+                try:
+                    with open(report_file, "r") as fh:
+                        report = json.load(fh)
+
+                    # Parse timestamp — prefer the embedded one, fall back to file mtime
+                    ts = report.get("timestamp")
+                    if not ts:
+                        ts = datetime.fromtimestamp(
+                            report_file.stat().st_mtime, tz=timezone.utc
+                        ).isoformat()
+
+                    # Metric averages
+                    avg_scores = report.get("avg_scores", {})
+
+                    def _safe_float(val):
+                        if val is None:
+                            return None
+                        try:
+                            f = float(val)
+                            return round(f, 4) if not (f != f) else None  # guard NaN
+                        except (TypeError, ValueError):
+                            return None
+
+                    metrics = RAGASScoreMetrics(
+                        faithfulness=_safe_float(
+                            avg_scores.get("faithfulness", {}).get("avg")
+                        ),
+                        answer_relevancy=_safe_float(
+                            avg_scores.get("answer_relevancy", {}).get("avg")
+                        ),
+                        context_precision=_safe_float(
+                            avg_scores.get("context_precision", {}).get("avg")
+                        ),
+                        context_recall=None,
+                        answer_correctness=None,
+                    )
+
+                    ragas_reports.append(
+                        RAGASReportSummary(
+                            report_name=report_file.name,
+                            timestamp=ts,
+                            metrics=metrics,
+                            skipped_metrics=report.get(
+                                "skipped_metrics", ["context_recall", "answer_correctness"]
+                            ),
+                            evaluator_provider=report.get("evaluator_provider", ""),
+                            evaluator_model=report.get("evaluator_model", ""),
+                            total_cases=report.get("case_count"),
+                            warnings=[],
+                        )
+                    )
+                except (json.JSONDecodeError, OSError):
+                    # One bad file must not poison the whole list
+                    warnings.append(
+                        f"Could not read RAGAS report '{report_file.name}' — skipping."
+                    )
+                    continue
+        else:
+            warnings.append(
+                "RAGAS report directory is not accessible: "
+                f"{report_dir.name}"  # safe: only expose dirname, not full path
+            )
+    else:
+        warnings.append(
+            "RAGAS report directory is not configured (RAGAS_REPORT_DIR is empty)."
+        )
+
+    # ------------------------------------------------------------------
+    # 3. Empty-state warning if nothing was found
+    # ------------------------------------------------------------------
+    if not custom_eval_runs and not ragas_reports:
+        warnings.append(
+            "No evaluation history found yet. "
+            "Run custom evaluation: docker compose exec backend python /app/scripts/run_rag_evaluation.py\n"
+            "Run RAGAS without --dry-run: docker compose exec backend python /app/scripts/run_ragas_evaluation.py"
+        )
+
+    return EvaluationHistoryResponse(
+        custom_eval_runs=custom_eval_runs,
+        ragas_reports=ragas_reports,
+        warnings=warnings,
+    )
+
+
 @router.get("/admin/evaluations/{run_id}", response_model=EvaluationRunDetail)
 def get_evaluation_run(
     run_id: int,

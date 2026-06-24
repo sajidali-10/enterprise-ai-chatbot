@@ -177,3 +177,46 @@ class LangSmithSummaryResponse(BaseModel):
     log_retrieved_context: bool
     privacy_mode: str
     warnings: List[str] = Field(default_factory=list)
+
+
+class RAGASReportSummary(BaseModel):
+    """Summary of a single RAGAS report for history listing.
+
+    Safe, read-only fields. No secrets, no full paths.
+    """
+    report_name: str  # filename only, not full path
+    timestamp: Optional[str] = None
+    metrics: Optional[RAGASScoreMetrics] = None
+    skipped_metrics: List[str] = Field(default_factory=list)
+    evaluator_provider: str
+    evaluator_model: str
+    total_cases: Optional[int] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+class CustomEvalRunSummary(BaseModel):
+    """Summary of a custom evaluation run for history listing.
+
+    Same as EvaluationRunSummary but uses report_name for file-based runs.
+    """
+    run_id: int
+    timestamp: datetime
+    status: str
+    total_tests: int
+    passed: int
+    failed: int
+    pass_rate: float
+    avg_latency_ms: Optional[float] = None
+    avg_top_score: Optional[float] = None
+    report_name: Optional[str] = None
+
+
+class EvaluationHistoryResponse(BaseModel):
+    """Response for evaluation report history endpoint.
+
+    Returns read-only history of custom evaluation runs and RAGAS reports.
+    Always returns 200: empty lists are a normal state, not an error.
+    """
+    custom_eval_runs: List[CustomEvalRunSummary] = Field(default_factory=list)
+    ragas_reports: List[RAGASReportSummary] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
