@@ -265,40 +265,11 @@ class TestEvaluationHistoryEndpoint:
         self, jwt_admin_client, monkeypatch, tmp_path
     ):
         """Timestamped evaluation JSON files appear as custom_eval_reports."""
-        # Mock the results directory path used in evaluation.py
-        import app.api.evaluation as eval_api
+        import app.api.evaluation as ev_api
 
-        original_results_path = eval_api.Path
-
-        class FakePath:
-            def __init__(self, parts):
-                self._parts = parts
-
-            @property
-            def _path(self):
-                return original_results_path(*self._parts)
-
-            def is_dir(self):
-                return True
-
-            def iterdir(self):
-                return list(self._path.iterdir())
-
-            def __truediv__(self, name):
-                return FakePath(self._parts + [name])
-
-            def __eq__(self, other):
-                return self._path == other
-
-            def __str__(self):
-                return str(self._path)
-
-            def __repr__(self):
-                return f"FakePath({self._parts})"
-
-        fake_results_dir = FakePath([str(tmp_path)])
-
-        monkeypatch.setattr(eval_api, "Path", lambda *args: FakePath(list(args)))
+        # Override the module-level constant to point to tmp_path
+        original_const = ev_api._EVALUATION_RESULTS_DIR
+        ev_api._EVALUATION_RESULTS_DIR = tmp_path
 
         # Write a timestamped evaluation JSON
         eval_data = {
@@ -313,72 +284,13 @@ class TestEvaluationHistoryEndpoint:
         eval_file = tmp_path / "evaluation_20260622_120000.json"
         eval_file.write_text(json.dumps(eval_data))
 
-        # Write latest_results.json
-        latest_data = {
-            "run_id": 43,
-            "timestamp": "2026-06-23T08:00:00Z",
-            "results": [
-                {"passed": True, "latency_ms": 800, "top_score": 0.95},
-            ],
-        }
-        latest_file = tmp_path / "latest_results.json"
-        latest_file.write_text(json.dumps(latest_data))
-
-        monkeypatch.setattr(eval_api, "Path", lambda *args: FakePath(list(args)))
-
-        # Patch the history endpoint's results_base_dir directly
-        import app.api.evaluation as eval_module
-
-        orig_is_dir = eval_module.Path(str(tmp_path)).is_dir
-
-        class FakeResultsDir:
-            def __init__(self, base):
-                self._base = base
-
-            def is_dir(self):
-                return True
-
-            def iterdir(self):
-                return list(self._base.iterdir())
-
-        original_results_base = None
-
-        def fake_results_base_dir():
-            return FakeResultsDir(tmp_path)
-
-        # Patch Path in evaluation.py module where it's used
-        import app.api.evaluation as ev_api
-
-        orig_Path = ev_api.Path
-
-        class FakePath2:
-            def __init__(self, *args):
-                if len(args) == 1 and isinstance(args[0], (str,)) and "evaluations" in str(args[0]):
-                    self._underlying = tmp_path
-                else:
-                    self._underlying = orig_Path(*args)
-
-            def is_dir(self):
-                return True
-
-            def iterdir(self):
-                return list(tmp_path.iterdir())
-
-            def __truediv__(self, name):
-                return FakePath2(str(tmp_path / name))
-
-            def __eq__(self, other):
-                return self._underlying == other
-
-            def __str__(self):
-                return str(self._underlying)
-
-        # Just test the actual endpoint since mocking Path is complex
-        # The key assertion: custom_eval_reports is present and contains parsed data
-        response = jwt_admin_client.get("/api/admin/evaluations/history")
-        assert response.status_code == 200
-        d = response.json()
-        assert "custom_eval_reports" in d
+        try:
+            response = jwt_admin_client.get("/api/admin/evaluations/history")
+            assert response.status_code == 200
+            d = response.json()
+            assert "custom_eval_reports" in d
+        finally:
+            ev_api._EVALUATION_RESULTS_DIR = original_const
 
 
     def test_custom_eval_reports_parsing(
@@ -386,6 +298,10 @@ class TestEvaluationHistoryEndpoint:
     ):
         """Custom eval report JSON is parsed for summary stats."""
         import app.api.evaluation as ev_api
+
+        # Override the module-level constant to point to tmp_path
+        original_const = ev_api._EVALUATION_RESULTS_DIR
+        ev_api._EVALUATION_RESULTS_DIR = tmp_path
 
         # Write a timestamped evaluation JSON
         eval_data = {
@@ -400,65 +316,21 @@ class TestEvaluationHistoryEndpoint:
         eval_file = tmp_path / "evaluation_20260622_120000.json"
         eval_file.write_text(json.dumps(eval_data))
 
-        # Replace the Path in the module so it resolves to tmp_path
-        real_Path = ev_api.Path
-
-        class FakeResultsPath:
-            _target = tmp_path
-
-            def __truediv__(self, key):
-                return FakeResultsPath()
-
-            def __getattr__(self, name):
-                return getattr(real_Path(self._target), name)
-
-            def is_dir(self):
-                return True
-
-            def iterdir(self):
-                return list(tmp_path.iterdir())
-
-            def __str__(self):
-                return str(self._target)
-
-        # Store original
-        orig_results_path = None
-        for name in dir(ev_api):
-            obj = getattr(ev_api, name)
-            if hasattr(obj, '__call__') and 'Path' in str(obj):
-                pass
-
-        # Simple approach: patch at the module level
-        original_Path = ev_api.Path
-
-        def fake_path_factory(*args):
-            if len(args) == 3 and args[0] == '__file__':
-                # Parent of parent of evaluation.py -> app/ dir
-                # When used as: Path(__file__).parent.parent / "evaluations" / "results"
-                # This returns the app dir's parent, which is apps/backend
-                # But since our test writes to tmp_path, we need to redirect
-                return original_Path(str(tmp_path))
-            return original_Path(*args)
-
-        monkeypatch.setattr(ev_api, "Path", fake_path_factory)
-
-        response = jwt_admin_client.get("/api/admin/evaluations/history")
-        assert response.status_code == 200
-        d = response.json()
-        # Response has the field
-        assert "custom_eval_reports" in d
-        # If the file was parsed, we should see it
-        if d["custom_eval_reports"]:
+        try:
+            response = jwt_admin_client.get("/api/admin/evaluations/history")
+            assert response.status_code == 200
+            d = response.json()
+            assert "custom_eval_reports" in d
+            assert len(d["custom_eval_reports"]) >= 1
             rep = d["custom_eval_reports"][0]
-            assert "report_name" in rep
-            assert "report_type" in rep
+            assert rep["report_name"] == "evaluation_20260622_120000.json"
             assert rep["total_tests"] == 3
             assert rep["passed"] == 2
             assert rep["failed"] == 1
             # No full paths in response
             assert "/app/" not in str(d)
-
-        monkeypatch.setattr(ev_api, "Path", original_Path)
+        finally:
+            ev_api._EVALUATION_RESULTS_DIR = original_const
 
     def test_malformed_custom_eval_json_does_not_crash(
         self, jwt_admin_client, monkeypatch, tmp_path
@@ -466,7 +338,9 @@ class TestEvaluationHistoryEndpoint:
         """Malformed custom eval JSON skips the file gracefully."""
         import app.api.evaluation as ev_api
 
-        original_Path = ev_api.Path
+        # Override the module-level constant to point to tmp_path
+        original_const = ev_api._EVALUATION_RESULTS_DIR
+        ev_api._EVALUATION_RESULTS_DIR = tmp_path
 
         # Create one good and one bad file
         good_data = {
@@ -480,30 +354,17 @@ class TestEvaluationHistoryEndpoint:
         bad_file = tmp_path / "evaluation_20260623_120000.json"
         bad_file.write_text("{ this is not json ")
 
-        def fake_path(*args):
-            return original_Path(*args)
-
-        # Redirect the evaluations/results path to tmp_path
-        original_call = [None]
-
-        def patched_path(*args):
-            if len(args) == 1 and str(args[0]).endswith("evaluations"):
-                return original_Path(str(tmp_path))
-            return original_Path(*args)
-
-        monkeypatch.setattr(ev_api, "Path", patched_path)
-
-        response = jwt_admin_client.get("/api/admin/evaluations/history")
-        assert response.status_code == 200
-        d = response.json()
-        # Good file should be returned despite bad file existing
-        if d["custom_eval_reports"]:
+        try:
+            response = jwt_admin_client.get("/api/admin/evaluations/history")
+            assert response.status_code == 200
+            d = response.json()
+            # Good file should be returned despite bad file existing
             names = [r["report_name"] for r in d["custom_eval_reports"]]
             assert "evaluation_20260622_120000.json" in names
-        # Warning should mention skipping
-        assert any("skip" in w.lower() or "could not read" in w.lower() for w in d["warnings"])
-
-        monkeypatch.setattr(ev_api, "Path", original_Path)
+            # Warning should mention skipping
+            assert any("skip" in w.lower() or "could not read" in w.lower() for w in d["warnings"])
+        finally:
+            ev_api._EVALUATION_RESULTS_DIR = original_const
 
     def test_latest_results_json_marked_as_latest_alias(
         self, jwt_admin_client, monkeypatch, tmp_path
@@ -511,7 +372,9 @@ class TestEvaluationHistoryEndpoint:
         """latest_results.json is included with report_type='latest_results_json'."""
         import app.api.evaluation as ev_api
 
-        original_Path = ev_api.Path
+        # Override the module-level constant to point to tmp_path
+        original_const = ev_api._EVALUATION_RESULTS_DIR
+        ev_api._EVALUATION_RESULTS_DIR = tmp_path
 
         latest_data = {
             "run_id": 99,
@@ -521,25 +384,18 @@ class TestEvaluationHistoryEndpoint:
         latest_file = tmp_path / "latest_results.json"
         latest_file.write_text(json.dumps(latest_data))
 
-        def patched_path(*args):
-            if len(args) == 1 and str(args[0]).endswith("evaluations"):
-                return original_Path(str(tmp_path))
-            return original_Path(*args)
-
-        monkeypatch.setattr(ev_api, "Path", patched_path)
-
-        response = jwt_admin_client.get("/api/admin/evaluations/history")
-        assert response.status_code == 200
-        d = response.json()
-        # latest_results.json should appear with correct type
-        latest_reports = [r for r in d["custom_eval_reports"] if r["report_name"] == "latest_results.json"]
-        # Should be at front (latest-first)
-        if latest_reports:
+        try:
+            response = jwt_admin_client.get("/api/admin/evaluations/history")
+            assert response.status_code == 200
+            d = response.json()
+            # latest_results.json should appear with correct type
+            latest_reports = [r for r in d["custom_eval_reports"] if r["report_name"] == "latest_results.json"]
+            assert len(latest_reports) == 1
             assert latest_reports[0]["report_type"] == "latest_results_json"
-            # Should be first in the list
+            # Should be first in the list (latest-first)
             assert d["custom_eval_reports"][0]["report_name"] == "latest_results.json"
-
-        monkeypatch.setattr(ev_api, "Path", original_Path)
+        finally:
+            ev_api._EVALUATION_RESULTS_DIR = original_const
 
     def test_no_app_filesystem_paths_in_custom_eval_reports(
         self, jwt_admin_client, monkeypatch, tmp_path
@@ -547,7 +403,9 @@ class TestEvaluationHistoryEndpoint:
         """custom_eval_reports contain no /app/ or full filesystem paths."""
         import app.api.evaluation as ev_api
 
-        original_Path = ev_api.Path
+        # Override the module-level constant to point to tmp_path
+        original_const = ev_api._EVALUATION_RESULTS_DIR
+        ev_api._EVALUATION_RESULTS_DIR = tmp_path
 
         eval_data = {
             "run_id": 1,
@@ -557,21 +415,16 @@ class TestEvaluationHistoryEndpoint:
         eval_file = tmp_path / "evaluation_20260622_120000.json"
         eval_file.write_text(json.dumps(eval_data))
 
-        def patched_path(*args):
-            if len(args) == 1 and str(args[0]).endswith("evaluations"):
-                return original_Path(str(tmp_path))
-            return original_Path(*args)
-
-        monkeypatch.setattr(ev_api, "Path", patched_path)
-
-        response = jwt_admin_client.get("/api/admin/evaluations/history")
-        assert response.status_code == 200
-        raw = str(response.json())
-        assert "/app/" not in raw
-        assert "/home/ubuntu/" not in raw
-        assert "/tmp/" not in raw or str(tmp_path) not in raw
-
-        monkeypatch.setattr(ev_api, "Path", original_Path)
+        try:
+            response = jwt_admin_client.get("/api/admin/evaluations/history")
+            assert response.status_code == 200
+            raw = str(response.json())
+            assert "/app/" not in raw
+            assert "/home/ubuntu/" not in raw
+            # tmp_path str may appear in tracebacks but not as a report field
+            assert str(tmp_path) not in raw
+        finally:
+            ev_api._EVALUATION_RESULTS_DIR = original_const
 
     def test_custom_eval_reports_limit_behavior(
         self, jwt_admin_client, monkeypatch, tmp_path
@@ -579,7 +432,9 @@ class TestEvaluationHistoryEndpoint:
         """Limit parameter caps custom_eval_reports returned."""
         import app.api.evaluation as ev_api
 
-        original_Path = ev_api.Path
+        # Override the module-level constant to point to tmp_path
+        original_const = ev_api._EVALUATION_RESULTS_DIR
+        ev_api._EVALUATION_RESULTS_DIR = tmp_path
 
         # Create 5 timestamped files
         for i in range(5):
@@ -590,19 +445,13 @@ class TestEvaluationHistoryEndpoint:
             }
             (tmp_path / f"evaluation_202606{22-i:02d}_120000.json").write_text(json.dumps(data))
 
-        def patched_path(*args):
-            if len(args) == 1 and str(args[0]).endswith("evaluations"):
-                return original_Path(str(tmp_path))
-            return original_Path(*args)
-
-        monkeypatch.setattr(ev_api, "Path", patched_path)
-
-        response = jwt_admin_client.get("/api/admin/evaluations/history?limit=3")
-        assert response.status_code == 200
-        d = response.json()
-        assert len(d["custom_eval_reports"]) <= 3
-
-        monkeypatch.setattr(ev_api, "Path", original_Path)
+        try:
+            response = jwt_admin_client.get("/api/admin/evaluations/history?limit=3")
+            assert response.status_code == 200
+            d = response.json()
+            assert len(d["custom_eval_reports"]) <= 3
+        finally:
+            ev_api._EVALUATION_RESULTS_DIR = original_const
 
     def test_ragas_reports_empty_shows_friendly_warning(
         self, jwt_admin_client, monkeypatch, tmp_path

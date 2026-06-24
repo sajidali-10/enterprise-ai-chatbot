@@ -9,7 +9,14 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
+
+#: Absolute path to custom evaluation results directory in the container.
+#: Override via TEST_EVALUATION_RESULTS_DIR env var in tests.
+_EVALUATION_RESULTS_DIR = Path(
+    os.getenv("TEST_EVALUATION_RESULTS_DIR", "/app/evaluations/results")
+)
 
 from app.db.session import get_db
 from app.security.dependencies import require_admin
@@ -650,7 +657,7 @@ def get_evaluation_history(
     # ------------------------------------------------------------------
     custom_eval_reports: list[CustomEvalReportArtifact] = []
 
-    results_base_dir = Path(__file__).parent.parent / "evaluations" / "results"
+    results_base_dir = _EVALUATION_RESULTS_DIR
     if results_base_dir.is_dir():
         # Collect timestamped evaluation JSON files, newest first
         eval_files = sorted(
@@ -735,9 +742,33 @@ def get_evaluation_history(
                 # Override type to mark it as the latest alias
                 artifact.report_type = "latest_results_json"
                 custom_eval_reports.insert(0, artifact)
+
+        # Process latest_report.md if present (markdown report metadata)
+        latest_md_path = results_base_dir / "latest_report.md"
+        if latest_md_path.is_file():
+            try:
+                mtime = latest_md_path.stat().st_mtime
+                ts = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                custom_eval_reports.insert(
+                    0,
+                    CustomEvalReportArtifact(
+                        report_name="latest_report.md",
+                        report_type="latest_report_markdown",
+                        timestamp=ts,
+                        total_tests=None,
+                        passed=None,
+                        failed=None,
+                        pass_rate=None,
+                        avg_latency_ms=None,
+                        avg_top_score=None,
+                    ),
+                )
+            except OSError:
+                # Cannot stat file — skip silently
+                pass
     else:
         warnings.append(
-            f"Custom evaluation results directory is not accessible."
+            f"Custom evaluation results directory not found."
         )
 
     # ------------------------------------------------------------------
@@ -820,10 +851,17 @@ def get_evaluation_history(
                     )
                     continue
         else:
-            warnings.append(
-                "RAGAS report directory is not accessible: "
-                f"{report_dir.name}"  # safe: only expose dirname, not full path
-            )
+            ragas_dir_name = report_dir.name
+            # Check if dir exists at all (symlink broken, volume not mounted, etc.)
+            if not report_dir.exists():
+                warnings.append(
+                    f"RAGAS report directory not found ({ragas_dir_name}). "
+                    "Run RAGAS evaluation to create it."
+                )
+            else:
+                warnings.append(
+                    f"RAGAS report directory is not accessible: {ragas_dir_name}"
+                )
     else:
         warnings.append(
             "RAGAS report directory is not configured (RAGAS_REPORT_DIR is empty)."

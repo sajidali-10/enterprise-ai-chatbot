@@ -7,6 +7,8 @@ RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
 # Create home directory and HuggingFace cache dir writable by appuser
 RUN mkdir -p /home/appuser && chown appuser:appgroup /home/appuser
+# RAGAS report directory (created here so it exists even before first eval run)
+RUN mkdir -p /app/evals/ragas && chown appuser:appgroup /app/evals/ragas
 ENV HF_HOME=/tmp/hf_home
 ENV TRANSFORMERS_CACHE=/tmp/hf_home/transformers
 
