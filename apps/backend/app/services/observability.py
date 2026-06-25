@@ -58,19 +58,37 @@ def log_chat_observation(
         if not blocked:
             blocked = any(phrase in answer.lower() for phrase in fallback_phrases)
         
-        # Get source file names from grouped sources
+        # Get source file names from grouped sources.
+        # grouped_sources can be either dicts (from group_citations_by_source) or
+        # objects with attributes; handle both formats for safety.
         source_files = None
         if grouped_sources:
-            source_files = [gs.source_file_name for gs in grouped_sources]
+            files = []
+            for gs in grouped_sources:
+                if isinstance(gs, dict):
+                    name = gs.get("source_file_name")
+                else:
+                    name = getattr(gs, "source_file_name", None)
+                if name:
+                    files.append(name)
+            source_files = files or None
         elif citations:
             source_files = list(set(c.get("source_file_name") for c in citations if c.get("source_file_name")))
-        
+
         # Get top score from metadata or grouped sources
         top_score = None
         if metadata and "top_score" in metadata:
             top_score = metadata.get("top_score")
         elif grouped_sources and len(grouped_sources) > 0:
-            top_score = max(gs.highest_score for gs in grouped_sources)
+            scores = []
+            for gs in grouped_sources:
+                if isinstance(gs, dict):
+                    s = gs.get("highest_score")
+                else:
+                    s = getattr(gs, "highest_score", None)
+                if s is not None:
+                    scores.append(s)
+            top_score = max(scores) if scores else None
         
         # Get citation count
         citation_count = len(citations) if citations else 0

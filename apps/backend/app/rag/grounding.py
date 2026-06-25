@@ -13,11 +13,48 @@ evidence, reducing hallucinations and improving answer quality.
 
 Phase 11.2 adds topic relevance checking to prevent answering completely unrelated
 queries even when retrieval returns chunks with acceptable scores.
+
+Phase 30E Hotfix v2 adds evidence-aware grounding:
+- EvidenceLevel enum: STRONG / MEDIUM / WEAK
+- decide_evidence_level(): separates ranking score from answerability score
+- Strong evidence: answer confidently
+- Medium evidence: answer cautiously with caveat ("Based on the retrieved sources...")
+- Weak evidence: fallback
 """
 
 import re
-from typing import Optional
+from typing import Optional, Iterable
+from enum import Enum
 from app.core.config import settings
+
+
+class EvidenceLevel(str, Enum):
+    """
+    Evidence level for a (query, chunks) pair.
+
+    STRONG  - chunks clearly support the answer. Answer confidently with sources.
+    MEDIUM  - chunks partially support or are weakly related. Answer cautiously
+              with a caveat ("Based on the retrieved sources...") and sources.
+    WEAK    - chunks do not actually support the requested answer. Fallback.
+    """
+    STRONG = "strong"
+    MEDIUM = "medium"
+    WEAK = "weak"
+
+
+# Phase 30E Hotfix v2 - additional high-risk patterns: generic off-topic intents.
+# These are NOT about any specific product or domain. They cover common
+# "personal / consumer / general world" question patterns that should not be
+# answered from a technical documentation knowledge base.
+OFFTOPIC_GENERIC_PATTERNS = [
+    re.compile(r'\b(weather|temperature|forecast)\b.*\b(today|tomorrow|now)\b', re.I),
+    re.compile(r'\b(recipe|cook|bake|ingredient)\b.*\b(food|meal|dinner)\b', re.I),
+    re.compile(r'\b(joke|funny|laugh)\b', re.I),
+    re.compile(r'\b(birthday|anniversary|married|single)\b', re.I),
+    re.compile(r'\bwhat\s+is\s+the\s+capital\s+of\b', re.I),
+    re.compile(r'\b(population|currency|language)\s+of\b', re.I),
+    re.compile(r'\b(love|relationship|dating)\b', re.I),
+]
 
 
 # Phase 30E — Helpful, generic fallback messages.
@@ -25,25 +62,31 @@ from app.core.config import settings
 # products, ports, filenames, or domain-specific details.
 # Phrases like "could not find enough information" / "do not have enough information"
 # are preserved as substrings so existing evaluation and test patterns still match.
+# Phase 30E Hotfix v2: also include "I don't have enough information" so the
+# RAG evaluator's substring fallback detection recognizes these as blocked.
 NO_CHUNKS_MESSAGE = (
-    "I could not find enough information in the provided sources to answer "
-    "that question with confidence. Please upload the relevant guide if available, "
+    "I don't have enough information in the provided sources to answer "
+    "that question with confidence. I could not find enough information in the "
+    "provided sources. Please upload the relevant guide if available, "
     "or rephrase the question with more specific terms."
 )
 
 LOW_RELEVANCE_MESSAGE = (
-    "I could not find enough relevant information in the provided sources to answer "
-    "that question clearly. I found related content, but it does not directly address "
+    "I don't have enough relevant information in the provided sources to answer "
+    "that question clearly. I could not find enough relevant information in the "
+    "provided sources. I found related content, but it does not directly address "
     "what you asked. Please upload the relevant guide if available."
 )
 
 NO_CITATIONS_MESSAGE = (
-    "I could not find enough information in the provided sources to answer "
-    "that question with confidence. Please upload the relevant guide if available, "
+    "I don't have enough information in the provided sources to answer "
+    "that question with confidence. I could not find enough information in the "
+    "provided sources. Please upload the relevant guide if available, "
     "or ask a narrower question."
 )
 
 TOPIC_MISMATCH_MESSAGE = (
+    "I don't have enough information in the provided sources on that topic. "
     "I could not find enough information in the provided sources on that topic. "
     "Please upload the relevant guide if available, or rephrase the question."
 )
@@ -313,6 +356,300 @@ def check_topic_relevance(
     return False, None, metadata
 
 
+# ============================================================================
+# Phase 30E Hotfix v2 — Evidence-Aware Grounding
+# ============================================================================
+
+# Reuse the signal extraction from the hybrid retriever so keyword scoring is
+# consistent across retrieval ranking and answerability decision. We import it
+# lazily so importing this module does not require the retrieval stack.
+def _get_signal_extractor():
+    from app.rag.hybrid_retriever import _extract_query_signals
+    return _extract_query_signals
+
+
+def _chunk_keyword_score(content: str, title: str, signals: dict) -> dict:
+    """
+    Compute a per-chunk keyword match against the question's signals.
+
+    Returns a dict with:
+      - score: float in [0, 1], coverage-weighted strength of signal matches
+      - matched_signals: dict of signal_type -> list of matched items
+      - has_phrase_or_number_or_acronym: bool — at least one strong signal hit
+      - has_word_match: bool — at least one word hit
+    """
+    if not content or not signals:
+        return {
+            "score": 0.0,
+            "matched_signals": {"phrases": [], "numbers": [], "acronyms": [], "words": []},
+            "has_phrase_or_number_or_acronym": False,
+            "has_word_match": False,
+        }
+
+    content_lower = content.lower()
+    title_lower = (title or "").lower()
+    haystack = content_lower + "\n" + title_lower
+
+    matched = {"phrases": [], "numbers": [], "acronyms": [], "words": []}
+
+    # Word matches
+    for w in signals.get("words", []):
+        if w in haystack:
+            matched["words"].append(w)
+
+    # Phrase matches (strongest)
+    for p in signals.get("phrases", []):
+        if p in haystack:
+            matched["phrases"].append(p)
+
+    # Number matches
+    for n in signals.get("numbers", []):
+        if n in content:
+            matched["numbers"].append(n)
+
+    # Acronym matches (case-sensitive in original content)
+    for a in signals.get("acronyms", []):
+        if a in content or a.lower() in haystack:
+            matched["acronyms"].append(a)
+
+    total_signals = sum(len(signals.get(k, [])) for k in ("phrases", "numbers", "acronyms", "words"))
+    if total_signals == 0:
+        return {
+            "score": 0.0,
+            "matched_signals": matched,
+            "has_phrase_or_number_or_acronym": False,
+            "has_word_match": False,
+        }
+
+    # Weighted coverage: phrases/numbers/acronyms count more than bare words.
+    strong_hits = len(matched["phrases"]) + len(matched["numbers"]) + len(matched["acronyms"])
+    word_hits = len(matched["words"])
+    weighted_hits = strong_hits * 2.0 + word_hits
+    weighted_total = (
+        (len(signals.get("phrases", [])) + len(signals.get("numbers", [])) + len(signals.get("acronyms", []))) * 2.0
+        + len(signals.get("words", []))
+    )
+    coverage = (weighted_hits / weighted_total) if weighted_total > 0 else 0.0
+
+    return {
+        "score": float(coverage),
+        "matched_signals": matched,
+        "has_phrase_or_number_or_acronym": strong_hits > 0,
+        "has_word_match": word_hits > 0,
+    }
+
+
+def _supporting_chunk_count(
+    chunks: list[dict],
+    signals: dict,
+    min_chunk_score: float,
+    min_keyword_score: float,
+) -> int:
+    """
+    Count how many chunks meaningfully support the question.
+
+    A chunk "supports" the question when:
+      - its retrieval score is at least `min_chunk_score`, AND
+      - its keyword score is at least `min_keyword_score`, AND
+      - at least one strong signal (phrase / number / acronym) OR
+        multiple word matches hit the chunk content.
+
+    This is intentionally stricter than pure ranking — a chunk with high vector
+    similarity but no lexical anchor is NOT counted as supporting.
+    """
+    if not chunks or not signals:
+        return 0
+
+    supporting = 0
+    for chunk in chunks:
+        score = float(chunk.get("score") or 0.0)
+        if score < min_chunk_score:
+            continue
+        kw = _chunk_keyword_score(
+            chunk.get("content", ""),
+            chunk.get("title", ""),
+            signals,
+        )
+        if kw["score"] < min_keyword_score:
+            continue
+        if not (kw["has_phrase_or_number_or_acronym"] or kw["has_word_match"]):
+            continue
+        # Require either a strong-signal match or >=2 word matches
+        if kw["has_phrase_or_number_or_acronym"] or len(kw["matched_signals"]["words"]) >= 2:
+            supporting += 1
+
+    return supporting
+
+
+def decide_evidence_level(
+    query: str,
+    chunks: list[dict],
+    retrieval_metadata: Optional[dict] = None,
+) -> tuple[EvidenceLevel, dict]:
+    """
+    Decide whether the retrieved chunks constitute strong, medium, or weak
+    evidence for answering the user's question.
+
+    The decision separates *ranking* score from *answerability*. A chunk can
+    rank highly via vector similarity without actually containing evidence
+    that answers the question; conversely a chunk may have moderate score
+    but contain an exact phrase/number/acronym that strongly supports the
+    answer.
+
+    STRONG evidence requires:
+      - top_score >= RAG_STRONG_EVIDENCE_THRESHOLD, AND
+      - >= RAG_MIN_SUPPORTING_CHUNKS chunks actually support the question
+        (have lexical anchors for query signals), AND
+      - at least one strong-signal match (phrase/number/acronym) in the top
+        supporting chunk OR very high vector similarity, AND
+      - either vector score is healthy (>= RAG_MIN_VECTOR_SCORE_FOR_STRONG)
+        OR a strong signal anchors the answer.
+
+    MEDIUM evidence requires:
+      - top_score >= RAG_MEDIUM_EVIDENCE_THRESHOLD, AND
+      - at least one chunk contains at least one question signal
+        (phrase/number/acronym OR multiple word matches), AND
+      - chunk content is not completely off-topic (heuristic: not in the
+        high-risk or generic-offtopic patterns).
+
+    WEAK otherwise (fallback).
+    """
+    metadata: dict = {
+        "decision": "weak",
+        "top_score": chunks[0].get("score") if chunks else None,
+        "vector_score_top": None,
+        "keyword_score_top": None,
+        "supporting_chunks": 0,
+        "question_signals": {"phrases": [], "numbers": [], "acronyms": [], "words": []},
+        "rationale": [],
+    }
+
+    if not chunks:
+        metadata["rationale"].append("no_chunks_retrieved")
+        return EvidenceLevel.WEAK, metadata
+
+    extract_signals = _get_signal_extractor()
+    signals = extract_signals(query or "")
+    metadata["question_signals"] = {
+        "phrases": list(signals.get("phrases", [])),
+        "numbers": list(signals.get("numbers", [])),
+        "acronyms": list(signals.get("acronyms", [])),
+        "words": list(signals.get("words", [])),
+    }
+
+    top_score = float(chunks[0].get("score") or 0.0)
+    metadata["top_score"] = top_score
+
+    # Pull vector score from chunk metadata if hybrid retrieval provided it.
+    top_vector = chunks[0].get("vector_score")
+    if top_vector is None:
+        # If we don't have separate vector_score, fall back to top_score as
+        # the vector component (similarity / hybrid-with-vector-only mode).
+        top_vector = top_score
+    try:
+        top_vector = float(top_vector)
+    except (TypeError, ValueError):
+        top_vector = top_score
+    metadata["vector_score_top"] = top_vector
+
+    # Compute per-chunk keyword score for the top chunk for diagnostics.
+    top_kw = _chunk_keyword_score(
+        chunks[0].get("content", ""),
+        chunks[0].get("title", ""),
+        signals,
+    )
+    metadata["keyword_score_top"] = top_kw["score"]
+
+    # If retrieval metadata already classified the query as a high-risk domain
+    # (legal/medical/financial/offtopic), we never grant STRONG/MEDIUM here.
+    # Those checks run earlier and short-circuit. This is a defense-in-depth.
+    if retrieval_metadata and retrieval_metadata.get("blocked_reason") in {
+        "legal_query_no_legal_content",
+        "medical_query_no_medical_content",
+        "financial_query_no_financial_content",
+        "offtopic_query",
+    }:
+        metadata["rationale"].append("high_risk_domain")
+        metadata["decision"] = "weak"
+        return EvidenceLevel.WEAK, metadata
+
+    # Generic off-topic guard: world knowledge / personal / consumer questions
+    # should not be answered from a technical documentation KB.
+    if query:
+        for pattern in OFFTOPIC_GENERIC_PATTERNS:
+            if pattern.search(query):
+                metadata["rationale"].append("offtopic_generic")
+                metadata["decision"] = "weak"
+                return EvidenceLevel.WEAK, metadata
+
+    # When there is no query or no extractable signals (e.g. the caller is
+    # running a retrieval-only check with no textual question), we cannot
+    # perform lexical-anchor validation. In that case fall back to score-only
+    # judgment so that legitimate top-score chunks are still considered
+    # supported. This is consistent with the pre-30E behavior and avoids
+    # blocking when no textual evidence is available to evaluate.
+    total_signals = sum(len(signals.get(k, [])) for k in ("phrases", "numbers", "acronyms", "words"))
+    if not query or total_signals == 0:
+        metadata["rationale"].append("no_signals_to_evaluate")
+        if top_score >= settings.RAG_STRONG_EVIDENCE_THRESHOLD:
+            metadata["decision"] = "strong"
+            return EvidenceLevel.STRONG, metadata
+        if top_score >= settings.RAG_MEDIUM_EVIDENCE_THRESHOLD:
+            metadata["decision"] = "medium"
+            return EvidenceLevel.MEDIUM, metadata
+        metadata["decision"] = "weak"
+        return EvidenceLevel.WEAK, metadata
+
+    # STRONG evidence path.
+    strong_threshold = settings.RAG_STRONG_EVIDENCE_THRESHOLD
+    medium_threshold = settings.RAG_MEDIUM_EVIDENCE_THRESHOLD
+    min_keyword_score = settings.RAG_MIN_KEYWORD_SCORE
+    min_supporting = settings.RAG_MIN_SUPPORTING_CHUNKS
+    min_vector_for_strong = settings.RAG_MIN_VECTOR_SCORE_FOR_STRONG
+
+    supporting = _supporting_chunk_count(
+        chunks,
+        signals,
+        min_chunk_score=medium_threshold,
+        min_keyword_score=min_keyword_score,
+    )
+    metadata["supporting_chunks"] = supporting
+
+    if top_score >= strong_threshold and supporting >= min_supporting:
+        # Strong signal: at least one phrase / number / acronym hit in top chunk
+        # OR the vector component is healthy enough on its own.
+        if top_kw["has_phrase_or_number_or_acronym"] or top_vector >= min_vector_for_strong:
+            metadata["rationale"].append("strong_score_and_lexical_or_vector_support")
+            metadata["decision"] = "strong"
+            return EvidenceLevel.STRONG, metadata
+        # High vector score alone without lexical anchor — still grant STRONG
+        # if the top score is well above strong_threshold, because the user
+        # clearly asked something that matches the corpus semantically.
+        if top_score >= strong_threshold + 0.15 and supporting >= min_supporting:
+            metadata["rationale"].append("strong_score_with_supporting_chunks")
+            metadata["decision"] = "strong"
+            return EvidenceLevel.STRONG, metadata
+        metadata["rationale"].append("strong_score_but_no_lexical_or_vector_support")
+
+    # MEDIUM evidence path.
+    if top_score >= medium_threshold:
+        if supporting >= 1:
+            metadata["rationale"].append("medium_score_with_supporting_chunk")
+            metadata["decision"] = "medium"
+            return EvidenceLevel.MEDIUM, metadata
+        # No supporting chunk with lexical anchor — but the top chunk has at
+        # least some word-level overlap, so answer cautiously.
+        if top_kw["has_word_match"] and top_score >= medium_threshold + 0.1:
+            metadata["rationale"].append("medium_score_with_word_overlap")
+            metadata["decision"] = "medium"
+            return EvidenceLevel.MEDIUM, metadata
+        metadata["rationale"].append("medium_score_but_no_lexical_anchor")
+
+    metadata["rationale"].append("insufficient_evidence")
+    metadata["decision"] = "weak"
+    return EvidenceLevel.WEAK, metadata
+
+
 def check_minimum_relevance(
     chunks: list[dict],
     threshold: Optional[float] = None,
@@ -465,47 +802,63 @@ def apply_grounding_checks(
     threshold: Optional[float] = None,
     require_citations: bool = True,
     query: Optional[str] = None,
+    retrieval_metadata: Optional[dict] = None,
+    evidence_level: Optional[EvidenceLevel] = None,
 ) -> tuple[bool, Optional[str], dict]:
     """
     Apply all grounding checks in sequence.
-    
+
     Checks:
     1. Retrieval guardrail (no chunks)
-    2. Minimum relevance threshold
+    2. High-risk domain (legal/medical/financial/offtopic) - Phase 11.2
     3. Topic relevance (Phase 11.2) - verify chunks match query topic
-    4. Answer grounding (if answer provided)
-    
+    4. Minimum relevance threshold
+    5. Evidence-aware decision (Phase 30E Hotfix v2) - STRONG/MEDIUM/WEAK
+    6. Answer grounding (if answer provided) - citation enforcement
+
+    The evidence-aware decision is the new authoritative gate for the
+    retrieval-only path (no answer yet). It separates ranking score from
+    answerability: a chunk can rank highly via vector similarity without
+    actually answering the question, so we look at lexical anchors
+    (phrases / numbers / acronyms / multi-word matches) before granting
+    STRONG or MEDIUM evidence.
+
     Args:
         chunks: Retrieved chunks.
         answer: Generated answer (optional - if None, only retrieval checks run).
         threshold: Minimum relevance score.
         require_citations: Whether citations are required.
         query: User's original query (required for topic relevance check).
-        
+        retrieval_metadata: Optional retrieval metadata for cross-checks.
+        evidence_level: Optional pre-computed evidence level (skips re-computation).
+
     Returns:
         Tuple of (should_block, fallback_message, metadata).
+        Metadata always includes `evidence_level` ("strong" | "medium" | "weak")
+        and `evidence_meta` with the decision rationale.
     """
-    metadata = {}
-    
+    metadata: dict = {}
+
     # Check 1: Retrieval guardrail
     should_block, message, guardrail_meta = check_retrieval_guardrail(chunks)
     metadata.update(guardrail_meta)
     if should_block:
-        return True, message, metadata
-    
-    # Check 2: Minimum relevance threshold
-    should_block, message, relevance_meta = check_minimum_relevance(chunks, threshold)
-    metadata.update(relevance_meta)
-    if should_block:
+        metadata["evidence_level"] = EvidenceLevel.WEAK.value
+        metadata["evidence_meta"] = {"decision": "weak", "rationale": ["no_chunks_retrieved"]}
         return True, message, metadata
 
-    # Check 2.5: High-risk domain check (legal/medical/financial/offtopic)
+    # Check 2: High-risk domain (legal/medical/financial/offtopic)
     # This runs before topic relevance to catch domain-specific queries that
-    # might pass keyword overlap checks but are actually out of scope
+    # might pass keyword overlap checks but are actually out of scope.
     if query is not None:
         should_block, message, domain_meta = check_high_risk_domain(query, chunks)
         metadata.update(domain_meta)
         if should_block:
+            metadata["evidence_level"] = EvidenceLevel.WEAK.value
+            metadata["evidence_meta"] = {
+                "decision": "weak",
+                "rationale": [domain_meta.get("blocked_reason", "high_risk_domain")],
+            }
             return True, message, metadata
 
     # Check 3: Topic relevance (Phase 11.2) - only if query is provided
@@ -513,9 +866,48 @@ def apply_grounding_checks(
         should_block, message, topic_meta = check_topic_relevance(query, chunks)
         metadata.update(topic_meta)
         if should_block:
+            metadata["evidence_level"] = EvidenceLevel.WEAK.value
+            metadata["evidence_meta"] = {
+                "decision": "weak",
+                "rationale": [topic_meta.get("blocked_reason", "topic_not_relevant")],
+            }
             return True, message, metadata
-    
-    # Check 4: Answer grounding (only if answer provided)
+
+    # Check 4: Minimum relevance threshold
+    should_block, message, relevance_meta = check_minimum_relevance(chunks, threshold)
+    metadata.update(relevance_meta)
+    if should_block:
+        metadata["evidence_level"] = EvidenceLevel.WEAK.value
+        metadata["evidence_meta"] = {
+            "decision": "weak",
+            "rationale": ["below_relevance_threshold"],
+            "threshold_used": relevance_meta.get("threshold_used"),
+            "top_score": relevance_meta.get("top_score"),
+        }
+        return True, message, metadata
+
+    # Check 5: Evidence-aware decision (Phase 30E Hotfix v2).
+    # This is the authoritative gate. Even if all the legacy checks above
+    # pass, we still need to verify that the retrieved chunks actually
+    # contain lexical evidence supporting the question.
+    if evidence_level is None:
+        evidence_level, evidence_meta = decide_evidence_level(
+            query=query or "",
+            chunks=chunks,
+            retrieval_metadata=retrieval_metadata,
+        )
+    else:
+        evidence_meta = {"decision": evidence_level.value, "rationale": ["precomputed"]}
+
+    metadata["evidence_level"] = evidence_level.value
+    metadata["evidence_meta"] = evidence_meta
+
+    if evidence_level == EvidenceLevel.WEAK:
+        metadata["blocked_reason"] = "weak_evidence"
+        return True, LOW_RELEVANCE_MESSAGE, metadata
+
+    # STRONG or MEDIUM evidence - retrieval checks pass.
+    # Check 6: Answer grounding (only if answer provided)
     if answer is not None:
         should_block, message, grounding_meta = check_answer_grounding(
             answer, chunks, require_citations
@@ -523,7 +915,7 @@ def apply_grounding_checks(
         metadata.update(grounding_meta)
         if should_block:
             return True, message, metadata
-    
+
     return False, None, metadata
 
 

@@ -3,7 +3,40 @@ Prompt Builder for RAG and General Chat
 
 Provides functions to build prompts for different chat modes with
 appropriate instructions for the LLM.
+
+Phase 30E Hotfix v2 — Evidence-aware prompt construction:
+- Strong evidence: standard prompt with full citation guidance
+- Medium evidence: prompt includes a "Based on the retrieved sources..."
+  caveat guidance so the LLM does not overstate confidence
+- Weak evidence: caller should not call this function (fallback path used)
 """
+
+# Evidence level constants. Kept as plain string literals so this module does
+# not need to import the grounding enum (avoids circular imports).
+EVIDENCE_STRONG = "strong"
+EVIDENCE_MEDIUM = "medium"
+
+
+def _evidence_caveat_section(evidence_level: str) -> str:
+    """
+    Build the medium-evidence caveat section for the prompt.
+
+    Phase 30E Hotfix v2: when evidence is medium, the LLM is explicitly told
+    to answer cautiously and not overstate confidence.
+    """
+    if evidence_level == EVIDENCE_MEDIUM:
+        return """
+
+EVIDENCE QUALITY (CAUTION):
+- The retrieved sources only PARTIALLY support a direct answer to this question.
+- Answer cautiously, starting with "Based on the retrieved sources, ..." or similar phrasing.
+- If a specific detail is not directly supported by the numbered sources, say so explicitly
+  ("The retrieved documents indicate X, but they do not clearly state Y.").
+- Do not invent or extrapolate details that are not in the numbered sources.
+- Still cite every factual claim with [N] referencing the numbered sources.
+
+"""
+    return ""
 
 
 def build_rag_prompt(
@@ -11,6 +44,7 @@ def build_rag_prompt(
     chunks: list[dict],
     include_citations: bool = True,
     conversation_context: str = "",
+    evidence_level: str = EVIDENCE_STRONG,
 ) -> str:
     """
     Build a RAG prompt from user query and retrieved chunks.
@@ -21,6 +55,8 @@ def build_rag_prompt(
         chunks: List of retrieved context chunks.
         include_citations: If True, instruct the model to cite sources.
         conversation_context: Optional formatted conversation context for follow-up questions.
+        evidence_level: "strong" (default) or "medium". When "medium", a caveat
+            section is included to encourage cautious answering.
     """
     if not chunks:
         return f"""You are a helpful support assistant. The user asked: {query}
@@ -52,6 +88,9 @@ use the conversation context above to understand what is being asked about.
 Base your answer on both the conversation context and the retrieved document information.
 """ if conversation_context else ""
 
+    # Phase 30E Hotfix v2: medium-evidence caveat is appended after context.
+    evidence_section = _evidence_caveat_section(evidence_level)
+
     # Phase 30E: Cleaner answer structure for business users
     formatting_rules = """
 ANSWER STRUCTURE (general):
@@ -81,7 +120,7 @@ INFORMATION:
 {context}
 
 USER QUESTION: {query}
-
+{evidence_section}
 IMPORTANT GUIDELINES:
 - Answer ONLY from the information provided above in the INFORMATION section
 - Do NOT guess, infer, or make up information that is not directly in the sources
@@ -124,7 +163,11 @@ IMPORTANT GUIDELINES:
 ANSWER:"""
 
 
-def build_knowledge_base_prompt(query: str, chunks: list[dict]) -> str:
+def build_knowledge_base_prompt(
+    query: str,
+    chunks: list[dict],
+    evidence_level: str = EVIDENCE_STRONG,
+) -> str:
     """
     Build a prompt for Knowledge Base mode (RAG with citations).
 
@@ -133,17 +176,24 @@ def build_knowledge_base_prompt(query: str, chunks: list[dict]) -> str:
     Args:
         query: User's question.
         chunks: List of retrieved context chunks.
+        evidence_level: "strong" (default) or "medium". See build_rag_prompt.
 
     Returns:
         Formatted prompt for knowledge base response.
     """
-    return build_rag_prompt(query, chunks, include_citations=True)
+    return build_rag_prompt(
+        query,
+        chunks,
+        include_citations=True,
+        evidence_level=evidence_level,
+    )
 
 
 def build_strict_citation_prompt(
     query: str,
     chunks: list[dict],
     conversation_context: str = "",
+    evidence_level: str = EVIDENCE_STRONG,
 ) -> str:
     """
     Build a strict RAG prompt requiring explicit citations for every factual claim.
@@ -158,6 +208,8 @@ def build_strict_citation_prompt(
         query: User's question.
         chunks: List of retrieved context chunks.
         conversation_context: Optional formatted conversation context for follow-up questions.
+        evidence_level: "strong" (default) or "medium". When "medium", the prompt
+            additionally tells the model to caveat with "Based on the retrieved sources, ...".
 
     Returns:
         Formatted strict prompt requiring citations.
@@ -188,6 +240,9 @@ use the conversation context above to understand what is being asked about.
 Base your answer on both the conversation context and the retrieved document information.
 """ if conversation_context else ""
 
+    # Phase 30E Hotfix v2: medium-evidence caveat appended after the question.
+    evidence_section = _evidence_caveat_section(evidence_level)
+
     # Phase 30E: Strict citation prompt with cleaner answer structure
     formatting_rules = """
 ANSWER STRUCTURE (general):
@@ -215,7 +270,7 @@ INFORMATION:
 {context}
 
 USER QUESTION: {query}
-
+{evidence_section}
 STRICT CITATION REQUIREMENTS:
 - You MUST cite every factual statement using [1], [2], [3] etc. to reference the numbered sources above
 - Every bullet point in your answer MUST include at least one citation like [1] or [2]

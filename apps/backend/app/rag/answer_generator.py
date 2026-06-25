@@ -79,6 +79,60 @@ def _call_llm_with_citations(
     return llm_response.message
 
 
+def _call_llm_with_citations_and_evidence(
+    query: str,
+    chunks: list[dict],
+    strict: bool = False,
+    temperature: float = 0.0,
+    conversation_context: str = "",
+    evidence_level: str = "strong",
+) -> str:
+    """
+    Call LLM to generate answer with evidence-level-aware prompt.
+
+    Phase 30E Hotfix v2: When evidence_level is "medium", the prompt includes
+    a "Based on the retrieved sources..." caveat that instructs the model to
+    answer cautiously and not overstate confidence.
+
+    Args:
+        query: User's question.
+        chunks: Retrieved context chunks.
+        strict: If True, use stricter citation prompt (for retry).
+        temperature: LLM temperature for deterministic output.
+        conversation_context: Formatted conversation context for follow-up handling.
+        evidence_level: "strong" (default) or "medium".
+
+    Returns:
+        LLM generated answer text.
+    """
+    if strict:
+        prompt = build_strict_citation_prompt(
+            query, chunks, conversation_context, evidence_level=evidence_level
+        )
+    else:
+        prompt = build_rag_prompt(
+            query, chunks, conversation_context=conversation_context, evidence_level=evidence_level
+        )
+
+    provider = get_llm_provider()
+    llm_request = ChatRequest(message=prompt)
+    # Pass temperature to provider if supported
+    if hasattr(provider, 'set_temperature'):
+        provider.set_temperature(temperature)
+    llm_response = provider.chat(llm_request)
+
+    return llm_response.message
+
+    provider = get_llm_provider()
+    llm_request = ChatRequest(message=prompt)
+    # Pass temperature to provider if supported
+    if hasattr(provider, 'set_temperature'):
+        provider.set_temperature(temperature)
+    llm_response = provider.chat(llm_request)
+
+    return llm_response.message
+
+
 def _should_retry_for_citations(
     answer: str,
     chunks: list[dict],
@@ -225,7 +279,17 @@ def generate_answer_with_rag(
 
     # Proceed with LLM call - use temperature=0 for deterministic KB output
     # Phase 20C: Pass conversation_context separately to prompt
-    answer = _call_llm_with_citations(query, chunks, strict=False, temperature=0.0, conversation_context=conversation_context)
+    # Phase 30E Hotfix v2: pass evidence_level so the prompt uses the
+    # medium-evidence caveat when appropriate.
+    evidence_level = grounding_meta.get("evidence_level", "strong") or "strong"
+    answer = _call_llm_with_citations_and_evidence(
+        query,
+        chunks,
+        strict=False,
+        temperature=0.0,
+        conversation_context=conversation_context,
+        evidence_level=evidence_level,
+    )
     citations = format_citations(chunks)
 
     # Phase 10.6: Check initial citations
@@ -249,7 +313,14 @@ def generate_answer_with_rag(
             citation_repair_meta["retry_attempted"] = True
             crag_decision["correction_attempted"] = True
             crag_decision["correction_type"] = "retry"
-            answer = _call_llm_with_citations(query, chunks, strict=True, temperature=0.0, conversation_context=conversation_context)
+            answer = _call_llm_with_citations_and_evidence(
+                query,
+                chunks,
+                strict=True,
+                temperature=0.0,
+                conversation_context=conversation_context,
+                evidence_level=evidence_level,
+            )
             citations = format_citations(chunks)
             citation_repair_meta["retry_has_citations"] = has_citations(answer)
 
@@ -438,9 +509,18 @@ def generate_answer_with_rag_audit(
     retrieved_doc_ids = list(set(c.get("document_id") for c in chunks if c.get("document_id")))
     retrieved_chunk_ids = list(set(c.get("chunk_id") for c in chunks if c.get("chunk_id")))
 
+    # Phase 30E Hotfix v2: extract evidence_level from grounding meta so the
+    # prompt uses the medium-evidence caveat when appropriate.
+    evidence_level = grounding_meta.get("evidence_level", "strong") or "strong"
+
     # Build prompt and generate answer - use temperature=0 for deterministic KB output
     # Phase 20C: Pass conversation_context separately to prompt
-    prompt = build_rag_prompt(query, chunks, conversation_context=conversation_context)
+    prompt = build_rag_prompt(
+        query,
+        chunks,
+        conversation_context=conversation_context,
+        evidence_level=evidence_level,
+    )
     llm_request = ChatRequest(message=prompt)
     if hasattr(provider, 'set_temperature'):
         provider.set_temperature(0.0)
@@ -468,7 +548,12 @@ def generate_answer_with_rag_audit(
             citation_repair_meta["retry_attempted"] = True
             crag_decision["correction_attempted"] = True
             crag_decision["correction_type"] = "retry"
-            strict_prompt = build_strict_citation_prompt(query, chunks, conversation_context)
+            strict_prompt = build_strict_citation_prompt(
+                query,
+                chunks,
+                conversation_context,
+                evidence_level=evidence_level,
+            )
             llm_request = ChatRequest(message=strict_prompt)
             if hasattr(provider, 'set_temperature'):
                 provider.set_temperature(0.0)

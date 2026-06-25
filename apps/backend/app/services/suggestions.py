@@ -63,6 +63,7 @@ CONTEXTUAL_ACTIONS: List[Suggestion] = [
 
 # RAG answers WITH citations
 # Phase 20C (refined): Focused suggestions for RAG with citations
+# Phase 30E Hotfix v2: Expanded to 4-5 items so follow-ups are always 3-5.
 RAG_WITH_CITATIONS: List[Suggestion] = [
     Suggestion(
         label="Show cited sources",
@@ -73,6 +74,11 @@ RAG_WITH_CITATIONS: List[Suggestion] = [
         label="Open Documents",
         prompt="Navigate to the Documents page",
         type="frontend_action",
+    ),
+    Suggestion(
+        label="Ask a follow-up",
+        prompt="What additional details or examples can you provide about the previous answer?",
+        type="question",
     ),
     Suggestion(
         label="Summarize for management",
@@ -88,6 +94,7 @@ RAG_WITH_CITATIONS: List[Suggestion] = [
 
 # RAG fallback / no-context / unsupported answers
 # Phase 20C (refined): Limited suggestions - no contextual actions for fallback
+# Phase 30E Hotfix v2: Expanded to 4 items so follow-ups are always 3-5.
 RAG_FALLBACK: List[Suggestion] = [
     Suggestion(
         label="Rephrase the question",
@@ -103,6 +110,11 @@ RAG_FALLBACK: List[Suggestion] = [
         label="Open Documents",
         prompt="Navigate to the Documents page",
         type="frontend_action",
+    ),
+    Suggestion(
+        label="Try different keywords",
+        prompt="Suggest 3-5 alternative phrasings or keywords I could use to search for this information.",
+        type="question",
     ),
 ]
 
@@ -194,6 +206,34 @@ def generate_suggestions(
         s for s in suggestions
         if s.type != "contextual_action" or (has_conversation_context and not is_fallback)
     ][:6]  # Allow a few more since contextual ones are prioritized
+
+    # Phase 30E Hotfix v2 — safety net to guarantee 3-5 suggestions.
+    # If filtering removed too many (or the base set is unexpectedly small),
+    # backfill from the original suggestion set so the UI always shows
+    # between 3 and 5 suggestions, including for fallback responses.
+    if len(safe_suggestions) < 3:
+        existing_labels = {s.label for s in safe_suggestions}
+        for s in suggestions:
+            if s.label in existing_labels:
+                continue
+            if s.type == "contextual_action" and not (has_conversation_context and not is_fallback):
+                continue
+            safe_suggestions.append(s)
+            existing_labels.add(s.label)
+            if len(safe_suggestions) >= 3:
+                break
+        # Final backstop: if still under 3, pull from the base set ignoring type filter
+        if len(safe_suggestions) < 3:
+            for s in suggestions:
+                if s.label in existing_labels:
+                    continue
+                safe_suggestions.append(s)
+                existing_labels.add(s.label)
+                if len(safe_suggestions) >= 3:
+                    break
+
+    # Cap at 6 to avoid overwhelming the UI
+    safe_suggestions = safe_suggestions[:6]
 
     # Convert to dict format for JSON serialization
     return [

@@ -86,6 +86,11 @@ def _generic_keyword_score(content: str, title: str, signals: dict) -> float:
 
     Returns a float in [0.0, 1.0+] roughly proportional to how many distinct
     query signals appear in the chunk content or title. This is document-agnostic.
+
+    IMPORTANT: This score is used purely for *ranking*. It is NOT used to
+    decide whether a chunk actually answers a question. The grounding layer
+    (Phase 30E Hotfix v2) independently checks lexical anchors via
+    `decide_evidence_level()` and `RAG_MIN_KEYWORD_SCORE`.
     """
     if not content:
         return 0.0
@@ -141,6 +146,17 @@ def _generic_keyword_score(content: str, title: str, signals: dict) -> float:
     coverage = matched / total_signals
     raw = (score / max(total_signals, 1)) * coverage
     return max(0.0, min(1.0, raw))
+
+
+def compute_keyword_ranking_score(content: str, title: str, query: str) -> float:
+    """
+    Public helper that computes the keyword ranking score for a chunk against
+    a query string. This is a thin wrapper around `_extract_query_signals` and
+    `_generic_keyword_score`. It is for *ranking only* — answerability is
+    decided by the grounding layer.
+    """
+    signals = _extract_query_signals(query)
+    return _generic_keyword_score(content, title, signals)
 
 
 def _boost_chunks_with_keyword_signals(

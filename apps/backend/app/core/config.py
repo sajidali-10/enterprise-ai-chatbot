@@ -88,6 +88,34 @@ class Settings(BaseSettings):
     # Minimum score below which a chunk is filtered out before selection
     RAG_MIN_SCORE: float = float(os.getenv("RAG_MIN_SCORE", "0.1"))
 
+    # Phase 30E Hotfix v2 — Evidence-Aware Grounding Thresholds
+    # These thresholds separate "ranking score" from "answerability score".
+    # A question with strong retrieval score but weak keyword overlap is NOT
+    # automatically answerable. Conversely, a relevant short query should
+    # not be blocked just because the score is moderate.
+    #
+    # STRONG: answer confidently with sources
+    #   - top_score >= RAG_STRONG_EVIDENCE_THRESHOLD
+    #   - AND at least RAG_MIN_SUPPORTING_CHUNKS chunks meet supporting criteria
+    #   - AND question signals (phrase/number/acronym or strong keyword overlap) are in chunk content
+    RAG_STRONG_EVIDENCE_THRESHOLD: float = float(os.getenv("RAG_STRONG_EVIDENCE_THRESHOLD", "0.65"))
+    # MEDIUM: answer cautiously with a caveat ("Based on the retrieved sources...")
+    #   - top_score >= RAG_MEDIUM_EVIDENCE_THRESHOLD
+    #   - AND at least one chunk contains at least one meaningful question signal
+    RAG_MEDIUM_EVIDENCE_THRESHOLD: float = float(os.getenv("RAG_MEDIUM_EVIDENCE_THRESHOLD", "0.35"))
+    # Minimum keyword overlap (question keywords appearing in chunk content)
+    # below which the evidence is considered weak even if scores are decent.
+    RAG_MIN_KEYWORD_OVERLAP: float = float(os.getenv("RAG_MIN_KEYWORD_OVERLAP", "0.30"))
+    # Minimum number of chunks that must contain question signals for the
+    # answer to be considered supported (prevents single weak chunk answers).
+    RAG_MIN_SUPPORTING_CHUNKS: int = int(os.getenv("RAG_MIN_SUPPORTING_CHUNKS", "1"))
+    # Minimum keyword score (0..1) for a chunk to be considered to "support"
+    # the question. Generic single-word overlap below this does not count.
+    RAG_MIN_KEYWORD_SCORE: float = float(os.getenv("RAG_MIN_KEYWORD_SCORE", "0.20"))
+    # Optional: minimum vector similarity required for strong evidence even
+    # when keyword score is high (defense against adversarial lexical overlap).
+    RAG_MIN_VECTOR_SCORE_FOR_STRONG: float = float(os.getenv("RAG_MIN_VECTOR_SCORE_FOR_STRONG", "0.45"))
+
     # Phase 26 — RAGAS Evaluation Foundation
     # Evaluator LLM provider for RAGAS metrics (faithfulness, answer_relevancy, context_precision)
     RAGAS_ENABLED: bool = os.getenv("RAGAS_ENABLED", "false").lower() in ("true", "1", "yes")
