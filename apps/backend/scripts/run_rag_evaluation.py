@@ -23,6 +23,32 @@ from app.models.observability import ChatObservation
 from app.rag.answer_generator import generate_answer_with_rag
 from app.rag.citations import group_citations_by_source
 
+# Phase 31A — LangSmith tracing for evaluation runs. Safe wrappers no-op when
+# tracing is disabled (default), and never raise on failure.
+try:
+    from app.services.langsmith_tracing import (
+        trace_span,
+        trace_chat_request,
+        redact_filenames,
+        sanitize_metadata,
+    )
+except Exception:  # pragma: no cover - tracing never required
+    from contextlib import contextmanager
+
+    @contextmanager
+    def trace_span(*args, **kwargs):
+        yield None
+
+    @contextmanager
+    def trace_chat_request(*args, **kwargs):
+        yield None
+
+    def redact_filenames(value):
+        return list(value or [])
+
+    def sanitize_metadata(value):
+        return value or {}
+
 
 def load_evaluation_dataset():
     """Load evaluation cases from JSON dataset."""
@@ -47,16 +73,44 @@ def run_evaluation_case(case: dict, db: Session) -> dict:
     """Run a single evaluation case and return results."""
     question = case["question"]
     expected_source = case.get("expected_source_file")
-    
+    case_id = case.get("id") or case.get("name") or (question[:50] if question else "unknown")
+
+    # Phase 31A — wrap the whole eval-case run in a single span so each
+    # case becomes a queryable LangSmith trace with retrieval strategy,
+    # evidence level, fallback reason, pass/fail, and failure reasons.
+    case_metadata: dict = {
+        "phase": "rag_evaluation_case",
+        "evaluation_case_id": str(case_id),
+        "expected_behavior": "answer" if case.get("should_answer", True) else "fallback",
+        "expected_source_file": expected_source,
+        "expected_min_citations": case.get("minimum_expected_citations", 0),
+        "expected_fallback": bool(case.get("expected_fallback", False)),
+        "should_have_citations": bool(case.get("should_have_citations", False)),
+    }
+    # `expected_keywords` may contain sensitive phrases from private docs;
+    # only forward a count, never the strings themselves, unless the
+    # operator has explicitly opted in. Default: counts only.
+    ek = case.get("expected_keywords") or []
+    if ek:
+        case_metadata["expected_keyword_count"] = len(ek)
+
+    with trace_span("rag_evaluation_case", metadata=case_metadata) as case_span:
+        return _run_evaluation_case_impl(case, db, case_id, case_span)
+
+
+def _run_evaluation_case_impl(case: dict, db: Session, case_id, case_span) -> dict:
+    question = case["question"]
+    expected_source = case.get("expected_source_file")
+
     start_time = time.time()
-    
+
     # Run through Knowledge Base mode
     answer, citations, metadata = generate_answer_with_rag(
         query=question,
         use_hybrid=True,
         debug=False,
     )
-    
+
     latency_ms = (time.time() - start_time) * 1000
     
     # Get source files from citations
@@ -202,7 +256,36 @@ def run_evaluation_case(case: dict, db: Session) -> dict:
         failure_reasons.append("missing_keywords")
     if forbidden_found:
         failure_reasons.append("forbidden_keywords_found")
-    
+
+    # Phase 31A — attach final pass/fail result to the eval-case span so
+    # LangSmith surfaces pass/fail counts, failure reasons, retrieval
+    # strategy, evidence level, and fallback reason per case.
+    if case_span is not None:
+        try:
+            grounding = (metadata or {}).get("grounding") or {}
+            retrieval_strategy = (metadata or {}).get("retrieval_strategy") or (
+                (metadata or {}).get("strategy")
+            )
+            case_span.set_meta("passed", bool(passed))
+            case_span.set_meta("latency_ms", int(latency_ms or 0))
+            case_span.set_meta("citation_count", int(citation_count or 0))
+            case_span.set_meta("failure_reasons", failure_reasons if not passed else None)
+            case_span.set_meta(
+                "source_file_names",
+                redact_filenames([s for s in actual_sources if s]),
+            )
+            case_span.set_meta("retrieval_strategy", retrieval_strategy)
+            case_span.set_meta("evidence_level", grounding.get("evidence_level"))
+            case_span.set_meta(
+                "fallback_reason",
+                grounding.get("blocked_reason") or (metadata or {}).get("block_reason"),
+            )
+            case_span.set_meta("blocked", bool((metadata or {}).get("blocked")))
+            case_span.set_meta("actual_blocked", bool(is_blocked))
+            case_span.set_meta("top_score", top_score)
+        except Exception:
+            pass
+
     return {
         "test_case_id": case["id"],
         "question": question,

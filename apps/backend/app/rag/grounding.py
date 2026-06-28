@@ -26,6 +26,7 @@ import re
 from typing import Optional, Iterable
 from enum import Enum
 from app.core.config import settings
+from app.services.langsmith_tracing import trace_span, redact_filenames, safe_chunk_content
 
 
 class EvidenceLevel(str, Enum):
@@ -837,6 +838,90 @@ def apply_grounding_checks(
         Metadata always includes `evidence_level` ("strong" | "medium" | "weak")
         and `evidence_meta` with the decision rationale.
     """
+    # Phase 31A — open an `evidence_grounding` span so the full decision
+    # tree is visible in LangSmith. The span is closed on every return path
+    # via the context manager's __exit__.
+    return _apply_grounding_checks_traced(
+        chunks=chunks,
+        answer=answer,
+        threshold=threshold,
+        require_citations=require_citations,
+        query=query,
+        retrieval_metadata=retrieval_metadata,
+        evidence_level=evidence_level,
+    )
+
+
+def _apply_grounding_checks_traced(
+    chunks: list[dict],
+    answer: Optional[str] = None,
+    threshold: Optional[float] = None,
+    require_citations: bool = True,
+    query: Optional[str] = None,
+    retrieval_metadata: Optional[dict] = None,
+    evidence_level: Optional[EvidenceLevel] = None,
+) -> tuple[bool, Optional[str], dict]:
+    with trace_span(
+        "evidence_grounding",
+        metadata={
+            "phase": "evidence_grounding",
+            "query_length": len(query or ""),
+            "has_answer": answer is not None,
+            "chunk_count": len(chunks or []),
+        },
+    ) as grounding_span:
+        should_block, message, metadata = _run_grounding_checks(
+            chunks=chunks,
+            answer=answer,
+            threshold=threshold,
+            require_citations=require_citations,
+            query=query,
+            retrieval_metadata=retrieval_metadata,
+            evidence_level=evidence_level,
+        )
+        # Phase 31A — attach the final evidence-grounding decision to the
+        # span. We do this after _run_grounding_checks returns so that
+        # every return path is captured (no span metadata scattered
+        # through the function body).
+        if grounding_span is not None:
+            try:
+                grounding_span.set_meta("evidence_level", metadata.get("evidence_level"))
+                grounding_span.set_meta(
+                    "fallback_reason",
+                    metadata.get("blocked_reason") or ("answer_lacks_citations" if should_block else None),
+                )
+                grounding_span.set_meta(
+                    "supporting_chunk_count",
+                    (metadata.get("evidence_meta") or {}).get("supporting_chunks"),
+                )
+                grounding_span.set_meta(
+                    "top_score",
+                    (metadata.get("evidence_meta") or {}).get("top_score") or (chunks[0].get("score") if chunks else None),
+                )
+                grounding_span.set_meta("llm_skipped_due_to_weak_evidence", should_block)
+                grounding_span.set_meta(
+                    "medium_evidence_caveat_applied",
+                    metadata.get("evidence_level") == EvidenceLevel.MEDIUM.value,
+                )
+                grounding_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(list({c.get("source_file_name") for c in chunks if c.get("source_file_name")})),
+                )
+            except Exception:
+                pass
+        return should_block, message, metadata
+
+
+def _run_grounding_checks(
+    chunks: list[dict],
+    answer: Optional[str] = None,
+    threshold: Optional[float] = None,
+    require_citations: bool = True,
+    query: Optional[str] = None,
+    retrieval_metadata: Optional[dict] = None,
+    evidence_level: Optional[EvidenceLevel] = None,
+    grounding_span=None,
+) -> tuple[bool, Optional[str], dict]:
     metadata: dict = {}
 
     # Check 1: Retrieval guardrail

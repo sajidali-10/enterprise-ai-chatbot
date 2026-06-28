@@ -34,6 +34,19 @@ from app.services.conversation_context import (
 )
 from app.core.rate_limit import rate_limit
 
+# Phase 31A — LangSmith tracing for the chat endpoint.
+# All calls are wrapped in the safe wrappers from langsmith_tracing, which
+# no-op when tracing is disabled (default) and never raise on failure.
+from app.services.langsmith_tracing import (
+    trace_chat_request,
+    trace_span,
+    trace_chat_start,
+    trace_chat_end,
+    trace_error,
+    redact_filenames,
+    sanitize_metadata,
+)
+
 # Chat session models (Phase 20A)
 try:
     from app.models.chat_session import ChatSession, ChatMessage
@@ -364,6 +377,50 @@ def post_chat(
     _require_permission_for_mode(auth, mode)
     is_debug_mode = mode == ChatMode.DEBUG
 
+    # Phase 31A — open the top-level `chat_request` span. Child spans
+    # (rag_retrieval, evidence_grounding, prompt_building, llm_call,
+    # citation_processing, final_response) attach to this via the
+    # thread-local span stack. When tracing is disabled this is a no-op.
+    with trace_chat_request(
+        mode=mode,
+        extra={
+            "user_role": getattr(auth, "role", None).value
+            if auth and getattr(auth, "role", None) and hasattr(getattr(auth, "role", None), "value")
+            else (str(getattr(auth, "role", None)) if auth and getattr(auth, "role", None) else None),
+            "session_id_present": bool(chat_request.session_id),
+        },
+    ) as parent_span:
+        return _run_chat_request(
+            request=request,
+            chat_request=chat_request,
+            mode=mode,
+            client_ip=client_ip,
+            user_agent=user_agent,
+            is_debug_mode=is_debug_mode,
+            start_time=start_time,
+            auth=auth,
+            db=db,
+            use_hybrid=use_hybrid,
+            debug=debug,
+            parent_span=parent_span,
+        )
+
+
+def _run_chat_request(
+    request: Request,
+    chat_request: "ChatRequest",
+    mode: str,
+    client_ip: str,
+    user_agent: str,
+    is_debug_mode: bool,
+    start_time: float,
+    auth: Optional["AuthContext"],
+    db: "Session",
+    use_hybrid: bool,
+    debug: bool,
+    parent_span,
+) -> ChatResponse:
+
     latency_ms = None
     observation_id = None
     session = None
@@ -548,6 +605,38 @@ def post_chat(
             )
         except Exception:
             # Log but don't break the response
+            pass
+
+    # Phase 31A — attach final summary metadata to the parent chat_request
+    # span so the LangSmith trace records response status, source filenames,
+    # citation count, latency, and provider/model. This data is what makes
+    # failed cases debuggable from the LangSmith UI.
+    if parent_span is not None:
+        try:
+            parent_span.set_meta("response_status", "ok")
+            parent_span.set_meta("latency_ms", int((time.time() - start_time) * 1000))
+            parent_span.set_meta("citation_count", len(citations or []))
+            parent_span.set_meta("blocked", bool((metadata or {}).get("blocked")))
+            parent_span.set_meta("block_reason", (metadata or {}).get("block_reason"))
+            parent_span.set_meta(
+                "evidence_level",
+                ((metadata or {}).get("grounding") or {}).get("evidence_level"),
+            )
+            parent_span.set_meta(
+                "fallback_reason",
+                ((metadata or {}).get("grounding") or {}).get("blocked_reason"),
+            )
+            parent_span.set_meta("provider", provider_used)
+            parent_span.set_meta("model", model_used)
+            parent_span.set_meta("observation_id", observation_id)
+            parent_span.set_meta(
+                "source_file_names",
+                redact_filenames(
+                    list({c.get("source_file_name") for c in citations if c.get("source_file_name")})
+                ),
+            )
+        except Exception:
+            # Tracing must NEVER break the response
             pass
 
     return response

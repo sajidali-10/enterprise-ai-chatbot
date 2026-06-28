@@ -9,12 +9,33 @@ Phase 30E Hotfix v2 — Evidence-aware prompt construction:
 - Medium evidence: prompt includes a "Based on the retrieved sources..."
   caveat guidance so the LLM does not overstate confidence
 - Weak evidence: caller should not call this function (fallback path used)
+
+Phase 31A — LangSmith tracing:
+- build_rag_prompt and build_strict_citation_prompt open a
+  `prompt_building` span so the prompt construction is visible
+  in the LangSmith trace hierarchy.
 """
 
 # Evidence level constants. Kept as plain string literals so this module does
 # not need to import the grounding enum (avoids circular imports).
 EVIDENCE_STRONG = "strong"
 EVIDENCE_MEDIUM = "medium"
+
+# Phase 31A — import tracing helpers lazily to avoid impacting
+# import-time side effects in the FastAPI startup path.
+try:
+    from app.services.langsmith_tracing import trace_span, redact_filenames, safe_chunk_content
+except Exception:  # pragma: no cover - tracing never required
+    def trace_span(*args, **kwargs):  # type: ignore
+        from contextlib import contextmanager
+        @contextmanager
+        def _noop():
+            yield None
+        return _noop()
+    def redact_filenames(value):  # type: ignore
+        return list(value or [])
+    def safe_chunk_content(value):  # type: ignore
+        return value or ""
 
 
 def _evidence_caveat_section(evidence_level: str) -> str:
@@ -58,6 +79,50 @@ def build_rag_prompt(
         evidence_level: "strong" (default) or "medium". When "medium", a caveat
             section is included to encourage cautious answering.
     """
+    # Phase 31A — open a `prompt_building` span. The span records the
+    # number of chunks in context, whether a conversation context is
+    # present, and the prompt length (only when LANGSMITH_LOG_FULL_PROMPT
+    # is enabled). The prompt body itself is NEVER sent unless that flag
+    # is explicitly on, in which case the operator has opted in.
+    with trace_span(
+        "prompt_building",
+        metadata={
+            "phase": "prompt_building",
+            "prompt_type": "rag",
+            "include_citations": include_citations,
+            "evidence_level": evidence_level,
+            "context_chunk_count": len(chunks or []),
+            "has_conversation_context": bool(conversation_context),
+        },
+    ) as prompt_span:
+        result = _build_rag_prompt_impl(
+            query=query,
+            chunks=chunks,
+            include_citations=include_citations,
+            conversation_context=conversation_context,
+            evidence_level=evidence_level,
+            prompt_span=prompt_span,
+        )
+        if prompt_span is not None:
+            try:
+                prompt_span.set_meta("prompt_length", len(result or ""))
+                prompt_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(list({c.get("source_file_name") for c in chunks if c.get("source_file_name")})),
+                )
+            except Exception:
+                pass
+        return result
+
+
+def _build_rag_prompt_impl(
+    query: str,
+    chunks: list[dict],
+    include_citations: bool = True,
+    conversation_context: str = "",
+    evidence_level: str = EVIDENCE_STRONG,
+    prompt_span=None,
+) -> str:
     if not chunks:
         return f"""You are a helpful support assistant. The user asked: {query}
 
@@ -214,6 +279,42 @@ def build_strict_citation_prompt(
     Returns:
         Formatted strict prompt requiring citations.
     """
+    # Phase 31A — separate span for the strict/retry prompt path so the
+    # LangSmith hierarchy clearly shows when a retry prompt was used.
+    with trace_span(
+        "prompt_building",
+        metadata={
+            "phase": "prompt_building",
+            "prompt_type": "strict_citation",
+            "evidence_level": evidence_level,
+            "context_chunk_count": len(chunks or []),
+            "has_conversation_context": bool(conversation_context),
+        },
+    ) as prompt_span:
+        result = _build_strict_citation_prompt_impl(
+            query=query,
+            chunks=chunks,
+            conversation_context=conversation_context,
+            evidence_level=evidence_level,
+        )
+        if prompt_span is not None:
+            try:
+                prompt_span.set_meta("prompt_length", len(result or ""))
+                prompt_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(list({c.get("source_file_name") for c in chunks if c.get("source_file_name")})),
+                )
+            except Exception:
+                pass
+        return result
+
+
+def _build_strict_citation_prompt_impl(
+    query: str,
+    chunks: list[dict],
+    conversation_context: str = "",
+    evidence_level: str = EVIDENCE_STRONG,
+) -> str:
     if not chunks:
         return f"""You are a helpful support assistant. The user asked: {query}
 

@@ -17,6 +17,7 @@ from app.rag.hybrid_retriever import (
 )
 from app.rag.query_rewriter import get_query_rewriter
 from app.core.config import settings
+from app.services.langsmith_tracing import trace_span, redact_filenames, safe_chunk_content, get_current_span
 
 # Import security modules for permission filtering (Phase 6)
 try:
@@ -62,7 +63,7 @@ def retrieve_chunks(query: str, limit: int = 5, score_threshold: float = 0.5) ->
 def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list[dict], dict]:
     """
     Retrieve chunks using hybrid retrieval with configurable settings.
-    
+
     Uses settings from config:
     - RETRIEVAL_VECTOR_TOP_K: Number of vector results to fetch
     - RETRIEVAL_KEYWORD_TOP_K: Number of keyword results to fetch
@@ -72,65 +73,105 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
     - RETRIEVAL_VECTOR_WEIGHT: Weight for vector scores in fusion
     - RETRIEVAL_KEYWORD_WEIGHT: Weight for keyword scores in fusion
     - RETRIEVAL_QUERY_REWRITER: Query rewriter to use
-    
+
     Args:
         query: User's search query.
         debug: If True, return debug metadata about retrieval process.
-        
+
     Returns:
         Tuple of (chunks list, metadata dict).
     """
-    # Apply query rewriting if configured
-    rewriter = get_query_rewriter(settings.RETRIEVAL_QUERY_REWRITER)
-    rewritten_query = rewriter.rewrite(query)
-    
-    # Build retrieval config from settings
-    config = RetrievalConfig(
-        vector_top_k=settings.RETRIEVAL_VECTOR_TOP_K,
-        keyword_top_k=settings.RETRIEVAL_KEYWORD_TOP_K,
-        final_top_k=settings.RETRIEVAL_FINAL_TOP_K,
-        min_score=settings.RETRIEVAL_MIN_SCORE,
-        reranker_type=settings.RETRIEVAL_RERANKER_TYPE,
-        rerank_final_k=settings.RETRIEVAL_RERANK_FINAL_K,
-        vector_weight=settings.RETRIEVAL_VECTOR_WEIGHT,
-        keyword_weight=settings.RETRIEVAL_KEYWORD_WEIGHT,
-    )
-    
-    # Phase 30E: Use strategy dispatch (hybrid_mmr by default)
-    # Falls back to hybrid if the configured strategy is invalid.
-    strategy = getattr(settings, "RAG_RETRIEVAL_STRATEGY", "hybrid_mmr")
-    mmr_lambda = getattr(settings, "RAG_MMR_LAMBDA", 0.7)
-    chunks, metadata = retrieve_with_strategy(
-        query=rewritten_query,
-        strategy=strategy,
-        config=config,
-        mmr_lambda=mmr_lambda,
-    )
-    
-    # Add debug info if requested
-    if debug or settings.RETRIEVAL_SHOW_DEBUG:
-        from app.services.embeddings import get_embedding_provider_info
-        metadata["debug"] = True
-        metadata["original_query"] = query
-        metadata["rewritten_query"] = rewritten_query
-        metadata["embedding_provider_info"] = get_embedding_provider_info()
-        metadata["config"] = {
-            "vector_top_k": config.vector_top_k,
-            "keyword_top_k": config.keyword_top_k,
-            "final_top_k": config.final_top_k,
-            "min_score": config.min_score,
-            "reranker_type": config.reranker_type,
-            "vector_weight": config.vector_weight,
-            "keyword_weight": config.keyword_weight,
-            "retrieval_strategy": strategy,
-            "mmr_lambda": mmr_lambda,
-        }
-        # Add score details for each chunk
-        for i, chunk in enumerate(chunks):
-            chunk["_debug_index"] = i + 1
-            if "original_score" in chunk:
-                chunk["_original_score"] = chunk.pop("original_score")
-    
+    # Phase 31A — instrumentation: open a `rag_retrieval` span so that
+    # strategy, chunk count, top score, and selected file names are
+    # visible in LangSmith alongside the rest of the request. Inputs and
+    # outputs are scrubbed before they leave the process.
+    with trace_span(
+        "rag_retrieval",
+        metadata={
+            "phase": "rag_retrieval",
+            "query_length": len(query or ""),
+        },
+    ) as retrieval_span:
+        # Apply query rewriting if configured
+        rewriter = get_query_rewriter(settings.RETRIEVAL_QUERY_REWRITER)
+        rewritten_query = rewriter.rewrite(query)
+
+        # Build retrieval config from settings
+        config = RetrievalConfig(
+            vector_top_k=settings.RETRIEVAL_VECTOR_TOP_K,
+            keyword_top_k=settings.RETRIEVAL_KEYWORD_TOP_K,
+            final_top_k=settings.RETRIEVAL_FINAL_TOP_K,
+            min_score=settings.RETRIEVAL_MIN_SCORE,
+            reranker_type=settings.RETRIEVAL_RERANKER_TYPE,
+            rerank_final_k=settings.RETRIEVAL_RERANK_FINAL_K,
+            vector_weight=settings.RETRIEVAL_VECTOR_WEIGHT,
+            keyword_weight=settings.RETRIEVAL_KEYWORD_WEIGHT,
+        )
+
+        # Phase 30E: Use strategy dispatch (hybrid_mmr by default)
+        # Falls back to hybrid if the configured strategy is invalid.
+        strategy = getattr(settings, "RAG_RETRIEVAL_STRATEGY", "hybrid_mmr")
+        mmr_lambda = getattr(settings, "RAG_MMR_LAMBDA", 0.7)
+        chunks, metadata = retrieve_with_strategy(
+            query=rewritten_query,
+            strategy=strategy,
+            config=config,
+            mmr_lambda=mmr_lambda,
+        )
+
+        # Phase 31A — fill retrieval span metadata now that we know the outcome.
+        if retrieval_span is not None:
+            try:
+                retrieval_span.set_meta(
+                    "retrieval_strategy",
+                    metadata.get("strategy", strategy),
+                )
+                retrieval_span.set_meta("hybrid_applied", bool(metadata.get("hybrid_applied")))
+                retrieval_span.set_meta("mmr_applied", bool(metadata.get("mmr_applied")))
+                retrieval_span.set_meta("vector_results_count", metadata.get("vector_results_count"))
+                retrieval_span.set_meta("keyword_results_count", metadata.get("keyword_results_count"))
+                retrieval_span.set_meta("selected_chunk_count", len(chunks))
+                retrieval_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(list({c.get("source_file_name") for c in chunks if c.get("source_file_name")})),
+                )
+                if chunks:
+                    scores = [
+                        float(c.get("score") or 0.0)
+                        for c in chunks
+                        if c.get("score") is not None
+                    ]
+                    if scores:
+                        retrieval_span.set_meta("top_score", round(max(scores), 4))
+                        retrieval_span.set_meta("min_score", round(min(scores), 4))
+            except Exception:
+                # Never let tracing break retrieval
+                pass
+
+        # Add debug info if requested
+        if debug or settings.RETRIEVAL_SHOW_DEBUG:
+            from app.services.embeddings import get_embedding_provider_info
+            metadata["debug"] = True
+            metadata["original_query"] = query
+            metadata["rewritten_query"] = rewritten_query
+            metadata["embedding_provider_info"] = get_embedding_provider_info()
+            metadata["config"] = {
+                "vector_top_k": config.vector_top_k,
+                "keyword_top_k": config.keyword_top_k,
+                "final_top_k": config.final_top_k,
+                "min_score": config.min_score,
+                "reranker_type": config.reranker_type,
+                "vector_weight": config.vector_weight,
+                "keyword_weight": config.keyword_weight,
+                "retrieval_strategy": strategy,
+                "mmr_lambda": mmr_lambda,
+            }
+            # Add score details for each chunk
+            for i, chunk in enumerate(chunks):
+                chunk["_debug_index"] = i + 1
+                if "original_score" in chunk:
+                    chunk["_original_score"] = chunk.pop("original_score")
+
     return chunks, metadata
 
 

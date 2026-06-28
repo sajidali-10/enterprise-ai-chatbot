@@ -159,6 +159,10 @@ class Settings(BaseSettings):
     LANGSMITH_LOG_DOCUMENT_TEXT: bool = os.getenv("LANGSMITH_LOG_DOCUMENT_TEXT", "false").lower() in ("true", "1", "yes")
     LANGSMITH_LOG_USER_INPUT: bool = os.getenv("LANGSMITH_LOG_USER_INPUT", "true").lower() in ("true", "1", "yes")
     LANGSMITH_LOG_RETRIEVED_CONTEXT: bool = os.getenv("LANGSMITH_LOG_RETRIEVED_CONTEXT", "false").lower() in ("true", "1", "yes")
+    # Phase 31A — additional privacy / sampling controls
+    LANGSMITH_LOG_LLM_OUTPUT: bool = os.getenv("LANGSMITH_LOG_LLM_OUTPUT", "false").lower() in ("true", "1", "yes")
+    LANGSMITH_REDACT_METADATA: bool = os.getenv("LANGSMITH_REDACT_METADATA", "true").lower() in ("true", "1", "yes")
+    LANGSMITH_MAX_CONTEXT_CHARS: int = int(os.getenv("LANGSMITH_MAX_CONTEXT_CHARS", "400"))
     LANGSMITH_SAMPLE_RATE: float = float(os.getenv("LANGSMITH_SAMPLE_RATE", "1.0"))
 
     def get_cors_origins(self) -> list[str]:

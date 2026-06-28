@@ -385,6 +385,40 @@ def get_system_status(
     except Exception:
         db.rollback()
 
+    # Phase 31A — LangSmith status. Each subsection is isolated: if the
+    # tracing service raises (e.g. langsmith not installed) we fall back
+    # to a safe degraded response that never includes API key material.
+    langsmith: dict[str, Any] = {"enabled": False, "project": None, "endpoint_host": None, "sample_rate": None, "privacy_flags": {}, "last_trace": None, "warnings": []}
+    try:
+        from app.services.langsmith_tracing import get_langsmith_status
+        status = get_langsmith_status()
+        langsmith = {
+            "enabled": bool(status.get("langsmith_tracing")),
+            "available": bool(status.get("langsmith_available", True)),
+            "project": status.get("project"),
+            "endpoint_host": status.get("endpoint_host"),
+            "sample_rate": status.get("sample_rate"),
+            "api_key_configured": bool(status.get("api_key_configured")),
+            "privacy_mode": status.get("privacy_mode"),
+            "privacy_flags": {
+                "log_full_prompt": bool(status.get("log_full_prompt")),
+                "log_document_text": bool(status.get("log_document_text")),
+                "log_user_input": bool(status.get("log_user_input")),
+                "log_llm_output": bool(status.get("log_llm_output")),
+                "log_retrieved_context": bool(status.get("log_retrieved_context")),
+                "redact_metadata": bool(status.get("redact_metadata")),
+                "max_context_chars": status.get("max_context_chars"),
+            },
+            "last_trace": status.get("last_trace") or {},
+            "warning": status.get("warning"),
+            "warnings": [
+                w for w in [status.get("warning")] if w
+            ],
+        }
+    except Exception:
+        # Never break /status because tracing status failed
+        langsmith = {"enabled": False, "available": False, "error": "status_unavailable"}
+
     return {
         "gateway": {
             "nginx_proxy": "healthy",
@@ -411,6 +445,7 @@ def get_system_status(
         "documents": documents,
         "security": security,
         "recent_activity": recent_activity,
+        "langsmith": langsmith,
         "overall_healthy": all_ok,
         "status_source_note": "Status is based on application connectivity checks, not raw Docker container state.",
     }

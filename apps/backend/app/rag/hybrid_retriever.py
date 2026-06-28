@@ -18,6 +18,7 @@ from app.services.vector.qdrant_service import search as qdrant_search
 from app.services.search.keyword_search import search_chunks_keyword
 from app.services.embeddings import get_embedding_provider
 from app.rag.reranker import get_reranker, RerankerBase, RerankResult
+from app.services.langsmith_tracing import trace_span
 
 
 # ============================================================================
@@ -436,44 +437,84 @@ def retrieve_chunks_hybrid(
     """
     if config is None:
         config = RetrievalConfig()
-    
+
     if reranker is None:
         reranker = get_reranker(config.reranker_type)
-    
-    # 1. Vector search (Qdrant)
-    provider = get_embedding_provider()
-    query_embedding = provider.embed([query])[0]
-    vector_results = qdrant_search(query_embedding=query_embedding, limit=config.vector_top_k)
-    
-    vector_chunks = []
-    for result in vector_results:
-        payload = result.payload if hasattr(result, 'payload') else result
-        vector_chunks.append({
-            "chunk_id": payload.get("chunk_id"),
-            "document_id": payload.get("document_id"),
-            "document_version_id": payload.get("document_version_id"),
-            "chunk_index": payload.get("chunk_index"),
-            "content": payload.get("content", ""),
-            "source_file_name": payload.get("source_file_name", ""),
-            "title": payload.get("title", ""),
-            "section_heading": payload.get("section_heading"),
-            "score": getattr(result, 'score', 0.0) if hasattr(result, 'score') else 0.0,
-        })
-    
-    # 2. Keyword search (PostgreSQL)
-    keyword_chunks = search_chunks_keyword(
-        query=query,
-        limit=config.keyword_top_k,
-        min_score=config.min_score,
-    )
-    
+
+    # Phase 31A — wrap the three retrieval sub-steps in their own spans
+    # so the parent `rag_retrieval` span shows a clean hierarchy:
+    #     rag_retrieval
+    #         qdrant_vector_search
+    #         hybrid_keyword_scoring
+    #         context_selection
+    vector_chunks: list[dict] = []
+    keyword_chunks: list[dict] = []
+
+    with trace_span(
+        "qdrant_vector_search",
+        metadata={"top_k": config.vector_top_k, "phase": "qdrant_vector_search"},
+    ) as vector_span:
+        # 1. Vector search (Qdrant)
+        provider = get_embedding_provider()
+        query_embedding = provider.embed([query])[0]
+        vector_results = qdrant_search(query_embedding=query_embedding, limit=config.vector_top_k)
+
+        for result in vector_results:
+            payload = result.payload if hasattr(result, 'payload') else result
+            vector_chunks.append({
+                "chunk_id": payload.get("chunk_id"),
+                "document_id": payload.get("document_id"),
+                "document_version_id": payload.get("document_version_id"),
+                "chunk_index": payload.get("chunk_index"),
+                "content": payload.get("content", ""),
+                "source_file_name": payload.get("source_file_name", ""),
+                "title": payload.get("title", ""),
+                "section_heading": payload.get("section_heading"),
+                "score": getattr(result, 'score', 0.0) if hasattr(result, 'score') else 0.0,
+            })
+        if vector_span is not None:
+            try:
+                vector_span.set_meta("vector_results_count", len(vector_chunks))
+                if vector_chunks:
+                    vector_span.set_meta(
+                        "top_score",
+                        round(max(float(c.get("score") or 0.0) for c in vector_chunks), 4),
+                    )
+            except Exception:
+                pass
+
+    with trace_span(
+        "hybrid_keyword_scoring",
+        metadata={"top_k": config.keyword_top_k, "phase": "hybrid_keyword_scoring"},
+    ) as keyword_span:
+        # 2. Keyword search (PostgreSQL)
+        keyword_chunks = search_chunks_keyword(
+            query=query,
+            limit=config.keyword_top_k,
+            min_score=config.min_score,
+        )
+        if keyword_span is not None:
+            try:
+                keyword_span.set_meta("keyword_results_count", len(keyword_chunks))
+                if keyword_chunks:
+                    keyword_span.set_meta(
+                        "top_keyword_score",
+                        round(max(float(c.get("score") or 0.0) for c in keyword_chunks), 4),
+                    )
+            except Exception:
+                pass
+
     # 3. Fuse results
-    fused_chunks = _fuse_scores(
-        vector_results=vector_chunks,
-        keyword_results=keyword_chunks,
-        vector_weight=config.vector_weight,
-        keyword_weight=config.keyword_weight,
-    )
+    with trace_span(
+        "context_selection",
+        metadata={"phase": "context_selection", "vector_weight": config.vector_weight, "keyword_weight": config.keyword_weight},
+    ):
+        fused_chunks = _fuse_scores(
+            vector_results=vector_chunks,
+            keyword_results=keyword_chunks,
+            vector_weight=config.vector_weight,
+            keyword_weight=config.keyword_weight,
+        )
     
     # 4. Apply min_score filter
     if config.min_score > 0:
@@ -581,7 +622,16 @@ def _apply_strategy_to_chunks(
         return out, metadata
 
     if requested == "mmr":
-        out = mmr_diversify(chunks, lambda_param=mmr_lambda, top_n=target_n)
+        with trace_span(
+            "mmr_filtering",
+            metadata={
+                "phase": "mmr_filtering",
+                "mmr_lambda": mmr_lambda,
+                "input_chunk_count": len(chunks),
+                "top_n": target_n,
+            },
+        ):
+            out = mmr_diversify(chunks, lambda_param=mmr_lambda, top_n=target_n)
         metadata["mmr_applied"] = True
         metadata["selected_chunk_count"] = len(out)
         return out, metadata
@@ -590,7 +640,16 @@ def _apply_strategy_to_chunks(
     boosted = _boost_chunks_with_keyword_signals(
         chunks, query, keyword_weight=config.keyword_weight
     )
-    out = mmr_diversify(boosted, lambda_param=mmr_lambda, top_n=target_n)
+    with trace_span(
+        "mmr_filtering",
+        metadata={
+            "phase": "mmr_filtering",
+            "mmr_lambda": mmr_lambda,
+            "input_chunk_count": len(boosted),
+            "top_n": target_n,
+        },
+    ):
+        out = mmr_diversify(boosted, lambda_param=mmr_lambda, top_n=target_n)
     metadata["hybrid_applied"] = True
     metadata["mmr_applied"] = True
     metadata["selected_chunk_count"] = len(out)

@@ -14,6 +14,7 @@ not prepended to retrieval query.
 """
 
 import re
+import time
 from typing import Optional
 from app.rag.retriever import (
     retrieve_chunks,
@@ -33,6 +34,26 @@ from app.rag.grounding import (
 from app.services.llm import get_llm_provider
 from app.schemas.chat import ChatRequest, ChatResponse, MessageRole
 from app.core.config import settings
+
+# Phase 31A — LangSmith tracing for LLM call timing / metadata.
+try:
+    from app.services.langsmith_tracing import (
+        trace_span,
+        redact_filenames,
+        safe_chunk_content,
+    )
+except Exception:  # pragma: no cover - tracing never required
+    from contextlib import contextmanager
+
+    @contextmanager
+    def trace_span(*args, **kwargs):
+        yield None
+
+    def redact_filenames(value):
+        return list(value or [])
+
+    def safe_chunk_content(value):
+        return value or ""
 
 # Import security modules for Phase 6
 try:
@@ -69,14 +90,94 @@ def _call_llm_with_citations(
     else:
         prompt = build_rag_prompt(query, chunks, conversation_context=conversation_context)
 
-    provider = get_llm_provider()
-    llm_request = ChatRequest(message=prompt)
-    # Pass temperature to provider if supported
-    if hasattr(provider, 'set_temperature'):
-        provider.set_temperature(temperature)
-    llm_response = provider.chat(llm_request)
+    return _invoke_llm(
+        prompt=prompt,
+        chunks=chunks,
+        strict=strict,
+        temperature=temperature,
+        conversation_context=conversation_context,
+    )
 
-    return llm_response.message
+
+def _invoke_llm(
+    prompt: str,
+    chunks: list[dict],
+    strict: bool,
+    temperature: float,
+    conversation_context: str,
+) -> str:
+    """
+    Internal: invoke the LLM provider inside a `llm_call` span.
+
+    The span captures provider, model, latency_ms, retry_count, error_type,
+    and (when LANGSMITH_LOG_LLM_OUTPUT is on) the output length and the
+    number of citation markers in the output.
+    """
+    provider = get_llm_provider()
+    provider_name = getattr(provider, 'provider_name', 'unknown') if provider else 'unknown'
+    model_name = getattr(provider, 'model', 'unknown') if provider else 'unknown'
+
+    with trace_span(
+        "llm_call",
+        metadata={
+            "phase": "llm_call",
+            "provider": provider_name,
+            "model": model_name,
+            "strict_prompt": strict,
+            "temperature": temperature,
+            "context_chunk_count": len(chunks or []),
+            "has_conversation_context": bool(conversation_context),
+        },
+    ) as llm_span:
+        start = time.time() * 1000.0
+        error_type: Optional[str] = None
+        error_message: Optional[str] = None
+        try:
+            if hasattr(provider, 'set_temperature'):
+                provider.set_temperature(temperature)
+            llm_response = provider.chat(ChatRequest(message=prompt))
+        except Exception as exc:
+            error_type = type(exc).__name__
+            error_message = str(exc)[:200]
+            if llm_span is not None:
+                try:
+                    llm_span.set_meta("error_type", error_type)
+                    llm_span.set_meta("error_message", error_message)
+                    llm_span.set_meta("latency_ms", int(time.time() * 1000.0 - start))
+                except Exception:
+                    pass
+            raise
+        latency_ms = int(time.time() * 1000.0 - start)
+        output = llm_response.message if llm_response else ""
+
+        if llm_span is not None:
+            try:
+                llm_span.set_meta("latency_ms", latency_ms)
+                llm_span.set_meta("output_length", len(output or ""))
+                # Count citation markers like [1], [2] etc. — useful summary
+                # even when full output logging is disabled.
+                import re as _re
+                markers = _re.findall(r"\[(\d+(?:,\s*\d+)*)\]", output or "")
+                unique_markers = set()
+                for m in markers:
+                    for n in m.split(','):
+                        n = n.strip()
+                        if n:
+                            unique_markers.add(n)
+                llm_span.set_meta("citation_markers_found", len(unique_markers))
+                if settings.LANGSMITH_LOG_LLM_OUTPUT:
+                    # Operator has explicitly opted into logging LLM output
+                    llm_span.set_meta("llm_output_preview", safe_chunk_content(output))
+                llm_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(
+                        list({c.get("source_file_name") for c in chunks if c.get("source_file_name")})
+                    ),
+                )
+            except Exception:
+                pass
+
+        return output
 
 
 def _call_llm_with_citations_and_evidence(
@@ -114,23 +215,13 @@ def _call_llm_with_citations_and_evidence(
             query, chunks, conversation_context=conversation_context, evidence_level=evidence_level
         )
 
-    provider = get_llm_provider()
-    llm_request = ChatRequest(message=prompt)
-    # Pass temperature to provider if supported
-    if hasattr(provider, 'set_temperature'):
-        provider.set_temperature(temperature)
-    llm_response = provider.chat(llm_request)
-
-    return llm_response.message
-
-    provider = get_llm_provider()
-    llm_request = ChatRequest(message=prompt)
-    # Pass temperature to provider if supported
-    if hasattr(provider, 'set_temperature'):
-        provider.set_temperature(temperature)
-    llm_response = provider.chat(llm_request)
-
-    return llm_response.message
+    return _invoke_llm(
+        prompt=prompt,
+        chunks=chunks,
+        strict=strict,
+        temperature=temperature,
+        conversation_context=conversation_context,
+    )
 
 
 def _should_retry_for_citations(
@@ -381,6 +472,29 @@ def generate_answer_with_rag(
         retrieval_metadata["debug_info"] = get_debug_info(
             chunks, min_relevance_score, (False, None, retrieval_metadata["grounding"])
         )
+
+    # Phase 31A — emit a `final_response` span summarising the outcome.
+    with trace_span(
+        "final_response",
+        metadata={
+            "phase": "final_response",
+            "blocked": retrieval_metadata.get("blocked", False),
+            "block_reason": retrieval_metadata.get("block_reason"),
+            "citation_count": len(citations or []),
+            "evidence_level": (retrieval_metadata.get("grounding") or {}).get("evidence_level"),
+            "fallback_reason": (retrieval_metadata.get("grounding") or {}).get("blocked_reason"),
+        },
+    ) as final_span:
+        if final_span is not None:
+            try:
+                final_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(
+                        list({c.get("source_file_name") for c in citations if c.get("source_file_name")})
+                    ),
+                )
+            except Exception:
+                pass
 
     return answer, citations, retrieval_metadata
 
@@ -655,6 +769,30 @@ def generate_answer_with_rag_audit(
         retrieval_metadata["debug_info"] = get_debug_info(
             chunks, min_relevance_score, (False, None, retrieval_metadata["grounding"])
         )
+
+    # Phase 31A — final_response span summarising the audited outcome.
+    with trace_span(
+        "final_response",
+        metadata={
+            "phase": "final_response",
+            "blocked": retrieval_metadata.get("blocked", False),
+            "block_reason": retrieval_metadata.get("block_reason"),
+            "citation_count": len(citations or []),
+            "evidence_level": (retrieval_metadata.get("grounding") or {}).get("evidence_level"),
+            "fallback_reason": (retrieval_metadata.get("grounding") or {}).get("blocked_reason"),
+            "audit_logged": retrieval_metadata.get("audit_logged", False),
+        },
+    ) as final_span:
+        if final_span is not None:
+            try:
+                final_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(
+                        list({c.get("source_file_name") for c in citations if c.get("source_file_name")})
+                    ),
+                )
+            except Exception:
+                pass
 
     return answer, citations, retrieval_metadata
 

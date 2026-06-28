@@ -1,6 +1,26 @@
 import re
 from typing import List, Dict, Any, Optional, Set
 
+# Phase 31A — LangSmith tracing for citation processing.
+try:
+    from app.services.langsmith_tracing import (
+        trace_span,
+        redact_filenames,
+        redact_path,
+    )
+except Exception:  # pragma: no cover - tracing never required
+    from contextlib import contextmanager
+
+    @contextmanager
+    def trace_span(*args, **kwargs):
+        yield None
+
+    def redact_filenames(value):
+        return list(value or [])
+
+    def redact_path(value):
+        return value or ""
+
 
 def get_confidence_label(score: Optional[float]) -> str:
     """
@@ -279,17 +299,39 @@ def format_citations(chunks: list[dict]) -> List[dict]:
     Format retrieved chunks as citations for the response.
     Returns list of citation dicts with index, source, and content snippet.
     """
-    citations = []
-    for i, chunk in enumerate(chunks, 1):
-        content = chunk.get("content", "")
-        citations.append({
-            "index": i,
-            "source_file_name": chunk.get("source_file_name", "Unknown"),
-            "content_snippet": clean_excerpt(content),
-            "relevance_score": chunk.get("score"),
-            "chunk_id": chunk.get("id"),
-        })
-    return citations
+    # Phase 31A — wrap citation formatting in a span. We track the number
+    # of citations and the unique source filenames but never the content
+    # text itself unless LANGSMITH_LOG_RETRIEVED_CONTEXT is on.
+    with trace_span(
+        "citation_processing",
+        metadata={
+            "phase": "citation_processing",
+            "step": "format",
+            "input_chunk_count": len(chunks or []),
+        },
+    ) as cite_span:
+        citations = []
+        for i, chunk in enumerate(chunks, 1):
+            content = chunk.get("content", "")
+            citations.append({
+                "index": i,
+                "source_file_name": chunk.get("source_file_name", "Unknown"),
+                "content_snippet": clean_excerpt(content),
+                "relevance_score": chunk.get("score"),
+                "chunk_id": chunk.get("id"),
+            })
+        if cite_span is not None:
+            try:
+                cite_span.set_meta("citation_count", len(citations))
+                cite_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(
+                        list({c.get("source_file_name") for c in citations if c.get("source_file_name")})
+                    ),
+                )
+            except Exception:
+                pass
+        return citations
 
 
 def attach_citations_to_answer(
@@ -299,15 +341,15 @@ def attach_citations_to_answer(
 ) -> tuple[str, dict]:
     """
     Attempt to attach citations to an answer that lacks them.
-    
+
     Uses content overlap analysis between the answer and retrieved chunks
     to identify which source chunks support which parts of the answer.
-    
+
     Args:
         answer: The generated answer text (may lack citations).
         chunks: Retrieved context chunks.
         query: User's original question.
-        
+
     Returns:
         Tuple of (modified_answer, citation_map) where:
         - modified_answer: Answer with [N] citation markers added
@@ -315,6 +357,46 @@ def attach_citations_to_answer(
     """
     if not answer or not chunks:
         return answer, {}
+
+    # Phase 31A — separate span for the citation-attachment fallback path
+    # so the LangSmith trace shows when the system had to add citations
+    # because the model omitted them.
+    with trace_span(
+        "citation_processing",
+        metadata={
+            "phase": "citation_processing",
+            "step": "attach",
+            "input_chunk_count": len(chunks or []),
+        },
+    ) as attach_span:
+        modified_answer, citation_map = _attach_citations_to_answer_impl(
+            answer=answer, chunks=chunks, query=query
+        )
+        if attach_span is not None:
+            try:
+                attach_span.set_meta("citation_count", len(citation_map))
+                attach_span.set_meta(
+                    "source_file_names",
+                    redact_filenames(
+                        list(
+                            {
+                                redact_path(c.get("source_file_name"))
+                                for c in chunks
+                                if c.get("source_file_name")
+                            }
+                        )
+                    ),
+                )
+            except Exception:
+                pass
+        return modified_answer, citation_map
+
+
+def _attach_citations_to_answer_impl(
+    answer: str,
+    chunks: List[dict],
+    query: str,
+) -> tuple[str, dict]:
     
     answer_lower = answer.lower()
     citation_map = {}
@@ -450,10 +532,32 @@ def group_citations_by_source(
             "indices": all_indices if debug_mode else [],  # Empty list in non-debug
             "show_debug_details": debug_mode,  # Flag for frontend
         }
-        
+
         result.append(source_dict)
-    
+
     # Sort by highest score descending
     result.sort(key=lambda x: x["highest_score"], reverse=True)
-    
-    return result
+
+    # Phase 31A — emit one citation_processing span for the grouping step.
+    # This keeps the trace hierarchy clean: the parent `citation_processing`
+    # for format/attach stays as a child span, and grouping is its own.
+    with trace_span(
+        "citation_processing",
+        metadata={
+            "phase": "citation_processing",
+            "step": "group",
+            "input_citation_count": len(citations or []),
+            "grouped_source_count": len(result),
+        },
+    ) as group_span:
+        if group_span is not None:
+            try:
+                group_span.set_meta("citation_count", len(citations or []))
+                group_span.set_meta("grouped_source_count", len(result))
+                group_span.set_meta(
+                    "source_file_names",
+                    redact_filenames([g.get("source_file_name") for g in result]),
+                )
+            except Exception:
+                pass
+        return result
