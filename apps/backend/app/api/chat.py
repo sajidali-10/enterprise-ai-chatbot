@@ -25,6 +25,25 @@ from app.rag.answer_generator import (
     generate_answer_without_rag,
     generate_answer_without_rag_audit,
 )
+
+# Phase 31B — LangGraph Agentic RAG Pilot (optional path).
+# When `RAG_AGENTIC_ENABLED=true` AND the request mode is
+# `agentic_knowledge_base` (or `RAG_AGENTIC_DEFAULT=true`), the chat
+# endpoint may route through `run_agentic_rag`. The classic path is
+# used as the safety fallback when the agentic pipeline is disabled,
+# not available, or raises mid-execution (RAG_AGENTIC_FALLBACK_TO_CLASSIC).
+try:
+    from app.rag.agentic_graph import (
+        run_agentic_rag,
+        should_use_agentic_for_mode,
+        is_agentic_enabled as _is_agentic_enabled,
+    )
+    _AGENTIC_AVAILABLE = True
+except Exception:  # pragma: no cover - agentic pipeline optional
+    run_agentic_rag = None  # type: ignore[assignment]
+    should_use_agentic_for_mode = None  # type: ignore[assignment]
+    _is_agentic_enabled = lambda: False  # type: ignore[assignment]
+    _AGENTIC_AVAILABLE = False
 from app.rag.citations import format_citations, group_citations_by_source
 from app.services.observability import log_chat_observation
 from app.services.suggestions import generate_suggestions, is_fallback_response
@@ -84,6 +103,10 @@ def _require_permission_for_mode(auth: AuthContext, mode: str) -> None:
     if mode == ChatMode.GENERAL_CHAT and not perms["can_use_general_chat"]:
         raise HTTPException(status_code=403, detail="General Chat is not allowed for this user")
     if mode == ChatMode.KNOWLEDGE_BASE and not perms["can_use_knowledge_base"]:
+        raise HTTPException(status_code=403, detail="Knowledge Base is not allowed for this user")
+    if mode == ChatMode.AGENTIC_KNOWLEDGE_BASE and not perms["can_use_knowledge_base"]:
+        # Phase 31B: agentic KB inherits KB permissions — same users, same
+        # access rules. The pilot does NOT introduce a new privilege.
         raise HTTPException(status_code=403, detail="Knowledge Base is not allowed for this user")
     if mode == ChatMode.DEBUG and not perms["can_use_debug"]:
         raise HTTPException(status_code=403, detail="Debug mode is not allowed for this user")
@@ -159,6 +182,11 @@ def get_provider_info():
 class ChatMode(str, Enum):
     GENERAL_CHAT = "general_chat"
     KNOWLEDGE_BASE = "knowledge_base"
+    # Phase 31B — opt-in mode that routes through the LangGraph agentic
+    # RAG pilot. Default behavior of mode=knowledge_base is unchanged;
+    # only explicit requests with this mode value (or a knowledge_base
+    # request when RAG_AGENTIC_DEFAULT=true) reach the agentic pipeline.
+    AGENTIC_KNOWLEDGE_BASE = "agentic_knowledge_base"
     DEBUG = "debug"
 
 
@@ -373,6 +401,18 @@ def post_chat(
     elif mode == "rag":
         mode = ChatMode.KNOWLEDGE_BASE
 
+    # Phase 31B — agentic_knowledge_base is treated like knowledge_base
+    # for permission checks and grouped-source rendering. The decision
+    # of which pipeline (classic vs agentic) actually answers the
+    # question is made later in `_run_chat_request`, after the auth
+    # context has been resolved.
+    is_agentic_requested = mode == ChatMode.AGENTIC_KNOWLEDGE_BASE
+    if is_agentic_requested:
+        # Normalize to knowledge_base for the rest of the pipeline so
+        # every downstream check (permission filter, grouped source
+        # rendering, audit logging) treats it exactly like classic KB.
+        mode = ChatMode.KNOWLEDGE_BASE
+
     # Enforce authentication and mode permissions (Phase 12)
     _require_permission_for_mode(auth, mode)
     is_debug_mode = mode == ChatMode.DEBUG
@@ -403,6 +443,7 @@ def post_chat(
             use_hybrid=use_hybrid,
             debug=debug,
             parent_span=parent_span,
+            is_agentic_requested=is_agentic_requested,
         )
 
 
@@ -419,6 +460,7 @@ def _run_chat_request(
     use_hybrid: bool,
     debug: bool,
     parent_span,
+    is_agentic_requested: bool = False,
 ) -> ChatResponse:
 
     latency_ms = None
@@ -469,26 +511,76 @@ def _run_chat_request(
     retrieval_query = chat_request.message
 
     if mode in (ChatMode.KNOWLEDGE_BASE, ChatMode.DEBUG):
-        # Pass conversation context SEPARATELY to the prompt, not to retrieval
-        if HAS_SECURITY and auth and auth.is_authenticated:
-            # Use audit-aware RAG generation with permission filtering
-            answer, citations, metadata = generate_answer_with_rag_audit(
-                query=retrieval_query,
-                auth=auth,
-                debug=debug,
-                use_hybrid=use_hybrid,
-                request_ip=client_ip,
-                request_user_agent=user_agent,
-                conversation_context=conversation_context,
-            )
-        else:
-            # Fall back to regular RAG without auth/audit
-            answer, citations, metadata = generate_answer_with_rag(
-                query=retrieval_query,
-                use_hybrid=use_hybrid,
-                debug=debug,
-                conversation_context=conversation_context,
-            )
+        # Phase 31B — agentic pipeline routing decision.
+        # The agentic pipeline is used ONLY when:
+        #   * the original request mode was `agentic_knowledge_base`, OR
+        #     `RAG_AGENTIC_DEFAULT=true` was set at the operator level, AND
+        #   * the agentic pilot is enabled (RAG_AGENTIC_ENABLED), AND
+        #   * the LangGraph module is importable.
+        # In every other case (including any error inside the agentic
+        # graph when `RAG_AGENTIC_FALLBACK_TO_CLASSIC=true`) the classic
+        # pipeline below runs untouched.
+        use_agentic = bool(is_agentic_requested) and bool(
+            should_use_agentic_for_mode
+            and should_use_agentic_for_mode(ChatMode.AGENTIC_KNOWLEDGE_BASE)
+        )
+        agentic_failed = False
+
+        if use_agentic and _AGENTIC_AVAILABLE and run_agentic_rag is not None:
+            try:
+                answer, citations, metadata = run_agentic_rag(
+                    query=retrieval_query,
+                    auth=auth if (HAS_SECURITY and auth and auth.is_authenticated) else None,
+                    debug=debug,
+                    conversation_context=conversation_context,
+                )
+            except Exception as exc:
+                # Phase 31B safety net: any failure inside the agentic
+                # pipeline falls back to the classic pipeline so the
+                # pilot can never break chat.
+                agentic_failed = True
+                try:
+                    from app.services.langsmith_tracing import trace_error
+                    trace_error(
+                        error_type=type(exc).__name__,
+                        error_message=f"agentic_pipeline_fallback: {exc}",
+                        mode=mode,
+                    )
+                except Exception:
+                    pass
+                # Fall through to the classic pipeline below.
+
+        if not use_agentic or agentic_failed:
+            # Pass conversation context SEPARATELY to the prompt, not to retrieval
+            if HAS_SECURITY and auth and auth.is_authenticated:
+                # Use audit-aware RAG generation with permission filtering
+                answer, citations, metadata = generate_answer_with_rag_audit(
+                    query=retrieval_query,
+                    auth=auth,
+                    debug=debug,
+                    use_hybrid=use_hybrid,
+                    request_ip=client_ip,
+                    request_user_agent=user_agent,
+                    conversation_context=conversation_context,
+                )
+            else:
+                # Fall back to regular RAG without auth/audit
+                answer, citations, metadata = generate_answer_with_rag(
+                    query=retrieval_query,
+                    use_hybrid=use_hybrid,
+                    debug=debug,
+                    conversation_context=conversation_context,
+                )
+
+            # Tag the metadata so the agentic pilot's output is
+            # distinguishable from the classic pipeline's output in
+            # evaluations and traces. This is added AFTER the classic
+            # call returns so it never modifies the classic function's
+            # contract.
+            if agentic_failed:
+                metadata = dict(metadata or {})
+                metadata["agentic_fallback_used"] = True
+                metadata["agentic_fallback_reason"] = "agentic_pipeline_error"
 
         # Create grouped sources for user-friendly display with answer-aware excerpt selection
         if citations:

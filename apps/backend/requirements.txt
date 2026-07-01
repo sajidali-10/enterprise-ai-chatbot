@@ -39,3 +39,14 @@ ragas>=0.2.0,<0.3.0
 # Disabled by default (LANGSMITH_TRACING=false). Only activates when enabled
 # and LANGSMITH_API_KEY is set. No heavy LangChain extras.
 langsmith>=0.8.0
+
+# Phase 31B — LangGraph Agentic RAG Pilot (optional path)
+# langgraph: state-graph framework for the agentic RAG pilot.
+# Disabled by default (RAG_AGENTIC_ENABLED=false). When enabled and
+# RAG_AGENTIC_FRAMEWORK=langgraph, the chat endpoint may route through
+# an isolated LangGraph pipeline (apps/backend/app/rag/agentic_graph.py)
+# that wraps the existing custom RAG functions. All imports of langgraph
+# are lazy-guarded so a missing/failed import does not break classic RAG.
+# langgraph is already a transitive dependency of langchain-core>=1.4,
+# but we pin it explicitly here to make the agentic pilot reproducible.
+langgraph>=0.2.0,<2.0.0
