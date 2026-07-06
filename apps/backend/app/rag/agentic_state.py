@@ -76,9 +76,24 @@ class AgenticRAGState(TypedDict, total=False):
 
     # retrieve_context
     chunks: list[dict]
-    """Current set of retrieved chunks. Replaced wholesale on retry."""
+    """Current set of retrieved chunks. On retry this is the MERGED set
+    (first-pass + retry, deduplicated by stable identity)."""
     retrieval_metadata: dict
     """Metadata returned by the underlying retriever."""
+
+    # ---- Phase 31D: retry-context preservation ----
+    first_retrieval_chunks: list[dict]
+    """Snapshot of the very first retrieval pass, never overwritten.
+    Used by `merge_chunks` to preserve useful first-pass context when a
+    retry produces weaker chunks."""
+    first_retrieval_metadata: dict
+    """Snapshot of the metadata returned by the very first retrieval."""
+    merged_chunk_count: int
+    """Number of chunks in the merged (deduplicated) result after retry."""
+    first_retrieval_chunk_count: int
+    """Number of chunks from the first retrieval (post-dedupe, pre-merge)."""
+    retry_retrieval_chunk_count: int
+    """Number of chunks returned by the retry pass (raw, before merge)."""
 
     # evaluate_evidence
     evidence_level: str
@@ -162,6 +177,12 @@ def make_initial_state(
         normalized_question="",
         chunks=[],
         retrieval_metadata={},
+        # Phase 31D retry-context preservation
+        first_retrieval_chunks=[],
+        first_retrieval_metadata={},
+        merged_chunk_count=0,
+        first_retrieval_chunk_count=0,
+        retry_retrieval_chunk_count=0,
         evidence_level=EVIDENCE_WEAK,
         evidence_meta={},
         rewrite_attempted=False,
@@ -227,3 +248,123 @@ def safe_top_score(state: AgenticRAGState) -> Optional[float]:
         return float(chunks[0].get("score") or 0.0)
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 31D — chunk-merge helper (deterministic, no LLM)
+# ---------------------------------------------------------------------------
+
+def _chunk_identity(chunk: dict) -> str:
+    """
+    Stable identity for a chunk across retrieval passes.
+
+    Prefers a server-issued `chunk_id` or `id`. Falls back to the
+    (document_id, chunk_index) tuple. As a last resort, hashes the first
+    200 characters of the content so near-duplicate chunks from different
+    retrieval strategies still dedupe.
+    """
+    cid = chunk.get("chunk_id") or chunk.get("id")
+    if cid:
+        return f"id:{cid}"
+    doc = chunk.get("document_id")
+    idx = chunk.get("chunk_index")
+    if doc is not None and idx is not None:
+        return f"doc:{doc}:{idx}"
+    content = (chunk.get("content") or "").strip()[:200]
+    if content:
+        # Avoid importing hashlib for a single use; str hash is fine here.
+        return f"c:{hash(content)}"
+    return ""
+
+
+def _coerce_score(chunk: dict) -> float:
+    """Numeric score for a chunk, defaulting to 0.0 if missing/invalid."""
+    raw = chunk.get("score")
+    try:
+        return float(raw) if raw is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def merge_chunks(
+    first_chunks: list[dict],
+    retry_chunks: list[dict],
+    *,
+    max_chunks: int = 12,
+) -> list[dict]:
+    """
+    Merge first-pass and retry retrieval results, preserving useful
+    first-pass context.
+
+    Behaviour:
+      * Deduplicate by `_chunk_identity` (chunk_id / (doc_id, idx) /
+        content hash).
+      * Keep the higher score when the same chunk is returned by both
+        passes (the underlying retriever occasionally rescores).
+      * Sort the merged list by score descending.
+      * Truncate to `max_chunks` to avoid blowing up downstream prompts.
+
+    Args:
+        first_chunks: chunks from the very first retrieval pass.
+        retry_chunks: chunks from the retry (rewritten-query) pass.
+        max_chunks: hard cap on the size of the merged list.
+
+    Returns:
+        New list of chunks (does not mutate either input).
+    """
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+
+    for chunk in (first_chunks or []):
+        key = _chunk_identity(chunk)
+        if not key:
+            continue
+        if key not in merged:
+            merged[key] = dict(chunk)
+            order.append(key)
+        else:
+            # Same chunk returned by both — keep the higher score.
+            existing_score = _coerce_score(merged[key])
+            new_score = _coerce_score(chunk)
+            if new_score > existing_score:
+                merged[key]["score"] = new_score
+            # Preserve any field the first pass had but retry did not
+            # (e.g. a richer content snippet, different metadata).
+            for k, v in chunk.items():
+                if k == "score":
+                    continue
+                if not merged[key].get(k) and v:
+                    merged[key][k] = v
+
+    for chunk in (retry_chunks or []):
+        key = _chunk_identity(chunk)
+        if not key:
+            continue
+        if key not in merged:
+            merged[key] = dict(chunk)
+            order.append(key)
+        else:
+            existing_score = _coerce_score(merged[key])
+            new_score = _coerce_score(chunk)
+            if new_score > existing_score:
+                merged[key]["score"] = new_score
+
+    # Rerank merged set by score (descending) — stable on order of
+    # first appearance for ties so the test snapshots stay deterministic.
+    def _sort_key(key: str) -> tuple[float, int]:
+        return (-_coerce_score(merged[key]), order.index(key))
+
+    sorted_keys = sorted(order, key=_sort_key)
+    return [merged[k] for k in sorted_keys[:max_chunks]]
+
+
+def has_supporting_chunks(state: AgenticRAGState, min_count: int = 1) -> bool:
+    """
+    True when the current state has at least `min_count` chunks with a
+    score above zero. Used by the finalization gate to decide whether to
+    repair citations or fall back.
+    """
+    chunks = state.get("chunks") or []
+    if len(chunks) < min_count:
+        return False
+    return any(_coerce_score(c) > 0.0 for c in chunks[:max(min_count, len(chunks))])

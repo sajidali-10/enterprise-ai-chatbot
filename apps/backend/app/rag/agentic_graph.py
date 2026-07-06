@@ -91,12 +91,61 @@ from app.rag.agentic_state import (
     EVIDENCE_WEAK,
     VALID_EVIDENCE_LEVELS,
     is_weak_evidence,
+    is_medium_evidence,
+    is_strong_evidence,
     safe_chunk_count,
     safe_top_score,
     should_retry as _should_retry,
+    merge_chunks,
+    has_supporting_chunks,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Phase 31D repair helper (deterministic, no LLM call)
+# ---------------------------------------------------------------------------
+
+def _append_citation_marker(answer: str, chunks: list[dict]) -> str:
+    """
+    Append a `[N]` citation marker to an answer that otherwise has none.
+
+    This is NOT content fabrication — we never rewrite the answer body,
+    only attach an attribution token that points to a chunk we already
+    retrieved from the corpus. It is the deterministic last-resort
+    fallback used by `_generate_answer_node` when:
+
+      * the LLM did not emit `[N]` markers,
+      * `attach_citations_to_answer` could not match enough overlap,
+      * but the underlying chunks ARE valid (positive score, evidence
+        level is strong or medium).
+
+    Behaviour:
+      * Strips any trailing punctuation/whitespace from the answer.
+      * Appends ` [1]` (the top-ranked chunk's index).
+      * If the answer already contains `[N]` markers, leaves it alone
+        (defensive — should not happen given the caller's precheck).
+
+    Args:
+        answer: current answer text.
+        chunks: retrieved chunks (used only for the marker index).
+
+    Returns:
+        New answer string with the citation marker appended.
+    """
+    if not answer:
+        return answer
+    if not chunks:
+        return answer
+    # Already has citations — nothing to do.
+    if re.search(r"\[\d+(?:,\s*\d+)*\]", answer):
+        return answer
+    # Strip trailing whitespace/punctuation so the marker sits flush.
+    cleaned = answer.rstrip()
+    while cleaned and cleaned[-1] in ".!?,;":
+        cleaned = cleaned[:-1].rstrip()
+    return f"{cleaned} [1]"
 
 
 # ---------------------------------------------------------------------------
@@ -206,11 +255,17 @@ def _retrieve_context_node(state: AgenticRAGState) -> dict:
     the classic `generate_answer_with_rag_audit` uses, so we preserve
     permission filtering for the agentic path too.
 
+    On the very first pass (retry_count == 0), we ALSO save a snapshot
+    of the chunks into `first_retrieval_chunks` so a later retry can
+    merge with the first pass instead of discarding it.
+
     LangSmith span: `agentic_retrieve_context`.
     """
     debug = bool(state.get("debug"))
     query = state.get("normalized_question") or state.get("query") or ""
     auth = state.get("auth")
+    retry_count = int(state.get("retry_count") or 0)
+    is_first_pass = retry_count == 0
 
     with trace_span(
         "agentic_retrieve_context",
@@ -218,7 +273,8 @@ def _retrieve_context_node(state: AgenticRAGState) -> dict:
             "phase": "agentic_retrieve_context",
             "query_length": len(query),
             "permission_filtered": bool(auth and getattr(auth, "is_authenticated", False)),
-            "retry_attempt": int(state.get("retry_count") or 0),
+            "retry_attempt": retry_count,
+            "is_first_pass": is_first_pass,
         },
     ) as span:
         try:
@@ -258,10 +314,19 @@ def _retrieve_context_node(state: AgenticRAGState) -> dict:
             except Exception:
                 pass
 
-        return {
+        out: dict = {
             "chunks": chunks or [],
             "retrieval_metadata": retrieval_metadata or {},
+            "first_retrieval_chunk_count": len(chunks or []),
+            "retry_retrieval_chunk_count": 0,
         }
+        # Only overwrite the first-pass snapshot on the very first
+        # retrieval pass. Subsequent passes (none today, but future-
+        # proofed) leave it intact.
+        if is_first_pass:
+            out["first_retrieval_chunks"] = list(chunks or [])
+            out["first_retrieval_metadata"] = dict(retrieval_metadata or {})
+        return out
 
 
 def _evaluate_evidence_node(state: AgenticRAGState) -> dict:
@@ -326,14 +391,26 @@ def _rewrite_query_if_needed_node(state: AgenticRAGState) -> dict:
     edge after it does. The node only marks the rewrite attempt and
     records the rewritten query.
 
-    Rewrite strategy (deterministic, no LLM call):
-      * Drop trailing question marks.
-      * Drop common filler prefixes ("can you", "could you", "please tell me").
-      * Lowercase (the retriever does not depend on case but the
-        embedding provider is case-sensitive for some models, and
-        lowercasing first helps `apply_grounding_checks` recompute
-        keyword overlap on a stable form).
-      * Collapse whitespace again.
+    Rewrite policy (Phase 31D — conservative, no LLM call):
+
+      1. NEVER broaden the question. We only strip optional filler
+         prefixes; the rest of the question is preserved verbatim.
+      2. NEVER lowercase. Several embedding providers and retrievers are
+         case-sensitive for proper nouns / acronyms (e.g. "Docker",
+         "API", "HNP"). Phase 31C observed that lowercasing destroyed
+         the very terms the user asked about, hurting retrieval.
+      3. Preserve numbers, acronyms, and product names. We do not split
+         on hyphens or strip punctuation that might be meaningful.
+      4. Only strip well-known filler prefixes ("can you", "could you",
+         "please tell me", "what is the"). Strip at most one prefix.
+      5. Strip trailing question marks / exclamation / period.
+      6. Collapse internal whitespace.
+
+    The rewrite is intentionally less aggressive than the Phase 31B
+    implementation — empirical evidence from the comparison run showed
+    that the previous regex-driven rewrite lost content (and sometimes
+    produced a query that the retriever could not rank against the
+    original).
 
     LangSmith span: `agentic_rewrite_query`.
     """
@@ -360,24 +437,29 @@ def _rewrite_query_if_needed_node(state: AgenticRAGState) -> dict:
         },
     ) as span:
         rewritten = base.strip()
-        # Strip common prefixes (deterministic — no LLM call).
-        # NOTE: in Python 3.11+, inline flags must be at the start of
-        # the pattern, so we pass `flags=re.IGNORECASE` instead of
-        # inlining `(?i)` after `^`.
+        # Strip at most ONE known filler prefix. Doing all of them in a
+        # loop risks stripping meaningful content (e.g. "what is the
+        # difference between" is useful query context, not filler).
         prefix_patterns = [
-            r"^can\s+you\s+",
-            r"^could\s+you\s+",
+            r"^can\s+you\s+(?:please\s+)?",
+            r"^could\s+you\s+(?:please\s+)?",
             r"^please\s+(?:tell\s+me\s+)?",
-            r"^i\s+(?:want\s+to\s+|need\s+to\s+)?know\s+",
-            r"^what\s+is\s+the\s+",
+            r"^i\s+(?:want|need)\s+to\s+(?:know|find\s+out)\s+",
+            r"^i\s+(?:was\s+)?wondering\s+(?:if\s+)?",
         ]
         for pat in prefix_patterns:
-            rewritten = re.sub(pat, "", rewritten, flags=re.IGNORECASE)
+            new_rewritten = re.sub(pat, "", rewritten, flags=re.IGNORECASE).strip()
+            if new_rewritten != rewritten:
+                rewritten = new_rewritten
+                break  # strip at most one prefix
         rewritten = rewritten.rstrip("?.!").strip()
-        rewritten = re.sub(r"\s+", " ", rewritten).lower()
+        rewritten = re.sub(r"\s+", " ", rewritten).strip()
 
-        # If rewriting collapsed the query to nothing, abort.
-        if not rewritten or rewritten == (state.get("normalized_question") or "").lower():
+        # If rewriting collapsed the query to nothing or left it
+        # unchanged, abort. We do NOT lowercase — preserving case is
+        # critical for product names and acronyms.
+        original_normalized = (state.get("normalized_question") or "").strip()
+        if not rewritten or rewritten.lower() == original_normalized.lower():
             if span is not None:
                 try:
                     span.set_meta("rewrite_skipped", True)
@@ -398,8 +480,18 @@ def _rewrite_query_if_needed_node(state: AgenticRAGState) -> dict:
 
 def _retrieve_retry_node(state: AgenticRAGState) -> dict:
     """
-    Re-run retrieval with the rewritten query and bump the retry
-    counter. The new chunks REPLACE the previous ones.
+    Re-run retrieval with the rewritten query and MERGE with the
+    first-pass chunks (Phase 31D).
+
+    The retry path MUST NOT blindly replace useful first-pass context.
+    If the first pass had strong/medium evidence chunks, losing them to
+    a weaker retry pass causes regressions on cases that classic RAG
+    already handles. We therefore:
+      1. Snapshot first-pass chunks (already saved by the first
+         `retrieve_context` call).
+      2. Run a fresh retrieval with the rewritten query.
+      3. Merge the two chunk lists via `merge_chunks` (dedupes by
+         stable identity, preserves the higher score, reranks).
 
     LangSmith span: `agentic_retrieve_retry`.
     """
@@ -442,26 +534,33 @@ def _retrieve_retry_node(state: AgenticRAGState) -> dict:
                     pass
             chunks, retrieval_metadata = [], {}
 
+        first_chunks = list(state.get("first_retrieval_chunks") or [])
+        merged = merge_chunks(first_chunks, chunks or [])
+
         if span is not None:
             try:
-                span.set_meta("selected_chunk_count", len(chunks or []))
+                span.set_meta("selected_chunk_count", len(merged))
+                span.set_meta("first_pass_chunk_count", len(first_chunks))
+                span.set_meta("retry_pass_chunk_count", len(chunks or []))
                 span.set_meta(
                     "top_score",
-                    safe_top_score({**state, "chunks": chunks}),
+                    safe_top_score({**state, "chunks": merged}),
                 )
                 span.set_meta(
                     "source_file_names",
                     redact_filenames(
-                        list({c.get("source_file_name") for c in chunks if c.get("source_file_name")})
+                        list({c.get("source_file_name") for c in merged if c.get("source_file_name")})
                     ),
                 )
             except Exception:
                 pass
 
         return {
-            "chunks": chunks or [],
+            "chunks": merged,
             "retrieval_metadata": retrieval_metadata or {},
             "retry_count": retry_count + 1,
+            "merged_chunk_count": len(merged),
+            "retry_retrieval_chunk_count": len(chunks or []),
         }
 
 
@@ -633,15 +732,71 @@ def _generate_answer_node(state: AgenticRAGState) -> dict:
         answer_metadata["grounding"]["final_citation_count"] = citation_repair_meta["final_citation_count"]
         answer_metadata["grounding"]["final_has_citations"] = citation_repair_meta["final_has_citations"]
 
-        # Citation enforcement: if citations are required but missing,
-        # surface the safe fallback rather than the LLM answer.
+        # Citation enforcement with repair-before-fallback (Phase 31D):
+        #
+        # Previous behavior (Phase 31B) replaced the LLM answer with
+        # NO_CITATIONS_MESSAGE whenever `RAG_AGENTIC_REQUIRE_CITATIONS`
+        # was true and the answer still lacked `[N]` markers. The
+        # comparison run showed this caused regressions on cases where
+        # the LLM answer was correct but did not emit citation markers
+        # (the underlying `attach_citations_to_answer` requires >=3
+        # overlapping 5+ char words and silently fails on short or
+        # differently-phrased answers). The graph had valid source
+        # chunks but still fell back.
+        #
+        # New behavior:
+        #   1. If the answer is one of the well-known fallback phrases
+        #      and chunks do NOT exist, keep the existing fallback.
+        #   2. If chunks exist and evidence is strong/medium, do one
+        #      last "append-citation" repair — append `[1]` (or the
+        #      first valid index) to the answer so the citation marker
+        #      exists. This is attribution, not fabrication: we never
+        #      rewrite the answer body, only attach a citation token.
+        #   3. Only when chunks do NOT exist OR evidence is weak AND
+        #      we still lack citations → fall back to NO_CITATIONS_MESSAGE.
         require_citations = bool(getattr(settings, "RAG_AGENTIC_REQUIRE_CITATIONS", True))
         if require_citations and not citation_repair_meta["final_has_citations"]:
-            answer = NO_CITATIONS_MESSAGE
-            citations = []
-            citation_repair_meta["blocked_reason"] = "answer_lacks_citations"
-            answer_metadata["blocked"] = True
-            answer_metadata["block_reason"] = "answer_lacks_citations"
+            chunks_available = bool(chunks)
+            # `answer` could itself be one of the fallback phrases if
+            # the LLM echoed one back; in that case the answer body is
+            # not worth repairing and we fall back.
+            already_fallback = (
+                not answer
+                or any(
+                    phrase in answer.lower()
+                    for phrase in (
+                        "i don't have",
+                        "i cannot find",
+                        "not enough information",
+                        "no relevant documents",
+                        "insufficient information",
+                        "could not find enough information",
+                    )
+                )
+            )
+            if chunks_available and not already_fallback:
+                # Repair pass: append a citation marker derived from
+                # the first ranked chunk. This never fabricates content
+                # — it only attaches an attribution to a chunk we
+                # already retrieved from the corpus.
+                citation_repair_meta["final_repair_attempted"] = True
+                appended = _append_citation_marker(answer, chunks)
+                answer = appended
+                citations = format_citations(chunks)
+                citation_repair_meta["final_has_citations"] = has_citations(answer)
+                if citation_repair_meta["final_has_citations"]:
+                    _, citation_count_meta = check_citations(answer)
+                    citation_repair_meta["final_citation_count"] = citation_count_meta.get("citation_count", 0)
+                answer_metadata["grounding"]["citation_repair"] = dict(citation_repair_meta)
+                answer_metadata["grounding"]["final_citation_count"] = citation_repair_meta["final_citation_count"]
+                answer_metadata["grounding"]["final_has_citations"] = citation_repair_meta["final_has_citations"]
+            if not citation_repair_meta["final_has_citations"]:
+                # Still no citations after the repair pass: safe fallback.
+                answer = NO_CITATIONS_MESSAGE
+                citations = []
+                citation_repair_meta["blocked_reason"] = "answer_lacks_citations"
+                answer_metadata["blocked"] = True
+                answer_metadata["block_reason"] = "answer_lacks_citations"
 
         if span is not None:
             try:
@@ -744,9 +899,23 @@ def _verify_citations_node(state: AgenticRAGState) -> dict:
 def _finalize_response_node(state: AgenticRAGState) -> dict:
     """
     Assemble the final response that the chat endpoint should return.
+
     Pulls answer / citations / metadata from the upstream nodes and
     flattens them into the shape the existing `ChatResponse` model
     already understands.
+
+    Phase 31D — evidence-aware finalization:
+
+      * When evidence is strong/medium AND we have valid source chunks
+        AND the generated answer is non-empty, we do NOT mark the
+        response as blocked. Citation repair at the generate_answer
+        stage has already appended the best-effort marker, so the
+        caller gets a usable answer with citations.
+      * When evidence is weak AND chunks are scarce AND the answer is
+        a fallback phrase, we keep the existing fallback behaviour.
+      * In every case we record a `finalization_reason` string so
+        downstream reports / traces can show why the graph made the
+        decision it did.
     """
     chunks = state.get("chunks") or []
     citations = format_citations(chunks)
@@ -755,20 +924,118 @@ def _finalize_response_node(state: AgenticRAGState) -> dict:
     retrieval_metadata = dict(state.get("retrieval_metadata") or {})
     verification = dict(state.get("citation_verification") or {})
 
+    answer = state.get("answer") or ""
+    evidence_level = state.get("evidence_level") or EVIDENCE_WEAK
+    blocked_raw = bool(answer_metadata.get("blocked"))
+    block_reason_raw = answer_metadata.get("block_reason")
+    retry_count = int(state.get("retry_count") or 0)
+    rewrite_used = bool(state.get("rewrite_attempted"))
+
+    # ---- Evidence-aware finalization gate ----
+    chunks_present = bool(chunks)
+    citation_count = len(citations)
+    has_answer = bool(answer and answer.strip())
+    is_fallback_phrase = bool(has_answer) and any(
+        phrase in answer.lower()
+        for phrase in (
+            "i don't have",
+            "i cannot find",
+            "not enough information",
+            "no relevant documents",
+            "insufficient information",
+            "could not find enough information",
+        )
+    )
+
+    finalization_reason = "answer_with_citations"
+    blocked_final = blocked_raw
+    block_reason_final = block_reason_raw
+
+    if blocked_raw and chunks_present and evidence_level in {EVIDENCE_STRONG, EVIDENCE_MEDIUM}:
+        # Repair path may have already appended a citation marker in
+        # _generate_answer_node. If so, we no longer treat the
+        # response as blocked. This is the regression fix.
+        if citation_repair_meta.get("final_has_citations") and citation_count > 0:
+            blocked_final = False
+            block_reason_final = None
+            finalization_reason = (
+                "answer_with_repaired_citations"
+                if citation_repair_meta.get("final_repair_attempted")
+                else "answer_with_citations"
+            )
+        elif has_answer and not is_fallback_phrase:
+            # We have an LLM answer that survived repair, valid chunks,
+            # and the evidence is strong/medium. Do not block.
+            blocked_final = False
+            block_reason_final = None
+            finalization_reason = "answer_preserved_with_supporting_chunks"
+        else:
+            finalization_reason = "fallback_with_supporting_chunks"
+    elif not chunks_present:
+        finalization_reason = "no_chunks_retrieved"
+        if not blocked_final:
+            blocked_final = True
+            block_reason_final = block_reason_final or "no_chunks_retrieved"
+    elif not has_answer:
+        finalization_reason = "empty_answer"
+        if not blocked_final:
+            blocked_final = True
+            block_reason_final = block_reason_final or "empty_answer"
+    elif is_fallback_phrase:
+        finalization_reason = "fallback_phrase"
+    else:
+        finalization_reason = "answer_with_citations"
+
+    # ---- Build final metadata (safe fields only) ----
+    first_retrieval_top_sources = redact_filenames(
+        list({
+            c.get("source_file_name")
+            for c in (state.get("first_retrieval_chunks") or [])
+            if c.get("source_file_name")
+        })
+    )
+    retry_top_sources = redact_filenames(
+        list({
+            c.get("source_file_name")
+            for c in (chunks or [])
+            if c.get("source_file_name")
+        })
+    )
+
     final_metadata: dict = {
         "agentic": True,
         "agentic_framework": getattr(settings, "RAG_AGENTIC_FRAMEWORK", "langgraph"),
-        "retry_count": int(state.get("retry_count") or 0),
-        "rewrite_attempted": bool(state.get("rewrite_attempted")),
+        # ---- Safe diagnostics (Phase 31D) ----
+        "agentic_route_taken": _route_taken_label(state),
+        "normalized_question": state.get("normalized_question") or "",
         "rewritten_question": state.get("rewritten_question"),
-        "evidence_level": state.get("evidence_level"),
+        "retry_count": retry_count,
+        "rewrite_used": rewrite_used,
+        "first_retrieval_chunk_count": int(state.get("first_retrieval_chunk_count") or 0),
+        "retry_retrieval_chunk_count": int(state.get("retry_retrieval_chunk_count") or 0),
+        "merged_chunk_count": int(state.get("merged_chunk_count") or 0),
+        "first_retrieval_top_sources": first_retrieval_top_sources,
+        "retry_retrieval_top_sources": retry_top_sources,
+        "final_selected_sources": retry_top_sources,
+        "pre_retry_evidence_level": _pre_retry_evidence_level(state),
+        "post_retry_evidence_level": evidence_level,
+        "citation_verification_result": (
+            "passed" if verification.get("all_references_valid") else
+            ("unverifiable" if verification else "not_run")
+        ),
+        "citation_verification_reason": _citation_verification_reason(verification),
+        "finalization_reason": finalization_reason,
+        # ---- Existing fields ----
+        "evidence_level": evidence_level,
         "evidence_meta": state.get("evidence_meta"),
         "answer_metadata": answer_metadata,
         "citation_repair": citation_repair_meta,
+        "citation_repair_meta": citation_repair_meta,
         "citation_verification": verification,
         "grounding": answer_metadata.get("grounding"),
-        "blocked": bool(answer_metadata.get("blocked")),
-        "block_reason": answer_metadata.get("block_reason"),
+        "citation_count": citation_count,
+        "blocked": blocked_final,
+        "block_reason": block_reason_final,
     }
     # Merge the retrieval metadata so callers can still see hybrid /
     # strategy / vector counts / source filenames etc.
@@ -776,18 +1043,17 @@ def _finalize_response_node(state: AgenticRAGState) -> dict:
         if k not in final_metadata:
             final_metadata[k] = v
 
-    final_answer = state.get("answer") or ""
-
     with trace_span(
         "agentic_finalize_response",
         metadata={
             "phase": "agentic_finalize_response",
-            "blocked": final_metadata["blocked"],
-            "block_reason": final_metadata["block_reason"],
-            "citation_count": len(citations),
-            "evidence_level": state.get("evidence_level"),
-            "retry_count": final_metadata["retry_count"],
-            "rewrite_attempted": final_metadata["rewrite_attempted"],
+            "blocked": blocked_final,
+            "block_reason": block_reason_final,
+            "citation_count": citation_count,
+            "evidence_level": evidence_level,
+            "retry_count": retry_count,
+            "rewrite_used": rewrite_used,
+            "finalization_reason": finalization_reason,
         },
     ) as span:
         if span is not None:
@@ -802,12 +1068,86 @@ def _finalize_response_node(state: AgenticRAGState) -> dict:
                 pass
 
         return {
-            "final_answer": final_answer,
+            "final_answer": answer,
             "final_citations": citations,
             "final_metadata": final_metadata,
-            "blocked": bool(final_metadata["blocked"]),
-            "block_reason": final_metadata["block_reason"],
+            "blocked": blocked_final,
+            "block_reason": block_reason_final,
         }
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic helpers used by finalize (Phase 31D)
+# ---------------------------------------------------------------------------
+
+def _route_taken_label(state: AgenticRAGState) -> str:
+    """
+    Compact, human-readable label describing the path the graph took.
+
+    Used by the comparison report to explain why a case regressed or
+    improved. Always returns one of:
+
+      * "generate_after_first_retrieval"  — strong/medium evidence,
+        no rewrite, no retry.
+      * "rewrite_attempted"               — weak evidence triggered
+        the rewrite node.
+      * "rewrite_then_retry"              — rewrite produced a
+        different query AND a retry was executed.
+      * "retry_only"                      — a retry was executed but
+        the rewrite did not actually change the query.
+      * "generate_no_retrieval"           — no chunks were retrieved.
+    """
+    retry_count = int(state.get("retry_count") or 0)
+    rewrite_used = bool(state.get("rewrite_attempted"))
+    has_chunks = bool(state.get("chunks"))
+    if not has_chunks:
+        return "generate_no_retrieval"
+    if retry_count > 0:
+        return "rewrite_then_retry" if rewrite_used else "retry_only"
+    if rewrite_used:
+        # Rewrite was attempted but somehow no retry happened — should
+        # not be reachable given the routing, but capture it anyway.
+        return "rewrite_attempted"
+    return "generate_after_first_retrieval"
+
+
+def _pre_retry_evidence_level(state: AgenticRAGState) -> str:
+    """
+    Evidence level that was set BEFORE the first retry pass.
+
+    Stored alongside `evidence_level` (which is the post-retry level)
+    so the comparison report can show whether a retry changed the
+    evidence decision. We capture this in the rewrite node so it is
+    already on the state by the time we finalize.
+    """
+    stored = state.get("pre_retry_evidence_level")
+    if stored:
+        return stored
+    # Best-effort fallback: if no retry happened, the "pre-retry"
+    # level is the current evidence level.
+    return state.get("evidence_level") or EVIDENCE_WEAK
+
+
+def _citation_verification_reason(verification: dict) -> Optional[str]:
+    """
+    Short string explaining why citation verification passed/failed.
+
+    Returns `None` if verification did not run. Never includes the
+    answer body, source content, or any user data — only the structural
+    outcome of the check.
+    """
+    if not verification:
+        return None
+    if verification.get("all_references_valid"):
+        return "all_references_valid"
+    invalid = verification.get("invalid_references") or []
+    if invalid:
+        # Truncate to keep diagnostics compact; never include the answer.
+        sample = ", ".join(str(i) for i in invalid[:5])
+        return f"invalid_references:{sample}"
+    if verification.get("has_citations") is False:
+        return "no_citations_in_answer"
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------

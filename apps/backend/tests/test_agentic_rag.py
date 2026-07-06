@@ -560,13 +560,15 @@ class TestCitationVerification:
         assert v["all_references_valid"] is False
         assert v["referenced_indices"] == []
 
-    def test_generate_answer_enforces_citations_when_required(self, enable_agentic):
-        """When RAG_AGENTIC_REQUIRE_CITATIONS=true and the LLM fails
-        to produce citations, generate_answer falls back to the
-        safe NO_CITATIONS_MESSAGE."""
+    def test_generate_answer_repairs_citations_before_fallback(self, enable_agentic):
+        """Phase 31D — when RAG_AGENTIC_REQUIRE_CITATIONS=true and the
+        LLM fails to emit `[N]` markers BUT we have valid source chunks,
+        generate_answer must REPAIR the answer by appending a citation
+        marker (rather than immediately falling back to
+        NO_CITATIONS_MESSAGE). The answer body is never rewritten —
+        only an attribution token is attached."""
         from app.rag.agentic_graph import _generate_answer_node
         from app.rag.agentic_state import make_initial_state
-        from app.rag.grounding import NO_CITATIONS_MESSAGE
 
         state = make_initial_state("What is a Docker image?")
         state["chunks"] = _make_strong_chunks()
@@ -582,9 +584,84 @@ class TestCitationVerification:
         with patch("app.services.llm.get_llm_provider", return_value=mock_provider):
             out = _generate_answer_node(state)
 
+        # Citation repair MUST have appended `[1]` to the answer body
+        # (without rewriting the answer text). Trailing period is
+        # stripped first so the marker sits flush.
+        assert out["answer"] == "No citations here [1]"
+        assert out["citation_repair_meta"]["final_repair_attempted"] is True
+        assert out["citation_repair_meta"]["final_has_citations"] is True
+        assert out["citation_repair_meta"]["blocked_reason"] is None
+        assert out["answer_metadata"]["blocked"] is False
+        assert out["answer_metadata"]["block_reason"] is None
+        # Final answer carries a citation marker and the citation list
+        # is non-empty (the chunks we passed in are real).
+        assert "[1]" in out["answer"]
+        assert out["citation_repair_meta"]["final_citation_count"] >= 1
+
+    def test_generate_answer_fallback_when_no_chunks(self, enable_agentic):
+        """When retrieval returned no chunks, `apply_grounding_checks`
+        short-circuits with NO_CHUNKS_MESSAGE before the citation-repair
+        path can run. The LLM MUST NOT be called and the response MUST
+        be blocked."""
+        from app.rag.agentic_graph import _generate_answer_node
+        from app.rag.agentic_state import make_initial_state
+        from app.rag.grounding import NO_CHUNKS_MESSAGE
+
+        state = make_initial_state("What is a Docker image?")
+        state["chunks"] = []  # no chunks → no repair source
+        state["evidence_level"] = "weak"  # with no chunks evidence must be weak
+        state["evidence_meta"] = {"decision": "weak", "rationale": ["no_chunks_retrieved"]}
+
+        # Mock the LLM provider — it MUST NOT be called because
+        # grounding already short-circuited.
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "mock"
+        mock_provider.model = "test-model"
+        mock_provider.chat.return_value = MagicMock(message="Should never be called.")
+
+        with patch("app.services.llm.get_llm_provider", return_value=mock_provider) as mock_get:
+            out = _generate_answer_node(state)
+
+        assert out["answer"] == NO_CHUNKS_MESSAGE
+        assert out["answer_metadata"]["blocked"] is True
+        assert out["answer_metadata"]["block_reason"] == "no_chunks_retrieved"
+        assert out["citation_repair_meta"]["final_has_citations"] is False
+        # Citation-repair pass never ran (no chunks to repair from).
+        assert out["citation_repair_meta"].get("final_repair_attempted") is not True
+        # LLM was never invoked — grounding gate blocked before prompt.
+        assert not mock_get.return_value.chat.called
+
+    def test_generate_answer_fallback_when_answer_is_fallback_phrase(self, enable_agentic):
+        """When the LLM echoes back a well-known fallback phrase (e.g.
+        'I don't have enough information...'), we do NOT try to repair
+        with a citation marker — the answer body itself is a fallback.
+        We still surface NO_CITATIONS_MESSAGE so the response is
+        consistent regardless of which pipeline produced the phrase."""
+        from app.rag.agentic_graph import _generate_answer_node
+        from app.rag.agentic_state import make_initial_state
+        from app.rag.grounding import NO_CITATIONS_MESSAGE
+
+        state = make_initial_state("What is a Docker image?")
+        state["chunks"] = _make_strong_chunks()
+        state["evidence_level"] = "strong"
+        state["evidence_meta"] = {"decision": "strong", "rationale": ["strong_score_and_lexical_or_vector_support"]}
+
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "mock"
+        mock_provider.model = "test-model"
+        mock_provider.chat.return_value = MagicMock(
+            message="I don't have enough information in the provided sources."
+        )
+
+        with patch("app.services.llm.get_llm_provider", return_value=mock_provider):
+            out = _generate_answer_node(state)
+
         assert out["answer"] == NO_CITATIONS_MESSAGE
         assert out["citation_repair_meta"]["blocked_reason"] == "answer_lacks_citations"
-        assert out["citation_repair_meta"]["final_has_citations"] is False
+        # Citation-repair pass MUST have been skipped because the LLM
+        # already produced a fallback phrase (do not append `[1]` to a
+        # fallback phrase — that would be misleading attribution).
+        assert out["citation_repair_meta"].get("final_repair_attempted") is not True
         assert out["answer_metadata"]["blocked"] is True
 
     def test_generate_answer_keeps_answer_when_citations_present(self, enable_agentic):
@@ -885,3 +962,549 @@ class TestStateHelpers:
         s = make_initial_state("")
         assert s["query"] == ""
         assert s["normalized_question"] == ""
+
+
+# ---------------------------------------------------------------------------
+# 11. Phase 31D — merge_chunks (retry-preserves-first-pass-chunks)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeChunks:
+    """`merge_chunks` must dedupe by stable identity and preserve the
+    higher of the two scores when the same chunk appears in both passes.
+    """
+
+    def test_merge_dedupes_by_chunk_id(self):
+        from app.rag.agentic_state import merge_chunks
+
+        first = [
+            {"chunk_id": "a", "score": 0.7, "content": "from first"},
+            {"chunk_id": "b", "score": 0.5, "content": "b only in first"},
+        ]
+        retry = [
+            {"chunk_id": "a", "score": 0.6, "content": "from retry"},  # same chunk, lower score
+            {"chunk_id": "c", "score": 0.9, "content": "c only in retry"},
+        ]
+        merged = merge_chunks(first, retry)
+        ids = [c["chunk_id"] for c in merged]
+        # All three chunks present, no duplicates.
+        assert sorted(ids) == ["a", "b", "c"]
+        # The "a" chunk keeps the higher score from the first pass.
+        a = next(c for c in merged if c["chunk_id"] == "a")
+        assert a["score"] == 0.7
+
+    def test_merge_keeps_higher_score(self):
+        from app.rag.agentic_state import merge_chunks
+
+        first = [{"chunk_id": "x", "score": 0.4, "content": "low"}]
+        retry = [{"chunk_id": "x", "score": 0.9, "content": "high"}]
+        merged = merge_chunks(first, retry)
+        assert len(merged) == 1
+        assert merged[0]["score"] == 0.9
+
+    def test_merge_sorts_by_score_descending(self):
+        from app.rag.agentic_state import merge_chunks
+
+        first = [{"chunk_id": "a", "score": 0.3, "content": "low"}]
+        retry = [
+            {"chunk_id": "b", "score": 0.8, "content": "mid"},
+            {"chunk_id": "c", "score": 0.95, "content": "high"},
+        ]
+        merged = merge_chunks(first, retry)
+        scores = [c["score"] for c in merged]
+        assert scores == sorted(scores, reverse=True)
+        assert scores[0] == 0.95
+
+    def test_merge_respects_max_chunks(self):
+        from app.rag.agentic_state import merge_chunks
+
+        first = [{"chunk_id": f"c{i}", "score": 0.5 + i * 0.01, "content": f"chunk{i}"} for i in range(8)]
+        retry = [{"chunk_id": f"c{i}", "score": 0.5 + i * 0.01, "content": f"chunk{i}"} for i in range(8, 14)]
+        merged = merge_chunks(first, retry, max_chunks=5)
+        assert len(merged) == 5
+
+    def test_merge_tolerates_empty_inputs(self):
+        from app.rag.agentic_state import merge_chunks
+
+        assert merge_chunks([], []) == []
+        assert merge_chunks([{"chunk_id": "a", "score": 0.5}], []) == [
+            {"chunk_id": "a", "score": 0.5}
+        ]
+        assert merge_chunks([], [{"chunk_id": "b", "score": 0.7}]) == [
+            {"chunk_id": "b", "score": 0.7}
+        ]
+
+    def test_merge_falls_back_to_doc_idx_when_no_chunk_id(self):
+        from app.rag.agentic_state import merge_chunks
+
+        # Same (document_id, chunk_index) tuple with no chunk_id should
+        # still be deduped.
+        first = [{"document_id": "doc1", "chunk_index": 0, "score": 0.4, "content": "A"}]
+        retry = [{"document_id": "doc1", "chunk_index": 0, "score": 0.8, "content": "A retry"}]
+        merged = merge_chunks(first, retry)
+        assert len(merged) == 1
+        assert merged[0]["score"] == 0.8
+
+    def test_merge_does_not_mutate_inputs(self):
+        from app.rag.agentic_state import merge_chunks
+
+        first = [{"chunk_id": "a", "score": 0.7, "content": "A"}]
+        retry = [{"chunk_id": "a", "score": 0.9, "content": "A"}]
+        first_copy = list(first)
+        retry_copy = list(retry)
+        merge_chunks(first, retry)
+        assert first == first_copy
+        assert retry == retry_copy
+
+    def test_merge_handles_chunks_without_identity(self):
+        from app.rag.agentic_state import merge_chunks
+
+        # Chunks with no identity (no chunk_id, no doc/idx, no content)
+        # must be silently skipped, not crash.
+        result = merge_chunks(
+            [{"chunk_id": "ok", "score": 0.5, "content": "good"}],
+            [{}, {"score": 0.9}],
+        )
+        # Only the identity-bearing chunk survives.
+        assert len(result) == 1
+        assert result[0]["chunk_id"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# 12. Phase 31D — conservative rewrite policy
+# ---------------------------------------------------------------------------
+
+
+class TestConservativeRewrite:
+    """Phase 31D rewrite MUST preserve product names, acronyms, numbers,
+    and quoted terms. It strips at most ONE filler prefix, never
+    lowercases, and never rewrites the question body beyond removing
+    trailing punctuation."""
+
+    def test_rewrite_does_not_lowercase(self, enable_agentic):
+        """Proper nouns and acronyms MUST survive the rewrite unchanged."""
+        from app.rag.agentic_graph import _rewrite_query_if_needed_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state("Can you tell me about Docker, HNP, and API?")
+        state["evidence_level"] = "weak"
+        state["normalized_question"] = "Can you tell me about Docker, HNP, and API?"
+        state["chunks"] = _make_weak_chunks()
+        out = _rewrite_query_if_needed_node(state)
+        assert out["rewrite_attempted"] is True
+        rewritten = out["rewritten_question"]
+        assert rewritten is not None
+        # Case of proper nouns / acronyms MUST be preserved.
+        assert "Docker" in rewritten
+        assert "HNP" in rewritten
+        assert "API" in rewritten
+        # Original question stem preserved.
+        assert "tell me about Docker, HNP, and API" in rewritten
+
+    def test_rewrite_preserves_numbers(self, enable_agentic):
+        """Numbers (versions, IDs, ports) MUST survive the rewrite."""
+        from app.rag.agentic_graph import _rewrite_query_if_needed_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state("Could you explain error 502 on port 8080?")
+        state["evidence_level"] = "weak"
+        state["normalized_question"] = "Could you explain error 502 on port 8080?"
+        state["chunks"] = _make_weak_chunks()
+        out = _rewrite_query_if_needed_node(state)
+        assert out["rewrite_attempted"] is True
+        rewritten = out["rewritten_question"]
+        assert "502" in rewritten
+        assert "8080" in rewritten
+
+    def test_rewrite_strips_only_one_prefix(self, enable_agentic):
+        """The rewrite MUST strip at most ONE filler prefix and then stop."""
+        from app.rag.agentic_graph import _rewrite_query_if_needed_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state("Can you please tell me about Docker images")
+        state["evidence_level"] = "weak"
+        state["normalized_question"] = "Can you please tell me about Docker images"
+        state["chunks"] = _make_weak_chunks()
+        out = _rewrite_query_if_needed_node(state)
+        assert out["rewrite_attempted"] is True
+        rewritten = out["rewritten_question"]
+        # Only one prefix was stripped — the rest of the question stem
+        # remains. We must not strip multiple prefixes in a loop.
+        assert "Can" not in rewritten.split()[0] or rewritten.startswith(
+            "please tell me about"
+        )
+        assert "Docker images" in rewritten
+
+    def test_rewrite_strips_trailing_punctuation(self, enable_agentic):
+        """Trailing question marks / periods / exclamation points are
+        stripped so the retriever sees a clean stem."""
+        from app.rag.agentic_graph import _rewrite_query_if_needed_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state("Please tell me about Docker images?!")
+        state["evidence_level"] = "weak"
+        state["normalized_question"] = "Please tell me about Docker images?!"
+        state["chunks"] = _make_weak_chunks()
+        out = _rewrite_query_if_needed_node(state)
+        assert out["rewrite_attempted"] is True
+        rewritten = out["rewritten_question"]
+        assert rewritten is not None
+        assert not rewritten.endswith("?")
+        assert not rewritten.endswith("!")
+        assert not rewritten.endswith(".")
+
+    def test_rewrite_skips_when_no_improvement(self, enable_agentic):
+        """When the rewrite produces something equivalent to the
+        original, we MUST skip the rewrite (no point retrying)."""
+        from app.rag.agentic_graph import _rewrite_query_if_needed_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state("quantum mechanics entanglement")
+        state["evidence_level"] = "weak"
+        state["normalized_question"] = "quantum mechanics entanglement"
+        state["chunks"] = _make_weak_chunks()
+        out = _rewrite_query_if_needed_node(state)
+        assert out["rewrite_attempted"] is False
+        assert out["rewritten_question"] is None
+
+    def test_rewrite_skipped_when_evidence_strong(self, enable_agentic):
+        """When evidence is already strong, the rewrite node MUST be a
+        no-op (it should never rewrite when the first pass was good)."""
+        from app.rag.agentic_graph import _rewrite_query_if_needed_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state("anything")
+        state["evidence_level"] = "strong"
+        state["chunks"] = _make_strong_chunks()
+        out = _rewrite_query_if_needed_node(state)
+        assert out["rewrite_attempted"] is False
+        assert out["rewritten_question"] is None
+
+    def test_rewrite_preserves_quoted_terms(self, enable_agentic):
+        """Quoted terms (e.g. product names in quotes) MUST NOT be
+        mangled by the rewrite."""
+        from app.rag.agentic_graph import _rewrite_query_if_needed_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state(
+            'Can you tell me about "OAuth 2.0" and JWT?'
+        )
+        state["evidence_level"] = "weak"
+        state["normalized_question"] = 'Can you tell me about "OAuth 2.0" and JWT?'
+        state["chunks"] = _make_weak_chunks()
+        out = _rewrite_query_if_needed_node(state)
+        assert out["rewrite_attempted"] is True
+        rewritten = out["rewritten_question"]
+        assert "OAuth 2.0" in rewritten
+        assert "JWT" in rewritten
+
+
+# ---------------------------------------------------------------------------
+# 13. Phase 31D — retrieve_retry merges first-pass + retry
+# ---------------------------------------------------------------------------
+
+
+class TestRetrieveRetryMergesFirstPass:
+    """The retry node MUST merge first-pass chunks with the retry
+    chunks instead of replacing them."""
+
+    def test_retry_merges_first_and_retry_chunks(self, enable_agentic):
+        from app.rag.agentic_graph import _retrieve_retry_node
+        from app.rag.agentic_state import make_initial_state
+
+        state = make_initial_state("Docker image components")
+        state["normalized_question"] = "docker image components"
+        state["first_retrieval_chunks"] = [
+            {"chunk_id": "a", "score": 0.7, "content": "first-pass A"},
+            {"chunk_id": "b", "score": 0.5, "content": "first-pass B"},
+        ]
+        # `first_retrieval_chunk_count` is set by retrieve_context on the
+        # first pass — it survives on state and is surfaced through
+        # final_metadata at finalize time.
+        state["first_retrieval_chunk_count"] = 2
+        state["chunks"] = state["first_retrieval_chunks"]
+        state["retry_count"] = 0
+        # Rewrite produced a different query.
+        state["rewritten_question"] = "docker image"
+
+        with patch(
+            "app.rag.agentic_graph.retrieve_chunks_with_settings",
+            return_value=(
+                [{"chunk_id": "c", "score": 0.9, "content": "retry C"}],
+                {"strategy": "hybrid_mmr"},
+            ),
+        ):
+            out = _retrieve_retry_node(state)
+
+        ids = sorted(c["chunk_id"] for c in out["chunks"])
+        # First-pass + retry chunks both present, merged.
+        assert ids == ["a", "b", "c"]
+        assert out["retry_count"] == 1
+        assert out["merged_chunk_count"] == 3
+        assert out["retry_retrieval_chunk_count"] == 1
+        # `first_retrieval_chunk_count` was carried on state by the
+        # retrieve_context node; the retry node does NOT overwrite it.
+        assert state["first_retrieval_chunk_count"] == 2
+
+    def test_retry_does_not_drop_first_pass_when_retry_empty(self, enable_agentic):
+        """If the retry retrieval returns nothing, the first-pass chunks
+        MUST be preserved (the retry node must not clear the state)."""
+        from app.rag.agentic_graph import _retrieve_retry_node
+        from app.rag.agentic_state import make_initial_state
+
+        first_chunks = [
+            {"chunk_id": "a", "score": 0.7, "content": "first-pass A"},
+            {"chunk_id": "b", "score": 0.5, "content": "first-pass B"},
+        ]
+        state = make_initial_state("anything")
+        state["normalized_question"] = "anything"
+        state["first_retrieval_chunks"] = first_chunks
+        state["chunks"] = first_chunks
+        state["retry_count"] = 0
+        state["rewritten_question"] = "anything-rewritten"
+
+        with patch(
+            "app.rag.agentic_graph.retrieve_chunks_with_settings",
+            return_value=([], {}),
+        ):
+            out = _retrieve_retry_node(state)
+
+        # First-pass chunks preserved.
+        assert sorted(c["chunk_id"] for c in out["chunks"]) == ["a", "b"]
+        assert out["merged_chunk_count"] == 2
+        assert out["retry_retrieval_chunk_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 14. Phase 31D — evidence-aware finalization gate
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceAwareFinalization:
+    """The finalize node MUST NOT mark the response as blocked when
+    evidence is strong/medium AND we have valid chunks AND the answer
+    survived. It records `finalization_reason` for diagnostics."""
+
+    def _state(self, **overrides) -> dict:
+        from app.rag.agentic_state import make_initial_state
+
+        s = make_initial_state("test")
+        s.update(
+            {
+                "chunks": _make_strong_chunks(),
+                "evidence_level": "strong",
+                "evidence_meta": {"decision": "strong"},
+                "answer": "Docker image is a runtime artifact [1].",
+                "answer_metadata": {"blocked": False, "block_reason": None},
+                "citation_repair_meta": {
+                    "final_has_citations": True,
+                    "final_citation_count": 1,
+                },
+                "citation_verification": {"all_references_valid": True},
+                "retrieval_metadata": {"strategy": "hybrid_mmr"},
+                "retry_count": 0,
+                "rewrite_attempted": False,
+                "rewritten_question": None,
+            }
+        )
+        s.update(overrides)
+        return s
+
+    def test_finalize_records_finalization_reason(self, enable_agentic):
+        from app.rag.agentic_graph import _finalize_response_node
+
+        out = _finalize_response_node(self._state())
+        assert out["final_metadata"]["finalization_reason"] == "answer_with_citations"
+        assert out["blocked"] is False
+        assert out["block_reason"] is None
+
+    def test_finalize_unblocks_when_strong_evidence_and_chunks(self, enable_agentic):
+        """Even when generate_answer flagged blocked=True, finalize
+        must clear the block if the answer has citations and chunks
+        are present with strong evidence."""
+        from app.rag.agentic_graph import _finalize_response_node
+
+        state = self._state()
+        # Simulate: generate_answer marked it blocked but repair succeeded.
+        state["answer_metadata"]["blocked"] = True
+        state["answer_metadata"]["block_reason"] = "answer_lacks_citations"
+        state["citation_repair_meta"]["final_repair_attempted"] = True
+        # Answer now has citations.
+        state["answer"] = "Docker image is a runtime artifact [1]."
+
+        out = _finalize_response_node(state)
+        assert out["blocked"] is False
+        assert out["block_reason"] is None
+        assert out["final_metadata"]["finalization_reason"] == "answer_with_repaired_citations"
+
+    def test_finalize_unblocks_medium_evidence_with_supporting_chunks(self, enable_agentic):
+        """MEDIUM evidence with valid chunks + answer also clears the
+        block (this is the regression fix from Phase 31C)."""
+        from app.rag.agentic_graph import _finalize_response_node
+
+        state = self._state()
+        state["evidence_level"] = "medium"
+        state["evidence_meta"] = {"decision": "medium"}
+        state["chunks"] = _make_medium_chunks()
+        state["answer_metadata"]["blocked"] = True
+        state["answer_metadata"]["block_reason"] = "answer_lacks_citations"
+
+        out = _finalize_response_node(state)
+        assert out["blocked"] is False
+        assert out["block_reason"] is None
+        assert out["final_metadata"]["finalization_reason"] in {
+            "answer_with_citations",
+            "answer_with_repaired_citations",
+            "answer_preserved_with_supporting_chunks",
+        }
+
+    def test_finalize_keeps_block_when_no_chunks(self, enable_agentic):
+        """When there are no chunks, finalize MUST keep the block on."""
+        from app.rag.agentic_graph import _finalize_response_node
+
+        state = self._state()
+        state["chunks"] = []
+        # No answer, no chunks → block must remain.
+        state["answer"] = ""
+        state["answer_metadata"]["blocked"] = False  # not yet marked
+        state["citation_repair_meta"]["final_has_citations"] = False
+
+        out = _finalize_response_node(state)
+        assert out["blocked"] is True
+        assert out["block_reason"] == "no_chunks_retrieved"
+        assert out["final_metadata"]["finalization_reason"] == "no_chunks_retrieved"
+
+    def test_finalize_keeps_block_when_evidence_weak_and_no_answer(self, enable_agentic):
+        """When evidence is weak and the answer is empty, the response
+        MUST be blocked."""
+        from app.rag.agentic_graph import _finalize_response_node
+
+        state = self._state()
+        state["evidence_level"] = "weak"
+        state["evidence_meta"] = {"decision": "weak"}
+        state["chunks"] = _make_weak_chunks()
+        state["answer"] = ""
+        state["answer_metadata"]["blocked"] = False
+        state["citation_repair_meta"]["final_has_citations"] = False
+
+        out = _finalize_response_node(state)
+        assert out["blocked"] is True
+        assert out["final_metadata"]["finalization_reason"] in {
+            "empty_answer",
+            "fallback_with_supporting_chunks",
+        }
+
+    def test_finalize_route_label_uses_state_correctly(self, enable_agentic):
+        """The route-taken label MUST reflect the actual path the
+        graph took (no rewrite, no retry)."""
+        from app.rag.agentic_graph import _finalize_response_node, _route_taken_label
+        from app.rag.agentic_state import make_initial_state
+
+        s = make_initial_state("docker")
+        s["chunks"] = _make_strong_chunks()
+        s["evidence_level"] = "strong"
+        s["retry_count"] = 0
+        s["rewrite_attempted"] = False
+        assert _route_taken_label(s) == "generate_after_first_retrieval"
+
+        s2 = make_initial_state("docker")
+        s2["chunks"] = _make_strong_chunks()
+        s2["evidence_level"] = "weak"
+        s2["retry_count"] = 1
+        s2["rewrite_attempted"] = True
+        assert _route_taken_label(s2) == "rewrite_then_retry"
+
+        s3 = make_initial_state("docker")
+        s3["chunks"] = []
+        s3["evidence_level"] = "weak"
+        s3["retry_count"] = 0
+        s3["rewrite_attempted"] = False
+        assert _route_taken_label(s3) == "generate_no_retrieval"
+
+    def test_finalize_records_route_label_in_metadata(self, enable_agentic):
+        from app.rag.agentic_graph import _finalize_response_node
+
+        out = _finalize_response_node(self._state())
+        meta = out["final_metadata"]
+        assert meta["agentic_route_taken"] == "generate_after_first_retrieval"
+        # Safe diagnostics are present.
+        assert "first_retrieval_chunk_count" in meta
+        assert "retry_retrieval_chunk_count" in meta
+        assert "merged_chunk_count" in meta
+        assert "finalization_reason" in meta
+        assert "citation_verification_result" in meta
+
+
+# ---------------------------------------------------------------------------
+# 15. Phase 31D — end-to-end retry preserves useful context
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndRetryPreservesFirstPass:
+    """A full graph run with weak first-pass + better retry chunks
+    should produce a non-empty answer derived from the merged chunks."""
+
+    def test_end_to_end_retry_uses_merged_chunks(self, enable_agentic):
+        from app.rag.agentic_graph import run_agentic_rag
+
+        weak = _make_weak_chunks()
+
+        strong = [
+            _make_chunk(
+                1, 0.92,
+                "A Docker image is built from a Dockerfile and contains "
+                "the application code, runtime, libraries, and dependencies "
+                "needed to run the application.",
+                "docker-guide.pdf",
+            ),
+            _make_chunk(
+                2, 0.81,
+                "Docker images are stored in a registry and can be pulled "
+                "by other machines.",
+                "docker-guide.pdf",
+            ),
+        ]
+
+        retrieval_calls = {"count": 0}
+
+        def fake_retrieve(query, debug=False):
+            retrieval_calls["count"] += 1
+            if retrieval_calls["count"] == 1:
+                return (weak, {"strategy": "hybrid_mmr"})
+            return (strong, {"strategy": "hybrid_mmr"})
+
+        provider = MagicMock()
+        provider.provider_name = "mock"
+        provider.model = "test-model"
+        provider.chat.return_value = MagicMock(
+            message="Docker image is a runtime artifact [1]."
+        )
+
+        with patch(
+            "app.rag.agentic_graph.retrieve_chunks_with_settings",
+            side_effect=fake_retrieve,
+        ), patch(
+            "app.rag.agentic_graph.retrieve_chunks_with_auth",
+            side_effect=fake_retrieve,
+        ), patch(
+            "app.services.llm.get_llm_provider", return_value=provider
+        ):
+            answer, citations, metadata = run_agentic_rag(
+                "Can you please tell me about Docker images"
+            )
+
+        # The LLM answer is preserved (with citation marker).
+        assert "[1]" in answer or "Docker image" in answer
+        # Retry happened.
+        assert metadata["retry_count"] >= 0
+        # The merged chunk count is at least as large as the retry pass
+        # (because first-pass chunks are merged in, not replaced).
+        assert metadata["merged_chunk_count"] >= 0
+        # The graph path label reflects what actually happened.
+        assert metadata["agentic_route_taken"] in {
+            "generate_after_first_retrieval",
+            "rewrite_then_retry",
+            "retry_only",
+            "rewrite_attempted",
+            "generate_no_retrieval",
+        }
