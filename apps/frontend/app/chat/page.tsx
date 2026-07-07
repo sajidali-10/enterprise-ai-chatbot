@@ -797,7 +797,7 @@ function WelcomeState({
   return (
     <div className="flex flex-col items-center justify-center py-8 text-center">
       <div className="mb-6">
-        <HipLinkLogo variant="auto" width={80} height={80} />
+        <HipLinkLogo variant="auto" size="md" />
       </div>
       <h2 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text mb-2">Welcome to HipLink AI Assistant</h2>
       <p className="text-hiplink-secondary dark:text-dark-text-muted mb-8 max-w-md">

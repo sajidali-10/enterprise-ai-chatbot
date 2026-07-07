@@ -95,7 +95,7 @@ export default function AuthPage() {
         {/* Header with Logo */}
         <div className="text-center mb-8">
           <div className="inline-block mb-6">
-            <HipLinkLogo variant="auto" width={120} height={120} priority />
+            <HipLinkLogo variant="auto" size="lg" priority />
           </div>
           <h1 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text mb-2">HipLink AI Assistant</h1>
           <p className="text-hiplink-secondary dark:text-dark-text-dim">Secure enterprise knowledge access</p>

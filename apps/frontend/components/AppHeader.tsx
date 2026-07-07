@@ -144,19 +144,34 @@ export default function AppHeader() {
 
   return (
     <header className="brand-header flex-shrink-0">
-      <div className="max-w-6xl mx-auto px-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-3">
-              <HipLinkLogo variant="auto" width={36} height={36} priority />
-              <span className="text-lg font-semibold text-hiplink-dark dark:text-dark-text">
-                HipLink AI Assistant
+      <div className="max-w-7xl mx-auto px-4 sm:px-6">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          {/* Brand block — logo + optional two-line title. Sits on the left,
+              never crops, never overlaps the nav. The subtitle collapses on
+              narrow screens to give the nav room. */}
+          <div className="flex items-center gap-3 min-w-0 flex-shrink-0">
+            <Link
+              href="/"
+              className="flex items-center gap-3 min-w-0"
+              aria-label="HipLink AI Assistant — home"
+            >
+              <HipLinkLogo variant="auto" size="sm" priority />
+              <span className="hidden sm:flex flex-col leading-tight min-w-0">
+                <span className="text-sm font-semibold text-hiplink-dark dark:text-dark-text">
+                  HipLink
+                </span>
+                <span className="text-xs text-hiplink-secondary dark:text-dark-text-muted">
+                  AI Assistant
+                </span>
               </span>
             </Link>
           </div>
 
           {isAuthenticated && (
-            <nav className="flex items-center gap-1" data-testid="primary-nav">
+            <nav
+              className="flex items-center gap-1 flex-wrap justify-end"
+              data-testid="primary-nav"
+            >
               {NAV_ITEMS.map((item) => {
                 // Hide items the current user is not entitled to.
                 if (item.permission && !perms[item.permission]) return null
@@ -170,10 +185,10 @@ export default function AppHeader() {
                 )
               })}
 
-              <div className="ml-2 flex items-center space-x-2">
+              <div className="ml-2 flex items-center gap-2 flex-wrap">
                 <ThemeToggle />
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-hiplink-dark dark:text-dark-text">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="hidden md:inline text-sm text-hiplink-dark dark:text-dark-text">
                     {displayName}
                   </span>
                   <RoleBadge role={rawRole} />
