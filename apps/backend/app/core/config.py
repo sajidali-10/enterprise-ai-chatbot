@@ -125,6 +125,39 @@ class Settings(BaseSettings):
     RAGAS_MAX_CASES: int = int(os.getenv("RAGAS_MAX_CASES", "20"))
     RAGAS_SAVE_RESULTS: bool = os.getenv("RAGAS_SAVE_RESULTS", "true").lower() in ("true", "1", "yes")
 
+    # Phase 31B — LangGraph Agentic RAG Pilot (optional, off by default)
+    # Master switch. When false, the agentic pipeline is fully inert: it is
+    # not imported at request time and the classic knowledge_base path is
+    # unaffected. Set RAG_AGENTIC_ENABLED=true to opt in.
+    RAG_AGENTIC_ENABLED: bool = os.getenv("RAG_AGENTIC_ENABLED", "false").lower() in ("true", "1", "yes")
+    # Framework selector. Only "langgraph" is supported today; kept as a
+    # config field so future frameworks (e.g. a custom planner) can be
+    # added without a code change.
+    RAG_AGENTIC_FRAMEWORK: str = os.getenv("RAG_AGENTIC_FRAMEWORK", "langgraph")
+    # Whether the chat endpoint should route mode=knowledge_base requests
+    # through the agentic pipeline when RAG_AGENTIC_ENABLED=true. When
+    # false, mode=knowledge_base keeps using the classic pipeline even
+    # though the agentic pipeline is loaded. This lets operators turn
+    # the agentic path on only for explicit mode=agentic_knowledge_base
+    # requests — a safer rollout than flipping the default behavior.
+    RAG_AGENTIC_DEFAULT: bool = os.getenv("RAG_AGENTIC_DEFAULT", "false").lower() in ("true", "1", "yes")
+    # Maximum number of retrieve/rewrite cycles the agentic graph may run
+    # before finalizing. 1 = one retrieval pass + one rewrite + retry max.
+    RAG_AGENTIC_MAX_RETRIES: int = int(os.getenv("RAG_AGENTIC_MAX_RETRIES", "1"))
+    # Whether the rewrite_query_if_needed node may trigger a rewrite when
+    # evidence is weak. When false, the graph goes straight from
+    # evaluate_evidence to generate_answer.
+    RAG_AGENTIC_REWRITE_ENABLED: bool = os.getenv("RAG_AGENTIC_REWRITE_ENABLED", "true").lower() in ("true", "1", "yes")
+    # When true, the verify_citations node enforces citations on the
+    # generated answer; a missing citation triggers the
+    # answer_lacks_citations fallback (same behavior as classic RAG).
+    RAG_AGENTIC_REQUIRE_CITATIONS: bool = os.getenv("RAG_AGENTIC_REQUIRE_CITATIONS", "true").lower() in ("true", "1", "yes")
+    # When true, any unhandled exception inside the agentic graph falls
+    # back to the classic pipeline instead of failing the request. This
+    # is the safety net that keeps the agentic pilot from ever breaking
+    # the chat endpoint.
+    RAG_AGENTIC_FALLBACK_TO_CLASSIC: bool = os.getenv("RAG_AGENTIC_FALLBACK_TO_CLASSIC", "true").lower() in ("true", "1", "yes")
+
     # Security settings (Phase 6 - Authentication & Authorization)
     AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "false").lower() in ("true", "1", "yes")
     DEV_AUTH_ENABLED: bool = os.getenv("DEV_AUTH_ENABLED", "true").lower() in ("true", "1", "yes")
