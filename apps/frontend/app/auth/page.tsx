@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { getApiBaseUrl } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
+import HipLinkLogo from '@/components/HipLinkLogo'
 
 const DEV_USERS = [
   {
@@ -95,13 +95,7 @@ export default function AuthPage() {
         {/* Header with Logo */}
         <div className="text-center mb-8">
           <div className="inline-block mb-6">
-            <Image
-              src="/hiplink-logo.png"
-              alt="HipLink"
-              width={120}
-              height={120}
-              className="object-contain mx-auto"
-            />
+            <HipLinkLogo variant="auto" width={120} height={120} priority />
           </div>
           <h1 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text mb-2">HipLink AI Assistant</h1>
           <p className="text-hiplink-secondary dark:text-dark-text-dim">Secure enterprise knowledge access</p>

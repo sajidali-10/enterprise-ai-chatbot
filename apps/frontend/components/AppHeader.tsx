@@ -1,11 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { normalizePermissions, type PermissionFlags } from '@/lib/permissions'
+import HipLinkLogo from './HipLinkLogo'
 
 interface NavLinkProps {
   href: string
@@ -148,13 +148,7 @@ export default function AppHeader() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/" className="flex items-center gap-3">
-              <Image
-                src="/hiplink-logo.png"
-                alt="HipLink"
-                width={36}
-                height={36}
-                className="object-contain"
-              />
+              <HipLinkLogo variant="auto" width={36} height={36} priority />
               <span className="text-lg font-semibold text-hiplink-dark dark:text-dark-text">
                 HipLink AI Assistant
               </span>

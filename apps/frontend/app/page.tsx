@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
+import HipLinkLogo from '@/components/HipLinkLogo'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAuthFetch } from '@/hooks/useApi'
 import ProtectedRoute from '@/components/ProtectedRoute'
@@ -447,7 +447,7 @@ function DashboardContent() {
           <div className="bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-2xl py-16 px-8 text-center relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-hiplink-blue/5 to-transparent pointer-events-none" />
             <div className="relative z-10">
-              <Image src="/hiplink-logo.png" alt="HipLink" width={96} height={96} className="object-contain mx-auto mb-6" />
+              <HipLinkLogo variant="auto" width={96} height={96} priority className="mx-auto mb-6" />
               <h1 className="text-4xl font-bold text-hiplink-dark dark:text-dark-text mb-3">Enterprise AI Assistant</h1>
               <p className="text-base text-hiplink-secondary dark:text-dark-text-muted max-w-lg mx-auto mb-6 leading-relaxed">
                 Chat with AI using general conversation or query your uploaded documents with RAG-powered retrieval.
@@ -499,7 +499,7 @@ function DashboardContent() {
         <div className="bg-white dark:bg-dark-card border border-hiplink-border dark:border-dark-border rounded-2xl py-16 px-8 text-center relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-hiplink-blue/5 via-transparent to-transparent pointer-events-none" />
           <div className="relative z-10">
-            <Image src="/hiplink-logo.png" alt="HipLink" width={96} height={96} className="object-contain mx-auto mb-6" />
+            <HipLinkLogo variant="auto" width={96} height={96} priority className="mx-auto mb-6" />
             <h1 className="text-4xl font-bold text-hiplink-dark dark:text-dark-text mb-3">Enterprise AI Assistant</h1>
             <p className="text-base text-hiplink-secondary dark:text-dark-text-muted max-w-lg mx-auto mb-6 leading-relaxed">
               Chat with AI using general conversation or query your uploaded documents with RAG-powered retrieval.

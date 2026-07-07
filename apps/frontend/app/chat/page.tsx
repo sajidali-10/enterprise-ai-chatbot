@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, FormEvent, KeyboardEvent, useEffect, useCallback } from 'react'
-import Image from 'next/image'
+import HipLinkLogo from '@/components/HipLinkLogo'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { getPermissions, getDefaultChatMode, normalizePermissions, type UserRole, type PermissionFlags } from '@/lib/permissions'
@@ -797,13 +797,7 @@ function WelcomeState({
   return (
     <div className="flex flex-col items-center justify-center py-8 text-center">
       <div className="mb-6">
-        <Image
-          src="/hiplink-logo.png"
-          alt="HipLink"
-          width={80}
-          height={80}
-          className="object-contain"
-        />
+        <HipLinkLogo variant="auto" width={80} height={80} />
       </div>
       <h2 className="text-2xl font-bold text-hiplink-dark dark:text-dark-text mb-2">Welcome to HipLink AI Assistant</h2>
       <p className="text-hiplink-secondary dark:text-dark-text-muted mb-8 max-w-md">
