@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
 
@@ -40,8 +41,8 @@ export interface HipLinkLogoProps {
   className?: string
 
   /**
-   * Set true for above-the-fold logos (e.g. login page, hero). Disables
-   * lazy loading so the wordmark renders immediately.
+   * Forwarded to next/image — set true for above-the-fold logos (e.g. login page, hero).
+   * Triggers preload and removes lazy-loading delay.
    */
   priority?: boolean
 
@@ -56,16 +57,18 @@ export interface HipLinkLogoProps {
   decorative?: boolean
 }
 
-const LOGO_LIGHT_BG = '/logos/hiplink-logo-light-bg.svg'
-const LOGO_DARK_BG = '/logos/hiplink-logo-dark-bg.svg'
+const LOGO_LIGHT_BG = '/logos/hiplink-logo-light-bg.png'
+const LOGO_DARK_BG = '/logos/hiplink-logo-dark-bg.png'
 
-// Source asset viewBox (800 x 440). The aspect ratio (~1.818:1) is used to
-// derive size-preset heights so the wordmark is never cropped or stretched.
-// Rendered width/height are independent of these intrinsic values — the SVG
-// scales cleanly to any size because it is vector.
-const LOGO_INTRINSIC_WIDTH = 800
-const LOGO_INTRINSIC_HEIGHT = 440
-const LOGO_ASPECT = LOGO_INTRINSIC_WIDTH / LOGO_INTRINSIC_HEIGHT // ~1.818
+// Source asset dimensions after trimming the solid background from the
+// approved reference PNGs (93 x 51). Used as the intrinsic next/image size
+// so the browser can reserve the right aspect-ratio space and avoid layout
+// shift. Rendered width/height are larger than the source, so the wordmark
+// will be slightly upscaled; quality is bounded by the supplied reference
+// artwork.
+const LOGO_INTRINSIC_WIDTH = 93
+const LOGO_INTRINSIC_HEIGHT = 51
+const LOGO_ASPECT = LOGO_INTRINSIC_WIDTH / LOGO_INTRINSIC_HEIGHT // ~1.824
 
 // Size presets — width drives the layout footprint; height is computed to
 // preserve the source aspect ratio (so the logo is never cropped, stretched,
@@ -86,14 +89,11 @@ const SIZE_PRESETS: Record<HipLinkLogoSize, { width: number; height: number }> =
  *   hydration mismatch.
  * - When an explicit `variant` is passed, the component is fully deterministic
  *   and does not depend on theme detection.
- * - The blue swoosh is baked into both SVG variants — it stays blue regardless
+ * - The blue swoosh is baked into both PNG variants — it stays blue regardless
  *   of background.
- * - `width` / `height` follow the source asset's 1.818:1 aspect ratio so the
+ * - `width` / `height` follow the source asset's 1.824:1 aspect ratio so the
  *   wordmark is never cropped or stretched. Callers should pick a size preset
  *   (`sm` / `md` / `lg` / `hero`) rather than guessing square dimensions.
- * - Uses a plain `<img>` for SVG because vector assets do not benefit from
- *   Next.js image optimisation, and the wrapper has no aspect-ratio container
- *   to fill — width/height are explicit on every render.
  */
 export default function HipLinkLogo({
   variant = 'auto',
@@ -138,24 +138,23 @@ export default function HipLinkLogo({
       data-logo-size={size}
       style={{ lineHeight: 0 }}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <Image
         src={src}
         alt={altText}
         width={renderedWidth}
         height={renderedHeight}
-        // width/height set both the rendered size and the browser's aspect
-        // ratio reservation, so there is no layout shift on load. Vector SVG
-        // is rendered crisp at any pixel size; `height: auto` is not needed
-        // because we always provide an explicit height. max-w-full keeps the
-        // logo inside narrow viewports when explicit overrides are used.
-        loading={priority ? 'eager' : 'lazy'}
-        decoding={priority ? 'sync' : 'async'}
-        fetchPriority={priority ? 'high' : 'auto'}
+        // Use the trimmed intrinsic dimensions as the layout reservation size
+        // so next/image can compute aspect ratio without distortion, and the
+        // browser reserves the correct space (no layout shift).
+        // We do NOT set `fill`, so width/height directly control the rendered
+        // <img> size. object-contain only matters when the img is constrained
+        // by a parent, which we don't do here — the wrapper <span> is just
+        // for layout (flex/shrink/alignment).
+        sizes={`${renderedWidth}px`}
+        priority={priority}
         aria-hidden={ariaHidden}
-        className="block max-w-full select-none"
+        className="block h-auto max-w-full select-none"
         draggable={false}
-        style={{ height: 'auto' }}
       />
     </span>
   )
