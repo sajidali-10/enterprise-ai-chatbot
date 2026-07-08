@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HipLink logo — light-background variant.
+
+  For light surfaces: dark HipLink wordmark + brand-blue orbital swoosh.
+  Transparent background. Vector — crisp at any rendered size.
+
+  ViewBox aspect ratio is 1.818:1 (800:440) to match the original layout
+  so existing size presets in HipLinkLogo.tsx remain correct.
+
+  Wordmark colour:   #111827  (hiplink-dark)
+  Swoosh colour:     #1F7BC0  (hiplink-blue)
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 800 440"
+     role="img"
+     aria-label="HipLink">
+  <title>HipLink</title>
+
+  <!-- Orbital swoosh: a tilted ellipse, stroked, with rounded caps so the
+       ends taper smoothly. The ellipse is rotated -24deg so the top of the
+       loop sits above-right of the wordmark and the bottom sits below-left,
+       matching the brand identity of the original raster logo. -->
+  <g transform="rotate(-24 400 220)">
+    <ellipse cx="400" cy="220"
+             rx="345" ry="92"
+             fill="none"
+             stroke="#1F7BC0"
+             stroke-width="26"
+             stroke-linecap="round"/>
+  </g>
+
+  <!-- Wordmark: bold italic HipLink. Uses a strong system-font stack so the
+       SVG renders without external font dependencies. The viewBox is sized
+       so font-size ~178 yields a wordmark roughly 590px wide, centred. -->
+  <text x="400" y="270"
+        text-anchor="middle"
+        font-family="'Arial Black', 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif"
+        font-weight="900"
+        font-style="italic"
+        font-size="178"
+        letter-spacing="-3"
+        fill="#111827">HipLink</text>
+</svg>
