@@ -74,6 +74,10 @@ def _is_admin(auth: AuthContext) -> bool:
     return bool(getattr(auth, "is_admin", lambda: False)())
 
 
+def _is_sysadmin(auth: AuthContext) -> bool:
+    return bool(getattr(auth, "is_sysadmin", lambda: False)())
+
+
 def _dev_bypass_active(auth: AuthContext) -> bool:
     if not getattr(settings, "DEV_AUTH_ENABLED", False):
         return False
@@ -99,7 +103,7 @@ def can_access_document(
     if auth is None or not getattr(auth, "is_authenticated", False):
         return False
 
-    if _is_admin(auth) or _dev_bypass_active(auth):
+    if _is_admin(auth) or _is_sysadmin(auth) or _dev_bypass_active(auth):
         return True
 
     if getattr(auth, "user_id", None) is None:
@@ -131,7 +135,7 @@ def can_manage_document(
     if auth is None or not getattr(auth, "is_authenticated", False):
         return False
 
-    if _is_admin(auth) or _dev_bypass_active(auth):
+    if _is_admin(auth) or _is_sysadmin(auth) or _dev_bypass_active(auth):
         return True
 
     if getattr(auth, "user_id", None) is None:
@@ -165,7 +169,7 @@ def get_accessible_document_ids(
     owns_session = db is None
     session = db or SessionLocal()
     try:
-        if _is_admin(auth) or _dev_bypass_active(auth):
+        if _is_admin(auth) or _is_sysadmin(auth) or _dev_bypass_active(auth):
             return [d.id for d in session.query(Document.id).all()]
 
         user_id = getattr(auth, "user_id", None)
@@ -342,8 +346,8 @@ class PermissionChecker:
         require_write: bool = False,
     ) -> PermissionResult:
         """Check single-document access for the given auth context."""
-        if _is_admin(auth) or _dev_bypass_active(auth):
-            return PermissionResult(granted=True, reason="Admin/dev bypass", document_id=document_id)
+        if _is_admin(auth) or _is_sysadmin(auth) or _dev_bypass_active(auth):
+            return PermissionResult(granted=True, reason="Admin/sysadmin/dev bypass", document_id=document_id)
         if not getattr(auth, "is_authenticated", False):
             return PermissionResult(granted=False, reason="Not authenticated", document_id=document_id)
         if getattr(auth, "user_id", None) is None:
@@ -359,7 +363,7 @@ class PermissionChecker:
         """Filter the given document IDs to only those visible to auth."""
         if not document_ids:
             return []
-        if _is_admin(auth) or _dev_bypass_active(auth):
+        if _is_admin(auth) or _is_sysadmin(auth) or _dev_bypass_active(auth):
             return list(document_ids)
         if getattr(auth, "user_id", None) is None:
             return []
@@ -458,8 +462,8 @@ def check_document_access(
     """Convenience function to check document access. Creates its own DB session."""
     if auth is None:
         return PermissionResult(granted=False, reason="No auth")
-    if _is_admin(auth) or _dev_bypass_active(auth):
-        return PermissionResult(granted=True, reason="Admin/dev bypass", document_id=document_id)
+    if _is_admin(auth) or _is_sysadmin(auth) or _dev_bypass_active(auth):
+        return PermissionResult(granted=True, reason="Admin/sysadmin/dev bypass", document_id=document_id)
     if not getattr(auth, "is_authenticated", False):
         return PermissionResult(granted=False, reason="Not authenticated", document_id=document_id)
 
@@ -487,7 +491,7 @@ def filter_documents_by_permission(
     """
     if auth is None or not getattr(auth, "is_authenticated", False):
         return []
-    if _is_admin(auth) or _dev_bypass_active(auth):
+    if _is_admin(auth) or _is_sysadmin(auth) or _dev_bypass_active(auth):
         return list(document_ids)
 
     owns_session = db is None

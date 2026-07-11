@@ -91,7 +91,7 @@ def _bootstrap_admin_user():
 
     db: Session = SessionLocal()
     try:
-        existing_admin = db.query(User).filter(User.role == UserRole.ADMIN).first()
+        existing_admin = db.query(User).filter(User.role == UserRole.admin).first()
         if existing_admin:
             logger.info("Admin user already exists; skipping bootstrap.")
             return
@@ -100,7 +100,7 @@ def _bootstrap_admin_user():
             username=settings.BOOTSTRAP_ADMIN_USERNAME,
             email=settings.BOOTSTRAP_ADMIN_EMAIL,
             hashed_password=hash_password(settings.BOOTSTRAP_ADMIN_PASSWORD),
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_active=True,
             is_external=False,
         )

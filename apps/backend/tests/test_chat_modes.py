@@ -111,7 +111,7 @@ class TestChatModes:
                 mock_auth_context = MagicMock()
                 mock_auth_context.is_authenticated = True
                 mock_auth_context.is_admin.return_value = False
-                mock_auth_context.role = UserRole.USER
+                mock_auth_context.role = UserRole.user
                 mock_auth.return_value = mock_auth_context
                 
                 with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:
@@ -136,7 +136,7 @@ class TestChatModes:
                 mock_auth_context = MagicMock()
                 mock_auth_context.is_authenticated = True
                 mock_auth_context.is_admin.return_value = True
-                mock_auth_context.role = UserRole.ADMIN
+                mock_auth_context.role = UserRole.admin
                 mock_auth.return_value = mock_auth_context
                 
                 with patch('app.api.chat.generate_answer_with_rag_audit') as mock_generate:

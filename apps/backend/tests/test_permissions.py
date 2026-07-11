@@ -28,7 +28,7 @@ class TestAuthContext:
         ctx = AuthContext(
             user_id=1,
             username="admin_user",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
         assert ctx.is_admin() is True
@@ -37,7 +37,7 @@ class TestAuthContext:
         ctx = AuthContext(
             user_id=2,
             username="regular_user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         assert ctx.is_admin() is False
@@ -46,7 +46,7 @@ class TestAuthContext:
         ctx = AuthContext(
             user_id=None,
             username="dev_user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         assert ctx.is_admin() is False
@@ -55,7 +55,7 @@ class TestAuthContext:
         ctx = AuthContext(
             user_id=1,
             username="test_user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
             is_external=False,
             session_id="session123",
@@ -86,7 +86,7 @@ class TestDevAuthProvider:
         result = provider.authenticate(mock_request)
         assert result is not None
         assert result.username == "testuser"
-        assert result.role == UserRole.USER
+        assert result.role == UserRole.user
         assert result.is_authenticated is True
 
     def test_admin_dev_user(self):
@@ -97,7 +97,7 @@ class TestDevAuthProvider:
         result = provider.authenticate(mock_request)
         assert result is not None
         assert result.username == "admin_superuser"
-        assert result.role == UserRole.ADMIN
+        assert result.role == UserRole.admin
         assert result.is_authenticated is True
 
     def test_viewer_dev_user(self):
@@ -108,7 +108,7 @@ class TestDevAuthProvider:
         result = provider.authenticate(mock_request)
         assert result is not None
         assert result.username == "viewer_guest"
-        assert result.role == UserRole.VIEWER
+        assert result.role == UserRole.viewer
         assert result.is_authenticated is True
 
 
@@ -122,7 +122,7 @@ class TestAnonymousAuthProvider:
         result = provider.authenticate(mock_request)
         assert result is not None
         assert result.username == "anonymous"
-        assert result.role == UserRole.VIEWER
+        assert result.role == UserRole.viewer
         assert result.is_authenticated is False
 
 
@@ -139,7 +139,7 @@ class TestCompositeAuthProvider:
         provider2.authenticate.return_value = AuthContext(
             user_id=1,
             username="found",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         
@@ -195,9 +195,9 @@ class TestUserRole:
     """Tests for UserRole enum."""
 
     def test_role_values(self):
-        assert UserRole.ADMIN.value == "admin"
-        assert UserRole.USER.value == "user"
-        assert UserRole.VIEWER.value == "viewer"
+        assert UserRole.admin.value == "admin"
+        assert UserRole.user.value == "user"
+        assert UserRole.viewer.value == "viewer"
 
 
 class TestAuthContextRoleValues:
@@ -207,30 +207,30 @@ class TestAuthContextRoleValues:
         ctx = AuthContext(
             user_id=1,
             username="admin",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
-        assert ctx.role == UserRole.ADMIN
+        assert ctx.role == UserRole.admin
         assert ctx.role.value == "admin"
 
     def test_user_role_string(self):
         ctx = AuthContext(
             user_id=2,
             username="user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
-        assert ctx.role == UserRole.USER
+        assert ctx.role == UserRole.user
         assert ctx.role.value == "user"
 
     def test_viewer_role_string(self):
         ctx = AuthContext(
             user_id=3,
             username="viewer",
-            role=UserRole.VIEWER,
+            role=UserRole.viewer,
             is_authenticated=True,
         )
-        assert ctx.role == UserRole.VIEWER
+        assert ctx.role == UserRole.viewer
         assert ctx.role.value == "viewer"
 
 
@@ -244,7 +244,7 @@ class TestPermissionFilteringLogic:
         ctx = AuthContext(
             user_id=1,
             username="admin",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
         # Admin should be able to bypass - this is the design intent
@@ -255,7 +255,7 @@ class TestPermissionFilteringLogic:
         ctx = AuthContext(
             user_id=None,  # No database record
             username="dev_user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         # Dev user without user_id cannot have permissions
@@ -267,7 +267,7 @@ class TestPermissionFilteringLogic:
         ctx = AuthContext(
             user_id=100,
             username="regular_user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         assert ctx.is_admin() is False

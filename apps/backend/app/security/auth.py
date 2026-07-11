@@ -44,9 +44,13 @@ class AuthContext:
     is_authenticated: bool
     is_external: bool = False
     session_id: Optional[str] = None
+    is_protected: bool = False
     
     def is_admin(self) -> bool:
-        return self.role == UserRole.ADMIN
+        return self.role in (UserRole.admin, UserRole.sysadmin)
+    
+    def is_sysadmin(self) -> bool:
+        return self.role == UserRole.sysadmin
     
     def is_active(self) -> bool:
         """Check if user is active. Dev users are always considered active."""
@@ -60,6 +64,7 @@ class AuthContext:
             "is_authenticated": self.is_authenticated,
             "is_external": self.is_external,
             "session_id": self.session_id,
+            "is_protected": self.is_protected,
         }
 
 
@@ -96,14 +101,17 @@ class DevAuthProvider(AuthProviderBase):
             return None
         
         # Determine role from username convention
-        if dev_username.startswith("admin_"):
-            role = UserRole.ADMIN
+        if dev_username.startswith("sysadmin_"):
+            role = UserRole.sysadmin
+            username = dev_username
+        elif dev_username.startswith("admin_"):
+            role = UserRole.admin
             username = dev_username
         elif dev_username.startswith("viewer_"):
-            role = UserRole.VIEWER
+            role = UserRole.viewer
             username = dev_username
         else:
-            role = UserRole.USER
+            role = UserRole.user
             username = dev_username
         
         return AuthContext(
@@ -166,6 +174,7 @@ class JWTAuthProvider(AuthProviderBase):
                 role=user.role if isinstance(user.role, UserRole) else UserRole(user.role),
                 is_authenticated=True,
                 is_external=False,
+                is_protected=user.is_protected,
             )
         finally:
             db.close()
@@ -199,7 +208,7 @@ class AnonymousAuthProvider(AuthProviderBase):
         return AuthContext(
             user_id=None,
             username="anonymous",
-            role=UserRole.VIEWER,  # Limited permissions for anonymous
+            role=UserRole.viewer,  # Limited permissions for anonymous
             is_authenticated=False,
             is_external=False,
         )
@@ -265,7 +274,7 @@ def authenticate_request(request: Request) -> AuthContext:
         context = AuthContext(
             user_id=None,
             username="anonymous",
-            role=UserRole.VIEWER,
+            role=UserRole.viewer,
             is_authenticated=False,
         )
     
@@ -302,7 +311,7 @@ def require_role(required_role: UserRole):
     
     Usage:
         @router.post("/admin")
-        @require_role(UserRole.ADMIN)
+        @require_role(UserRole.admin)
         def admin_endpoint(auth: AuthContext = Depends(get_auth)):
             ...
     """
@@ -315,15 +324,16 @@ def require_role(required_role: UserRole):
             if not auth.is_authenticated:
                 raise HTTPException(status_code=401, detail="Authentication required")
             
-            # Admin can do anything
-            if auth.is_admin():
+            # SYSADMIN and ADMIN can do anything
+            if auth.is_sysadmin() or auth.is_admin():
                 return func(*args, **kwargs)
             
             # Check role hierarchy
             role_hierarchy = {
-                UserRole.ADMIN: 3,
-                UserRole.USER: 2,
-                UserRole.VIEWER: 1,
+                UserRole.sysadmin: 4,
+                UserRole.admin: 3,
+                UserRole.user: 2,
+                UserRole.viewer: 1,
             }
             
             if role_hierarchy.get(auth.role, 0) < role_hierarchy.get(required_role, 0):
@@ -349,7 +359,7 @@ def get_role_permissions(role: UserRole) -> dict:
         "can_submit_feedback": False,
         "can_manage_users": False,
     }
-    if role == UserRole.ADMIN:
+    if role in (UserRole.sysadmin, UserRole.admin):
         perms.update({
             "can_use_general_chat": True,
             "can_use_knowledge_base": True,
@@ -363,7 +373,7 @@ def get_role_permissions(role: UserRole) -> dict:
             "can_submit_feedback": True,
             "can_manage_users": True,
         })
-    elif role == UserRole.USER:
+    elif role == UserRole.user:
         perms.update({
             "can_use_general_chat": True,
             "can_use_knowledge_base": True,
@@ -377,7 +387,7 @@ def get_role_permissions(role: UserRole) -> dict:
             "can_submit_feedback": True,
             "can_manage_users": False,
         })
-    elif role == UserRole.VIEWER:
+    elif role == UserRole.viewer:
         perms.update({
             "can_use_general_chat": False,
             "can_use_knowledge_base": True,

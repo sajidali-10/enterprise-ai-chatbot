@@ -29,7 +29,7 @@ def _clear_rate_limit_store():
         pass  # Redis not available, in-memory was cleared already
 
 
-def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.USER, is_active: bool = True) -> User:
+def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.user, is_active: bool = True) -> User:
     user = User(
         username=username,
         email=email,
@@ -99,7 +99,7 @@ class TestChatRateLimit:
         _clear_rate_limit_store()
         monkeypatch.setattr(settings, "RATE_LIMIT_ENABLED", True)
 
-        _create_user(db_session, "chatuser", "chat@example.com", "UserPass123!", role=UserRole.USER)
+        _create_user(db_session, "chatuser", "chat@example.com", "UserPass123!", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "chatuser",
             "password": "UserPass123!",

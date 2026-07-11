@@ -18,7 +18,7 @@ settings.JWT_ALGORITHM = "HS256"
 settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 
-def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.USER, is_active: bool = True) -> User:
+def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.user, is_active: bool = True) -> User:
     user = User(
         username=username,
         email=email,
@@ -92,7 +92,7 @@ class TestLogin:
 
 class TestMe:
     def test_me_with_valid_token(self, client: TestClient, db_session):
-        _create_user(db_session, "meuser", "me@example.com", "password123", role=UserRole.USER)
+        _create_user(db_session, "meuser", "me@example.com", "password123", role=UserRole.user)
         login_res = client.post("/api/auth/login", json={
             "username_or_email": "meuser",
             "password": "password123",
@@ -127,7 +127,7 @@ class TestMe:
 
 class TestAuthorization:
     def test_admin_can_access_observability(self, client: TestClient, db_session):
-        _create_user(db_session, "adminonly", "admin@example.com", "adminpass", role=UserRole.ADMIN)
+        _create_user(db_session, "adminonly", "admin@example.com", "adminpass", role=UserRole.admin)
         login = client.post("/api/auth/login", json={
             "username_or_email": "adminonly",
             "password": "adminpass",
@@ -137,7 +137,7 @@ class TestAuthorization:
         assert res.status_code == 200
 
     def test_user_cannot_access_observability(self, client: TestClient, db_session):
-        _create_user(db_session, "regular", "regular@example.com", "userpass", role=UserRole.USER)
+        _create_user(db_session, "regular", "regular@example.com", "userpass", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "regular",
             "password": "userpass",
@@ -147,7 +147,7 @@ class TestAuthorization:
         assert res.status_code == 403
 
     def test_viewer_cannot_access_observability(self, client: TestClient, db_session):
-        _create_user(db_session, "viewer", "viewer@example.com", "viewerpass", role=UserRole.VIEWER)
+        _create_user(db_session, "viewer", "viewer@example.com", "viewerpass", role=UserRole.viewer)
         login = client.post("/api/auth/login", json={
             "username_or_email": "viewer",
             "password": "viewerpass",
@@ -157,7 +157,7 @@ class TestAuthorization:
         assert res.status_code == 403
 
     def test_viewer_cannot_use_general_chat(self, client: TestClient, db_session):
-        _create_user(db_session, "viewerc", "viewerc@example.com", "viewerpass", role=UserRole.VIEWER)
+        _create_user(db_session, "viewerc", "viewerc@example.com", "viewerpass", role=UserRole.viewer)
         login = client.post("/api/auth/login", json={
             "username_or_email": "viewerc",
             "password": "viewerpass",
@@ -170,7 +170,7 @@ class TestAuthorization:
         assert res.status_code == 403
 
     def test_non_admin_cannot_use_debug_chat(self, client: TestClient, db_session):
-        _create_user(db_session, "userdebug", "userdebug@example.com", "userpass", role=UserRole.USER)
+        _create_user(db_session, "userdebug", "userdebug@example.com", "userpass", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "userdebug",
             "password": "userpass",
@@ -183,7 +183,7 @@ class TestAuthorization:
         assert res.status_code == 403
 
     def test_admin_can_use_debug_chat(self, client: TestClient, db_session):
-        _create_user(db_session, "admindebug", "admindebug@example.com", "adminpass", role=UserRole.ADMIN)
+        _create_user(db_session, "admindebug", "admindebug@example.com", "adminpass", role=UserRole.admin)
         login = client.post("/api/auth/login", json={
             "username_or_email": "admindebug",
             "password": "adminpass",
@@ -196,7 +196,7 @@ class TestAuthorization:
         assert res.status_code == 200
 
     def test_document_delete_requires_permission(self, client: TestClient, db_session):
-        _create_user(db_session, "nodelete", "nodelete@example.com", "userpass", role=UserRole.USER)
+        _create_user(db_session, "nodelete", "nodelete@example.com", "userpass", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "nodelete",
             "password": "userpass",
@@ -206,7 +206,7 @@ class TestAuthorization:
         assert res.status_code == 403
 
     def test_document_reindex_requires_permission(self, client: TestClient, db_session):
-        _create_user(db_session, "noreindex", "noreindex@example.com", "userpass", role=UserRole.USER)
+        _create_user(db_session, "noreindex", "noreindex@example.com", "userpass", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "noreindex",
             "password": "userpass",
@@ -217,7 +217,7 @@ class TestAuthorization:
 
     def test_document_upload_requires_permission(self, client: TestClient, db_session):
         import io
-        _create_user(db_session, "noupload", "noupload@example.com", "viewerpass", role=UserRole.VIEWER)
+        _create_user(db_session, "noupload", "noupload@example.com", "viewerpass", role=UserRole.viewer)
         login = client.post("/api/auth/login", json={
             "username_or_email": "noupload",
             "password": "viewerpass",
@@ -234,8 +234,8 @@ class TestAuthorization:
 class TestTokenVersionInvalidation:
     def test_password_reset_invalidates_old_token(self, client: TestClient, db_session):
         # Create admin and regular user
-        admin = _create_user(db_session, "tokenadmin", "tokenadmin@example.com", "AdminPass123!", role=UserRole.ADMIN)
-        user = _create_user(db_session, "tokenuser", "tokenuser@example.com", "UserPass123!", role=UserRole.USER)
+        admin = _create_user(db_session, "tokenadmin", "tokenadmin@example.com", "AdminPass123!", role=UserRole.admin)
+        user = _create_user(db_session, "tokenuser", "tokenuser@example.com", "UserPass123!", role=UserRole.user)
         db_session.commit()
 
         # Login as user and get token
@@ -269,8 +269,8 @@ class TestTokenVersionInvalidation:
 
     def test_deactivation_invalidates_old_token(self, client: TestClient, db_session):
         # Create admin and user
-        admin = _create_user(db_session, "deactadmin", "deactadmin@example.com", "AdminPass123!", role=UserRole.ADMIN)
-        user = _create_user(db_session, "deactuser", "deactuser@example.com", "UserPass123!", role=UserRole.USER)
+        admin = _create_user(db_session, "deactadmin", "deactadmin@example.com", "AdminPass123!", role=UserRole.admin)
+        user = _create_user(db_session, "deactuser", "deactuser@example.com", "UserPass123!", role=UserRole.user)
 
         # Login as user
         login = client.post("/api/auth/login", json={
@@ -303,7 +303,7 @@ class TestTokenVersionInvalidation:
 
     def test_inactive_user_token_rejected(self, client: TestClient, db_session):
         # Create inactive user and try to use token
-        user = _create_user(db_session, "inactiveuser", "inactiveuser@example.com", "UserPass123!", role=UserRole.USER, is_active=True)
+        user = _create_user(db_session, "inactiveuser", "inactiveuser@example.com", "UserPass123!", role=UserRole.user, is_active=True)
 
         # Login to get token
         login = client.post("/api/auth/login", json={
@@ -350,7 +350,7 @@ class TestPasswordPolicy:
 
 
     def test_create_user_enforces_password_policy(self, client: TestClient, db_session):
-        admin = _create_user(db_session, "policyadmin", "policyadmin@example.com", "AdminPass123!", role=UserRole.ADMIN)
+        admin = _create_user(db_session, "policyadmin", "policyadmin@example.com", "AdminPass123!", role=UserRole.admin)
         login = client.post("/api/auth/login", json={
             "username_or_email": "policyadmin",
             "password": "AdminPass123!",
@@ -387,8 +387,8 @@ class TestPasswordPolicy:
         assert res2.status_code == 201, res2.json()
 
     def test_reset_password_enforces_password_policy(self, client: TestClient, db_session):
-        admin = _create_user(db_session, "pwadmin", "pwadmin@example.com", "AdminPass123!", role=UserRole.ADMIN)
-        user = _create_user(db_session, "pwuser", "pwuser@example.com", "UserPass123!", role=UserRole.USER)
+        admin = _create_user(db_session, "pwadmin", "pwadmin@example.com", "AdminPass123!", role=UserRole.admin)
+        user = _create_user(db_session, "pwuser", "pwuser@example.com", "UserPass123!", role=UserRole.user)
 
         login = client.post("/api/auth/login", json={
             "username_or_email": "pwadmin",

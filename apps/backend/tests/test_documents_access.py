@@ -26,7 +26,7 @@ settings.JWT_ALGORITHM = "HS256"
 settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 
-def _make_user(db, username, email, password, role=UserRole.USER, is_active=True):
+def _make_user(db, username, email, password, role=UserRole.user, is_active=True):
     u = User(
         username=username, email=email,
         hashed_password=hash_password(password),
@@ -72,17 +72,17 @@ def _cleanup_doc(db, doc_id):
 
 @pytest.fixture
 def admin_user(db_session):
-    return _make_user(db_session, "phase13admin", "p13admin@test.com", "adminpass", role=UserRole.ADMIN)
+    return _make_user(db_session, "phase13admin", "p13admin@test.com", "adminpass", role=UserRole.admin)
 
 
 @pytest.fixture
 def regular_user(db_session):
-    return _make_user(db_session, "phase13user", "p13user@test.com", "userpass", role=UserRole.USER)
+    return _make_user(db_session, "phase13user", "p13user@test.com", "userpass", role=UserRole.user)
 
 
 @pytest.fixture
 def viewer_user(db_session):
-    return _make_user(db_session, "phase13viewer", "p13viewer@test.com", "viewerpass", role=UserRole.VIEWER)
+    return _make_user(db_session, "phase13viewer", "p13viewer@test.com", "viewerpass", role=UserRole.viewer)
 
 
 @pytest.fixture

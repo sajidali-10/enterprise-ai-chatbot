@@ -16,7 +16,7 @@ from app.security.models import User, UserRole
 from app.security.password import hash_password
 
 
-def _create_user(db_session, username, email, password, role=UserRole.USER):
+def _create_user(db_session, username, email, password, role=UserRole.user):
     user = User(
         username=username,
         email=email,

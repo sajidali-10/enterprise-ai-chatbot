@@ -22,6 +22,11 @@ class SafeUser(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
+    # Phase 33 fields
+    is_protected: bool = False
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
+    deleted_by: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -38,7 +43,7 @@ class CreateUserRequest(BaseModel):
     email: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=1, max_length=255)
     full_name: Optional[str] = Field(None, max_length=255)
-    role: UserRole = UserRole.USER
+    role: UserRole = UserRole.user
     is_active: bool = True
 
     @field_validator("email")

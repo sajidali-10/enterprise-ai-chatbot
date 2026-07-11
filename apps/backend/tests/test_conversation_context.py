@@ -107,7 +107,7 @@ def test_other_user_messages_not_included(jwt_user_client, db_session):
         username="other_user2",
         email="other2@test.com",
         hashed_password=hash_password("pass123"),
-        role=UserRole.USER,
+        role=UserRole.user,
         is_active=True,
     )
     db_session.add(user2)

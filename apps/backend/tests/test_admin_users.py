@@ -27,7 +27,7 @@ settings.JWT_ALGORITHM = "HS256"
 settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 
-def _make_user(db_session, username, email, password, role=UserRole.USER, is_active=True) -> User:
+def _make_user(db_session, username, email, password, role=UserRole.user, is_active=True) -> User:
     user = User(
         username=username,
         email=email,
@@ -52,17 +52,17 @@ def _login(client, username_or_email, password) -> str:
 
 @pytest.fixture
 def admin_user(db_session):
-    return _make_user(db_session, "admin1", "admin1@test.com", "AdminPass123!", role=UserRole.ADMIN)
+    return _make_user(db_session, "admin1", "admin1@test.com", "AdminPass123!", role=UserRole.admin)
 
 
 @pytest.fixture
 def regular_user(db_session):
-    return _make_user(db_session, "user1", "user1@test.com", "userpass123", role=UserRole.USER)
+    return _make_user(db_session, "user1", "user1@test.com", "userpass123", role=UserRole.user)
 
 
 @pytest.fixture
 def viewer_user(db_session):
-    return _make_user(db_session, "viewer1", "viewer1@test.com", "viewerpass123", role=UserRole.VIEWER)
+    return _make_user(db_session, "viewer1", "viewer1@test.com", "viewerpass123", role=UserRole.viewer)
 
 
 @pytest.fixture
@@ -452,3 +452,214 @@ class TestInactiveUserTokenInvalidation:
         res = client.get("/api/auth/me")
         assert res.status_code == 401
         client.headers.pop("Authorization", None)
+
+
+# ==============================================================================
+# Phase 33: SYSADMIN and Protected User Tests
+# ==============================================================================
+
+class TestSysadminAndProtectedUser:
+    """Tests for SYSADMIN role and protected user safeguards (Phase 33)."""
+
+    def test_sysadmin_can_be_created(self, admin_client, db_session):
+        """SYSADMIN role can be assigned when creating a user."""
+        res = admin_client.post("/api/admin/users", json={
+            "username": "sysadmin1",
+            "email": "sysadmin1@test.com",
+            "password": "SysAdminPass123!",
+            "role": "sysadmin",
+        })
+        assert res.status_code == 201, res.text
+        data = res.json()
+        assert data["role"] == "sysadmin"
+        assert data["username"] == "sysadmin1"
+
+    def test_sysadmin_has_full_permissions(self, admin_client, db_session):
+        """SYSADMIN role grants all permissions including can_manage_users."""
+        res = admin_client.post("/api/admin/users", json={
+            "username": "sysadmin2",
+            "email": "sysadmin2@test.com",
+            "password": "SysAdminPass123!",
+            "role": "sysadmin",
+        })
+        assert res.status_code == 201
+        sysadmin_id = res.json()["id"]
+        
+        # Get user with permissions
+        res = admin_client.get(f"/api/admin/users/{sysadmin_id}")
+        assert res.status_code == 200
+        perms = res.json()["permissions"]
+        assert perms["can_manage_users"] is True
+        assert perms["can_use_general_chat"] is True
+        assert perms["can_access_observability"] is True
+        assert perms["can_access_evaluations"] is True
+
+    def test_admin_cannot_modify_protected_sysadmin(self, admin_client, db_session):
+        """Regular admin cannot modify a protected SYSADMIN user."""
+        # Create a protected sysadmin user directly in DB
+        sysadmin = User(
+            username="protected_sysadmin",
+            email="protected@test.com",
+            hashed_password=hash_password("ProtectedPass123!"),
+            role=UserRole.sysadmin,
+            is_active=True,
+            is_protected=True,
+        )
+        db_session.add(sysadmin)
+        db_session.commit()
+        db_session.refresh(sysadmin)
+
+        # Admin tries to deactivate protected sysadmin -> should fail
+        res = admin_client.delete(f"/api/admin/users/{sysadmin.id}")
+        assert res.status_code == 403
+        assert "protected" in res.json()["detail"].lower()
+
+        # Admin tries to demote protected sysadmin -> should fail
+        res = admin_client.patch(f"/api/admin/users/{sysadmin.id}", json={
+            "role": "user",
+        })
+        assert res.status_code == 403
+        assert "protected" in res.json()["detail"].lower()
+
+        # Admin tries to reset password of protected sysadmin -> should fail
+        res = admin_client.post(f"/api/admin/users/{sysadmin.id}/reset-password", json={
+            "new_password": "NewPassword123!",
+        })
+        assert res.status_code == 403
+        assert "protected" in res.json()["detail"].lower()
+
+        # Admin tries to reactivate protected sysadmin -> should fail
+        res = admin_client.post(f"/api/admin/users/{sysadmin.id}/reactivate")
+        assert res.status_code == 403
+        assert "protected" in res.json()["detail"].lower()
+
+    def test_sysadmin_can_modify_other_sysadmin(self, admin_client, db_session):
+        """SYSADMIN can modify another SYSADMIN user."""
+        # Create a protected sysadmin user directly in DB
+        sysadmin1 = User(
+            username="sysadmin1",
+            email="sysadmin1@test.com",
+            hashed_password=hash_password("Pass123!"),
+            role=UserRole.sysadmin,
+            is_active=True,
+            is_protected=True,
+        )
+        sysadmin2 = User(
+            username="sysadmin2",
+            email="sysadmin2@test.com",
+            hashed_password=hash_password("Pass123!"),
+            role=UserRole.sysadmin,
+            is_active=True,
+            is_protected=True,
+        )
+        db_session.add_all([sysadmin1, sysadmin2])
+        db_session.commit()
+        db_session.refresh(sysadmin1)
+        db_session.refresh(sysadmin2)
+
+        # Login as sysadmin1
+        sysadmin_client = TestClient(app)
+        token = _login(sysadmin_client, "sysadmin1", "Pass123!")
+        sysadmin_client.headers["Authorization"] = f"Bearer {token}"
+
+        # sysadmin1 can deactivate sysadmin2
+        res = sysadmin_client.delete(f"/api/admin/users/{sysadmin2.id}")
+        assert res.status_code == 200
+        assert res.json()["is_active"] is False
+
+        # sysadmin1 can reactivate sysadmin2
+        res = sysadmin_client.post(f"/api/admin/users/{sysadmin2.id}/reactivate")
+        assert res.status_code == 200
+        assert res.json()["is_active"] is True
+
+        # sysadmin1 can demote sysadmin2
+        res = sysadmin_client.patch(f"/api/admin/users/{sysadmin2.id}", json={
+            "role": "admin",
+        })
+        assert res.status_code == 200
+        assert res.json()["role"] == "admin"
+
+    def test_admin_cannot_modify_protected_user_even_if_not_sysadmin(self, admin_client, db_session):
+        """Protected flag works independently of role - admin cannot modify any protected user."""
+        # Create a protected regular user
+        protected_user = User(
+            username="protected_regular",
+            email="protected_regular@test.com",
+            hashed_password=hash_password("Pass123!"),
+            role=UserRole.user,
+            is_active=True,
+            is_protected=True,
+        )
+        db_session.add(protected_user)
+        db_session.commit()
+        db_session.refresh(protected_user)
+
+        # Admin tries to deactivate protected regular user -> should fail
+        res = admin_client.delete(f"/api/admin/users/{protected_user.id}")
+        assert res.status_code == 403
+        assert "protected" in res.json()["detail"].lower()
+
+        # Admin tries to demote protected regular user -> should fail
+        res = admin_client.patch(f"/api/admin/users/{protected_user.id}", json={
+            "role": "viewer",
+        })
+        assert res.status_code == 403
+        assert "protected" in res.json()["detail"].lower()
+
+    def test_reactivate_user(self, admin_client, regular_user):
+        """Admin can reactivate a deactivated user."""
+        # First deactivate
+        res = admin_client.delete(f"/api/admin/users/{regular_user.id}")
+        assert res.status_code == 200
+        assert res.json()["is_active"] is False
+
+        # Then reactivate
+        res = admin_client.post(f"/api/admin/users/{regular_user.id}/reactivate")
+        assert res.status_code == 200
+        assert res.json()["is_active"] is True
+
+    def test_reactivate_already_active_user_fails(self, admin_client, regular_user):
+        """Reactivating an already active user returns 400."""
+        res = admin_client.post(f"/api/admin/users/{regular_user.id}/reactivate")
+        assert res.status_code == 400
+        assert "already active" in res.json()["detail"].lower()
+
+    def test_protected_sysadmin_cannot_be_reactivated_by_admin(self, admin_client, db_session):
+        """Admin cannot reactivate a deactivated protected sysadmin."""
+        sysadmin = User(
+            username="sysadmin_reactivate",
+            email="sysadmin_reactivate@test.com",
+            hashed_password=hash_password("Pass123!"),
+            role=UserRole.sysadmin,
+            is_active=False,
+            is_protected=True,
+        )
+        db_session.add(sysadmin)
+        db_session.commit()
+        db_session.refresh(sysadmin)
+
+        # Admin tries to reactivate -> should fail
+        res = admin_client.post(f"/api/admin/users/{sysadmin.id}/reactivate")
+        assert res.status_code == 403
+        assert "protected" in res.json()["detail"].lower()
+
+    def test_sysadmin_login_works(self, client, db_session):
+        """SYSADMIN user can login successfully."""
+        sysadmin = User(
+            username="login_sysadmin",
+            email="login_sysadmin@test.com",
+            hashed_password=hash_password("LoginPass123!"),
+            role=UserRole.sysadmin,
+            is_active=True,
+        )
+        db_session.add(sysadmin)
+        db_session.commit()
+
+        res = client.post("/api/auth/login", json={
+            "username_or_email": "login_sysadmin",
+            "password": "LoginPass123!",
+        })
+        assert res.status_code == 200
+        data = res.json()
+        assert data["user"]["role"] == "sysadmin"
+        assert data["user"]["permissions"]["can_manage_users"] is True

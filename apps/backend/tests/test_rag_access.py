@@ -38,7 +38,7 @@ settings.JWT_ALGORITHM = "HS256"
 settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 
-def _make_user(db, username, email, role=UserRole.USER, is_active=True):
+def _make_user(db, username, email, role=UserRole.user, is_active=True):
     u = User(
         username=username, email=email,
         hashed_password=hash_password(f"{username}-pw"),
@@ -74,34 +74,34 @@ def _cleanup_doc(db, doc_id):
 
 @pytest.fixture
 def admin_user(db_session):
-    return _make_user(db_session, "rag_admin", "rag_admin@test.com", role=UserRole.ADMIN)
+    return _make_user(db_session, "rag_admin", "rag_admin@test.com", role=UserRole.admin)
 
 
 @pytest.fixture
 def owner_user(db_session):
-    return _make_user(db_session, "rag_owner", "rag_owner@test.com", role=UserRole.USER)
+    return _make_user(db_session, "rag_owner", "rag_owner@test.com", role=UserRole.user)
 
 
 @pytest.fixture
 def other_user(db_session):
-    return _make_user(db_session, "rag_other", "rag_other@test.com", role=UserRole.USER)
+    return _make_user(db_session, "rag_other", "rag_other@test.com", role=UserRole.user)
 
 
 @pytest.fixture
 def viewer_user(db_session):
-    return _make_user(db_session, "rag_viewer", "rag_viewer@test.com", role=UserRole.VIEWER)
+    return _make_user(db_session, "rag_viewer", "rag_viewer@test.com", role=UserRole.viewer)
 
 
 def _admin_auth(user):
-    return AuthContext(user_id=user.id, username=user.username, role=UserRole.ADMIN, is_authenticated=True, is_external=False)
+    return AuthContext(user_id=user.id, username=user.username, role=UserRole.admin, is_authenticated=True, is_external=False)
 
 
 def _user_auth(user):
-    return AuthContext(user_id=user.id, username=user.username, role=UserRole.USER, is_authenticated=True, is_external=False)
+    return AuthContext(user_id=user.id, username=user.username, role=UserRole.user, is_authenticated=True, is_external=False)
 
 
 def _viewer_auth(user):
-    return AuthContext(user_id=user.id, username=user.username, role=UserRole.VIEWER, is_authenticated=True, is_external=False)
+    return AuthContext(user_id=user.id, username=user.username, role=UserRole.viewer, is_authenticated=True, is_external=False)
 
 
 # ---------------------------------------------------------------------------

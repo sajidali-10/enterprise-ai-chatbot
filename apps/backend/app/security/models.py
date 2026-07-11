@@ -15,9 +15,21 @@ from app.db.base import Base
 
 
 class UserRole(str, PyEnum):
-    ADMIN = "admin"
-    USER = "user"
-    VIEWER = "viewer"
+    """
+    Role hierarchy (Phase 33):
+
+        sysadmin > admin > user > viewer
+
+    sysadmin is the protected system-level role used to bootstrap the
+    deployment. Users flagged with is_protected = True cannot be
+    deleted, deactivated, renamed, demoted, or have their password
+    reset by anyone other than another sysadmin acting on a non-protected
+    target.
+    """
+    sysadmin = "sysadmin"
+    admin = "admin"
+    user = "user"
+    viewer = "viewer"
 
 
 class AuditAction(str, PyEnum):
@@ -43,8 +55,11 @@ class AuditAction(str, PyEnum):
     # User management
     USER_CREATED = "user_created"
     USER_UPDATED = "user_updated"
+    USER_DELETED = "user_deleted"
     USER_DEACTIVATED = "user_deactivated"
+    USER_REACTIVATED = "user_reactivated"
     ROLE_CHANGED = "role_changed"
+    PROTECTED_USER_ACTION_DENIED = "protected_user_action_denied"
 
     # Permissions
     PERMISSION_GRANT = "permission_grant"
@@ -68,13 +83,21 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     full_name = Column(String(255), nullable=True)
     hashed_password = Column(String(255), nullable=True)  # NULL for SSO users
-    role = Column(SQLEnum(UserRole), default=UserRole.USER, nullable=False)
+    role = Column(SQLEnum(UserRole), default=UserRole.user, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     is_external = Column(Boolean, default=False, nullable=False)  # True for SSO users
     external_id = Column(String(255), nullable=True)  # SSO subject claim
     # Token version for session invalidation on password reset/deactivation
     token_version = Column(Integer, default=1, nullable=False)
     last_login = Column(DateTime, nullable=True)
+    # Phase 33: protected system admin flag -- locks the account from
+    # delete/deactivate/rename/role-change/password-reset by other admins.
+    is_protected = Column(Boolean, default=False, nullable=False)
+    # Phase 33: soft-delete columns. is_active controls login; is_deleted
+    # marks a user as removed via the delete action (kept for audit).
+    is_deleted = Column(Boolean, default=False, nullable=False, index=True)
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

@@ -29,7 +29,7 @@ def get_auth_context(request: Request) -> Optional[AuthContext]:
         return AuthContext(
             user_id=None,
             username="anonymous",
-            role=UserRole.VIEWER,
+            role=UserRole.viewer,
             is_authenticated=False,
         )
 
@@ -57,9 +57,10 @@ def require_role(required_role: UserRole):
             return auth
 
         role_hierarchy = {
-            UserRole.ADMIN: 3,
-            UserRole.USER: 2,
-            UserRole.VIEWER: 1,
+            UserRole.sysadmin: 4,
+            UserRole.admin: 3,
+            UserRole.user: 2,
+            UserRole.viewer: 1,
         }
 
         if role_hierarchy.get(auth.role, 0) < role_hierarchy.get(required_role, 0):
@@ -97,5 +98,16 @@ def require_admin(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
 
     if not auth.is_admin():
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    return auth
+
+
+def require_sysadmin(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
+    """Require a sysadmin user."""
+    if not auth or not auth.is_authenticated:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    if not auth.is_sysadmin():
+        raise HTTPException(status_code=403, detail="Sysadmin access required")
 
     return auth

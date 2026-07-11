@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.security.dependencies import require_admin
+from app.security.dependencies import require_admin, require_sysadmin
 from app.security.auth import AuthContext, get_role_permissions
 from app.security.models import User, UserRole, AuditAction
 from app.security.password import hash_password, validate_password_policy
@@ -48,10 +48,47 @@ router = APIRouter(prefix="/api/admin/users", tags=["Admin Users"])
 
 def _count_active_admins(db: Session, exclude_user_id: Optional[int] = None) -> int:
     """Count active admin users, optionally excluding one (for self-edit checks)."""
-    q = db.query(User).filter(User.role == UserRole.ADMIN, User.is_active == True)  # noqa: E712
+    q = db.query(User).filter(User.role == UserRole.admin, User.is_active == True)  # noqa: E712
     if exclude_user_id is not None:
         q = q.filter(User.id != exclude_user_id)
     return q.count()
+
+
+def _ensure_not_protected(user: User, action: str, auth: AuthContext) -> None:
+    """
+    Prevent modifications to protected (SYSADMIN) users by non-SYSADMIN actors.
+
+    Args:
+        user: Target user being modified
+        action: Description of the action (e.g., "deactivate", "demote", "delete")
+        auth: Actor performing the action
+
+    Raises HTTPException 403 if a non-sysadmin tries to modify a protected user.
+    """
+    if getattr(user, "is_protected", False):
+        # Only SYSADMIN can modify another SYSADMIN
+        if not auth.is_sysadmin():
+            # Audit log: protected user action denied
+            try:
+                audit = get_audit_logger()
+                event = AuditEvent(
+                    action=AuditAction.PROTECTED_USER_ACTION_DENIED,
+                    username=auth.username,
+                    user_id=auth.user_id,
+                    status="failure",
+                    details={
+                        "target_user_id": user.id,
+                        "target_username": user.username,
+                        "action": action,
+                    },
+                )
+                audit.log(event)
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cannot {action} a protected system admin user."
+            )
 
 
 def _ensure_not_last_admin(
@@ -69,7 +106,7 @@ def _ensure_not_last_admin(
     Raises HTTPException 400 if the change would remove the last active admin.
     """
     current_role = user.role if isinstance(user.role, UserRole) else UserRole(user.role)
-    is_currently_admin = current_role == UserRole.ADMIN and user.is_active
+    is_currently_admin = current_role == UserRole.admin and user.is_active
 
     if not is_currently_admin:
         # User is not currently an active admin; no risk to remove admin capability
@@ -79,7 +116,7 @@ def _ensure_not_last_admin(
     target_active = new_is_active if new_is_active is not None else user.is_active
 
     will_still_be_active_admin = (
-        target_role == UserRole.ADMIN and target_active
+        target_role == UserRole.admin and target_active
     )
 
     if will_still_be_active_admin:
@@ -104,6 +141,10 @@ def _to_safe_user(user: User) -> SafeUser:
         created_at=user.created_at,
         updated_at=user.updated_at,
         last_login=user.last_login,
+        is_protected=getattr(user, "is_protected", False),
+        is_deleted=getattr(user, "is_deleted", False),
+        deleted_at=getattr(user, "deleted_at", None),
+        deleted_by=getattr(user, "deleted_by", None),
     )
 
 
@@ -120,17 +161,39 @@ def _to_safe_user_with_perms(user: User) -> SafeUserWithPermissions:
         created_at=user.created_at,
         updated_at=user.updated_at,
         last_login=user.last_login,
+        is_protected=getattr(user, "is_protected", False),
+        is_deleted=getattr(user, "is_deleted", False),
+        deleted_at=getattr(user, "deleted_at", None),
+        deleted_by=getattr(user, "deleted_by", None),
         permissions=perms,
     )
 
 
 @router.get("", response_model=list[SafeUser])
 def list_users(
+    status: Optional[str] = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    """List all users (admin only). Does not include hashed_password."""
-    users = db.query(User).order_by(User.created_at.desc()).all()
+    """List users (admin only). Does not include hashed_password.
+
+    Args:
+        status: Optional filter — "active", "inactive", "deleted", or "all".
+                Default (None) hides soft-deleted users.
+    """
+    q = db.query(User)
+    if status == "active":
+        q = q.filter(User.is_deleted == False, User.is_active == True)  # noqa: E712
+    elif status == "inactive":
+        q = q.filter(User.is_deleted == False, User.is_active == False)  # noqa: E712
+    elif status == "deleted":
+        q = q.filter(User.is_deleted == True)  # noqa: E712
+    elif status == "all":
+        pass  # no filter
+    else:
+        # Default: hide soft-deleted users
+        q = q.filter(User.is_deleted == False)  # noqa: E712
+    users = q.order_by(User.created_at.desc()).all()
     return [_to_safe_user(u) for u in users]
 
 
@@ -209,11 +272,17 @@ def update_user(
 ):
     """Update email / full_name / role / is_active (admin only).
 
-    Last-active-admin safeguard: cannot demote or deactivate the only active admin.
+    Safeguards:
+    - Last-active-admin: cannot demote or deactivate the only active admin.
+    - Protected user: cannot modify a protected system admin (SYSADMIN) unless actor is SYSADMIN.
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Protected user safeguard
+    if payload.role is not None or payload.is_active is not None:
+        _ensure_not_protected(user, "modify", auth)
 
     # Last-admin safeguard BEFORE mutating the user
     if payload.role is not None or payload.is_active is not None:
@@ -282,6 +351,9 @@ def reset_password(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Protected user safeguard
+    _ensure_not_protected(user, "reset password for", auth)
+
     user.hashed_password = hash_password(payload.new_password)
     user.token_version += 1
     db.commit()
@@ -304,32 +376,97 @@ def reset_password(
 
 
 @router.delete("/{user_id}", response_model=SafeUser)
-def deactivate_user(
+def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
     _=Depends(rate_limit(max_requests=20, window=60)),
 ):
-    """Soft-delete a user by deactivating them (admin only).
+    """Soft-delete a user (admin only).
 
-    Last-active-admin safeguard: cannot deactivate the only active admin.
+    Marks the user as deleted (is_deleted=True, deleted_at=now, deleted_by=actor)
+    and deactivates them so they cannot log in. The record is preserved for audit.
+
+    Safeguards:
+    - Last-active-admin: cannot delete the only active admin.
+    - Protected user: cannot delete a protected system admin (SYSADMIN) unless actor is SYSADMIN.
+    - Already-deleted: cannot delete an already-deleted user.
+    """
+    from sqlalchemy import func
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if getattr(user, "is_deleted", False):
+        raise HTTPException(status_code=400, detail="User is already deleted")
+
+    # Protected user safeguard
+    _ensure_not_protected(user, "delete", auth)
+
+    # Last-admin safeguard
+    _ensure_not_last_admin(db, user, new_is_active=False)
+
+    user.is_active = False
+    user.is_deleted = True
+    user.deleted_at = func.now()
+    user.deleted_by = auth.user_id
+    user.token_version += 1
+    db.commit()
+    db.refresh(user)
+
+    # Audit log: user deleted
+    try:
+        audit = get_audit_logger()
+        event = AuditEvent(
+            action=AuditAction.USER_DELETED,
+            username=auth.username,
+            user_id=auth.user_id,
+            status="success",
+            details={"target_user_id": user_id, "target_username": user.username},
+        )
+        audit.log(event)
+    except Exception:
+        pass
+
+    return _to_safe_user(user)
+
+
+@router.post("/{user_id}/reactivate", response_model=SafeUser)
+def reactivate_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+    _=Depends(rate_limit(max_requests=20, window=60)),
+):
+    """Reactivate a deactivated or soft-deleted user (admin only).
+
+    If the user was soft-deleted, clears the is_deleted flag and resets
+    deleted_at / deleted_by.
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    _ensure_not_last_admin(db, user, new_is_active=False)
+    # Protected user safeguard
+    _ensure_not_protected(user, "reactivate", auth)
 
-    user.is_active = False
+    if user.is_active and not getattr(user, "is_deleted", False):
+        raise HTTPException(status_code=400, detail="User is already active")
+
+    user.is_active = True
+    user.is_deleted = False
+    user.deleted_at = None
+    user.deleted_by = None
     user.token_version += 1
     db.commit()
     db.refresh(user)
 
-    # Audit log: user deactivated
+    # Audit log: user reactivated
     try:
         audit = get_audit_logger()
         event = AuditEvent(
-            action=AuditAction.USER_DEACTIVATED,
+            action=AuditAction.USER_REACTIVATED,
             username=auth.username,
             user_id=auth.user_id,
             status="success",

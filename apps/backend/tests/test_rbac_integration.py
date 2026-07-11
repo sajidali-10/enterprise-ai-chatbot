@@ -27,7 +27,7 @@ class TestDevBypassConditional:
         ctx = AuthContext(
             user_id=None,
             username="dev_user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         
@@ -42,7 +42,7 @@ class TestDevBypassConditional:
         ctx = AuthContext(
             user_id=1,
             username="admin",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
         assert ctx.is_admin() is True
@@ -56,7 +56,7 @@ class TestRoleBasedAccessControl:
         ctx = AuthContext(
             user_id=1,
             username="admin_user",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
         assert ctx.is_admin() is True
@@ -66,7 +66,7 @@ class TestRoleBasedAccessControl:
         ctx = AuthContext(
             user_id=100,
             username="regular_user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         assert ctx.is_admin() is False
@@ -77,19 +77,19 @@ class TestRoleBasedAccessControl:
         ctx = AuthContext(
             user_id=200,
             username="viewer_user",
-            role=UserRole.VIEWER,
+            role=UserRole.viewer,
             is_authenticated=True,
         )
         # Viewers can chat but not upload
         assert ctx.is_admin() is False
-        assert ctx.role == UserRole.VIEWER
+        assert ctx.role == UserRole.viewer
 
     def test_anonymous_cannot_access_documents(self):
         """Anonymous users should not have access to documents."""
         ctx = AuthContext(
             user_id=None,
             username="anonymous",
-            role=UserRole.VIEWER,  # Anonymous gets VIEWER role
+            role=UserRole.viewer,  # Anonymous gets VIEWER role
             is_authenticated=False,
         )
         assert ctx.user_id is None
@@ -104,7 +104,7 @@ class TestPermissionChecker:
         ctx = AuthContext(
             user_id=1,
             username="admin",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
         # Admin can do anything - bypasses permission checks
@@ -115,7 +115,7 @@ class TestPermissionChecker:
         ctx = AuthContext(
             user_id=None,
             username="dev_viewer",
-            role=UserRole.VIEWER,
+            role=UserRole.viewer,
             is_authenticated=True,
         )
         # Dev users (user_id=None) cannot access documents
@@ -190,7 +190,7 @@ class TestChatPermissionBehavior:
         ctx = AuthContext(
             user_id=100,
             username="user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         assert ctx.is_authenticated is True
@@ -202,7 +202,7 @@ class TestChatPermissionBehavior:
         
         ctx = provider.authenticate(mock_request)
         assert ctx is not None
-        assert ctx.role == UserRole.VIEWER
+        assert ctx.role == UserRole.viewer
         assert ctx.is_authenticated is False
 
     def test_rag_retrieval_filters_by_permission(self):
@@ -211,7 +211,7 @@ class TestChatPermissionBehavior:
         ctx = AuthContext(
             user_id=100,
             username="user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         # User should only see documents they have permission for
@@ -244,7 +244,7 @@ class TestRAGPermissionFiltering:
         ctx = AuthContext(
             user_id=1,
             username="admin",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
         assert ctx.is_admin() is True
@@ -254,7 +254,7 @@ class TestRAGPermissionFiltering:
         ctx = AuthContext(
             user_id=100,
             username="user",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         assert ctx.is_admin() is False
@@ -266,11 +266,11 @@ class TestRAGPermissionFiltering:
         ctx = AuthContext(
             user_id=300,
             username="viewer",
-            role=UserRole.VIEWER,
+            role=UserRole.viewer,
             is_authenticated=True,
         )
         assert ctx.is_admin() is False
-        assert ctx.role == UserRole.VIEWER
+        assert ctx.role == UserRole.viewer
         # Viewers should be able to chat (normal mode)
         assert ctx.is_authenticated is True
 
@@ -279,7 +279,7 @@ class TestRAGPermissionFiltering:
         ctx = AuthContext(
             user_id=None,
             username="anonymous",
-            role=UserRole.VIEWER,
+            role=UserRole.viewer,
             is_authenticated=False,
         )
         # Guest/anonymous cannot upload
@@ -298,7 +298,7 @@ class TestDevAuthProviderRoles:
         
         ctx = provider.authenticate(mock_request)
         assert ctx is not None
-        assert ctx.role == UserRole.ADMIN
+        assert ctx.role == UserRole.admin
         assert ctx.username == "admin_superuser"
 
     def test_viewer_prefix_gets_viewer_role(self):
@@ -309,7 +309,7 @@ class TestDevAuthProviderRoles:
         
         ctx = provider.authenticate(mock_request)
         assert ctx is not None
-        assert ctx.role == UserRole.VIEWER
+        assert ctx.role == UserRole.viewer
 
     def test_regular_dev_user_gets_user_role(self):
         """Dev users without prefix get USER role."""
@@ -319,7 +319,7 @@ class TestDevAuthProviderRoles:
         
         ctx = provider.authenticate(mock_request)
         assert ctx is not None
-        assert ctx.role == UserRole.USER
+        assert ctx.role == UserRole.user
 
     def test_no_dev_header_returns_none(self):
         """Without X-Dev-User header, DevAuthProvider returns None."""
@@ -336,14 +336,14 @@ class TestUserRoleEnum:
 
     def test_user_role_values(self):
         """Test UserRole enum values."""
-        assert UserRole.ADMIN.value == "admin"
-        assert UserRole.USER.value == "user"
-        assert UserRole.VIEWER.value == "viewer"
+        assert UserRole.admin.value == "admin"
+        assert UserRole.user.value == "user"
+        assert UserRole.viewer.value == "viewer"
 
     def test_user_role_is_string_enum(self):
         """Test UserRole is a string enum."""
-        assert isinstance(UserRole.ADMIN, str)
-        assert UserRole.ADMIN.value == "admin"
+        assert isinstance(UserRole.admin, str)
+        assert UserRole.admin.value == "admin"
 
 
 class TestPermissionFilteringIntegration:
@@ -355,7 +355,7 @@ class TestPermissionFilteringIntegration:
         ctx = AuthContext(
             user_id=100,
             username="user_with_access",
-            role=UserRole.USER,
+            role=UserRole.user,
             is_authenticated=True,
         )
         
@@ -370,7 +370,7 @@ class TestPermissionFilteringIntegration:
         ctx = AuthContext(
             user_id=1,
             username="admin",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
         )
         

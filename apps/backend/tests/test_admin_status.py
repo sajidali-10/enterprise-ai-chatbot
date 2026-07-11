@@ -143,7 +143,7 @@ class TestAdminStatusEndpoint:
         auth = AuthContext(
             user_id=1,
             username="admin",
-            role=UserRole.ADMIN,
+            role=UserRole.admin,
             is_authenticated=True,
             is_external=False,
             session_id="test-session",

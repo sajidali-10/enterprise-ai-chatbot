@@ -752,7 +752,7 @@ def get_auth_info(request: Request):
             "user_id": None,
             "is_admin": False,
             "dev_mode": False,
-            "permissions": get_role_permissions(UserRole.VIEWER),
+            "permissions": get_role_permissions(UserRole.viewer),
         }
 
     auth = authenticate_request(request)

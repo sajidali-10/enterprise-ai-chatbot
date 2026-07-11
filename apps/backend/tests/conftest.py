@@ -39,7 +39,7 @@ _audit_mod = importlib.import_module("app.security.audit")
 _audit_mod.SessionLocal = TestingSessionLocal
 
 
-def _create_test_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.USER, is_active: bool = True) -> User:
+def _create_test_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.user, is_active: bool = True) -> User:
     user = User(
         username=username,
         email=email,
@@ -109,7 +109,7 @@ def jwt_admin_client(db_session, client):
     """Test client authenticated as admin via JWT Bearer token."""
     # Remove X-Dev-User header so it doesn't conflict with JWT auth
     client.headers.pop("X-Dev-User", None)
-    _create_test_user(db_session, "admin", "admin@test.com", "adminpass", role=UserRole.ADMIN)
+    _create_test_user(db_session, "admin", "admin@test.com", "adminpass", role=UserRole.admin)
     token = _login_user(client, "admin", "adminpass")
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
@@ -121,7 +121,7 @@ def jwt_user_client(db_session, client):
     """Test client authenticated as regular user via JWT Bearer token."""
     # Remove X-Dev-User header so it doesn't conflict with JWT auth
     client.headers.pop("X-Dev-User", None)
-    _create_test_user(db_session, "regular", "user@test.com", "userpass", role=UserRole.USER)
+    _create_test_user(db_session, "regular", "user@test.com", "userpass", role=UserRole.user)
     token = _login_user(client, "regular", "userpass")
     client.headers["Authorization"] = f"Bearer {token}"
     yield client
@@ -131,7 +131,7 @@ def jwt_user_client(db_session, client):
 @pytest.fixture(scope="function")
 def jwt_viewer_client(db_session, client):
     """Test client authenticated as viewer via JWT Bearer token."""
-    _create_test_user(db_session, "viewer", "viewer@test.com", "viewerpass", role=UserRole.VIEWER)
+    _create_test_user(db_session, "viewer", "viewer@test.com", "viewerpass", role=UserRole.viewer)
     token = _login_user(client, "viewer", "viewerpass")
     client.headers["Authorization"] = f"Bearer {token}"
     yield client

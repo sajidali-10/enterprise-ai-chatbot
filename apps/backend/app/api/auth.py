@@ -113,6 +113,10 @@ def login(
         _audit_login(AuditAction.LOGIN_FAILURE, success=False, reason="User not found")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    if getattr(user, "is_deleted", False):
+        _audit_login(AuditAction.LOGIN_FAILURE, target_user_id=user.id, success=False, reason="User account is deleted")
+        raise HTTPException(status_code=401, detail="User account is deleted")
+
     if not user.is_active:
         _audit_login(AuditAction.LOGIN_FAILURE, target_user_id=user.id, success=False, reason="User account is inactive")
         raise HTTPException(status_code=401, detail="User account is inactive")

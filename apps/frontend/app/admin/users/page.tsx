@@ -1,20 +1,27 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { getApiBaseUrl } from '@/lib/api'
 import ProtectedRoute from '@/components/ProtectedRoute'
+
+type UserRole = 'sysadmin' | 'admin' | 'user' | 'viewer'
+type StatusFilter = 'all' | 'active' | 'inactive' | 'deleted'
 
 interface UserRow {
   id: number
   username: string
   email: string
   full_name: string | null
-  role: 'admin' | 'user' | 'viewer'
+  role: UserRole
   is_active: boolean
   created_at: string | null
   updated_at: string | null
   last_login: string | null
+  is_protected?: boolean
+  is_deleted?: boolean
+  deleted_at?: string | null
+  deleted_by?: number | null
 }
 
 interface FormState {
@@ -22,7 +29,7 @@ interface FormState {
   email: string
   password: string
   full_name: string
-  role: 'admin' | 'user' | 'viewer'
+  role: UserRole
   is_active: boolean
 }
 
@@ -49,6 +56,12 @@ function UsersPageInner() {
   const [newPassword, setNewPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [actionLoadingId, setActionLoadingId] = useState<number | null>(null)
+
+  // Phase 33: search and filter state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [deleteTarget, setDeleteTarget] = useState<UserRow | null>(null)
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
   const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -77,6 +90,30 @@ function UsersPageInner() {
     if (!auth?.authenticated) return
     fetchUsers()
   }, [auth?.authenticated, fetchUsers])
+
+  // Phase 33: filter and search logic
+  const filteredUsers = useMemo(() => {
+    let result = users
+    if (statusFilter === 'active') {
+      result = result.filter(u => u.is_active && !u.is_deleted)
+    } else if (statusFilter === 'inactive') {
+      result = result.filter(u => !u.is_active && !u.is_deleted)
+    } else if (statusFilter === 'deleted') {
+      result = result.filter(u => u.is_deleted)
+    }
+    if (roleFilter !== 'all') {
+      result = result.filter(u => u.role === roleFilter)
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter(u =>
+        u.username.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        (u.full_name || '').toLowerCase().includes(q)
+      )
+    }
+    return result
+  }, [users, searchQuery, roleFilter, statusFilter])
 
   function flashSuccess(msg: string) {
     setSuccess(msg)
@@ -162,8 +199,8 @@ function UsersPageInner() {
     }
   }
 
-  async function handleDeactivate(user: UserRow) {
-    if (!confirm(`Deactivate "${user.username}"? They will not be able to log in.`)) return
+  async function handleDelete(user: UserRow) {
+    if (!user) return
     setActionLoadingId(user.id)
     setError(null)
     try {
@@ -175,10 +212,11 @@ function UsersPageInner() {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.detail || `HTTP ${res.status}`)
       }
-      flashSuccess(`User "${user.username}" deactivated`)
+      flashSuccess(`User "${user.username}" deleted`)
+      setDeleteTarget(null)
       fetchUsers()
     } catch (err) {
-      flashError(err instanceof Error ? err.message : 'Failed to deactivate user')
+      flashError(err instanceof Error ? err.message : 'Failed to delete user')
     } finally {
       setActionLoadingId(null)
     }
@@ -231,11 +269,14 @@ function UsersPageInner() {
     }
   }
 
-  const roleColors: Record<string, string> = {
+  const roleColors: Record<UserRole, string> = {
+    sysadmin: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
     admin: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400',
     user: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
     viewer: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
   }
+
+  const currentUserIsSysadmin = auth?.role === 'sysadmin'
 
   return (
     <div className="min-h-screen bg-hiplink-background dark:bg-dark-bg">
@@ -269,11 +310,53 @@ function UsersPageInner() {
           </div>
         )}
 
+        {/* Phase 33: Search and Filter Controls */}
+        <div className="mb-4 flex flex-wrap gap-3 items-center bg-white dark:bg-dark-card p-4 rounded-lg shadow">
+          <div className="flex-1 min-w-[200px]">
+            <input
+              type="text"
+              placeholder="Search by username, email, or name…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-hiplink-border dark:border-dark-border bg-white dark:bg-dark-elevated text-hiplink-dark dark:text-dark-text text-sm"
+            />
+          </div>
+          <div>
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value as UserRole | 'all')}
+              className="px-3 py-2 rounded-lg border border-hiplink-border dark:border-dark-border bg-white dark:bg-dark-elevated text-hiplink-dark dark:text-dark-text text-sm"
+              aria-label="Filter by role"
+            >
+              <option value="all">All Roles</option>
+              <option value="sysadmin">Sysadmin</option>
+              <option value="admin">Admin</option>
+              <option value="user">User</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </div>
+          <div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              className="px-3 py-2 rounded-lg border border-hiplink-border dark:border-dark-border bg-white dark:bg-dark-elevated text-hiplink-dark dark:text-dark-text text-sm"
+              aria-label="Filter by status"
+            >
+              <option value="all">All Status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="deleted">Deleted</option>
+            </select>
+          </div>
+        </div>
+
         <div className="bg-white dark:bg-dark-card shadow-lg rounded-lg overflow-hidden">
           {loading ? (
             <div className="p-8 text-center text-hiplink-secondary dark:text-dark-text-dim">Loading users…</div>
-          ) : users.length === 0 ? (
-            <div className="p-8 text-center text-hiplink-secondary dark:text-dark-text-dim">No users yet.</div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="p-8 text-center text-hiplink-secondary dark:text-dark-text-dim">
+              {users.length === 0 ? 'No users yet.' : 'No users match the current filters.'}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 dark:divide-dark-border">
@@ -289,57 +372,92 @@ function UsersPageInner() {
                   </tr>
                 </thead>
                 <tbody className="bg-white dark:bg-dark-card divide-y divide-gray-200 dark:divide-dark-border">
-                  {users.map((user) => (
-                    <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-dark-elevated transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-hiplink-dark dark:text-dark-text">{user.username}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-hiplink-secondary dark:text-dark-text-dim">{user.email}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-hiplink-secondary dark:text-dark-text-dim">{user.full_name || '—'}</td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${roleColors[user.role]}`}>{user.role}</span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {user.is_active ? (
-                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">Active</span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">Inactive</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-hiplink-secondary dark:text-dark-text-dim">
-                        {user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
-                        <button
-                          onClick={() => openEdit(user)}
-                          className="text-hiplink-blue dark:text-sky-400 hover:text-hiplink-blue-dark dark:hover:text-sky-300 font-medium"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => setResetTarget(user)}
-                          className="text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 font-medium"
-                        >
-                          Reset PW
-                        </button>
-                        {user.is_active ? (
-                          <button
-                            onClick={() => handleDeactivate(user)}
-                            disabled={actionLoadingId === user.id}
-                            className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-medium disabled:opacity-50"
-                          >
-                            Deactivate
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleReactivate(user)}
-                            disabled={actionLoadingId === user.id}
-                            className="text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 font-medium disabled:opacity-50"
-                          >
-                            Reactivate
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredUsers.map((user) => {
+                    const isProtectedSysadmin = user.is_protected && user.role === 'sysadmin'
+                    return (
+                      <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-dark-elevated transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-hiplink-dark dark:text-dark-text">
+                          {user.username}
+                          {isProtectedSysadmin && (
+                            <span className="ml-2 px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400" title="Protected System Admin">
+                              🔒 System Admin
+                            </span>
+                          )}
+                          {user.is_protected && !isProtectedSysadmin && (
+                            <span className="ml-2 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400" title="Protected">
+                              🔒 Protected
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-hiplink-secondary dark:text-dark-text-dim">{user.email}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-hiplink-secondary dark:text-dark-text-dim">{user.full_name || '—'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${roleColors[user.role]}`}>{user.role}</span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          {user.is_deleted ? (
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">Deleted</span>
+                          ) : user.is_active ? (
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">Active</span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">Inactive</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-hiplink-secondary dark:text-dark-text-dim">
+                          {user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
+                          {!user.is_deleted && (
+                            <>
+                              <button
+                                onClick={() => openEdit(user)}
+                                disabled={isProtectedSysadmin}
+                                className="text-hiplink-blue dark:text-sky-400 hover:text-hiplink-blue-dark dark:hover:text-sky-300 font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-hiplink-blue dark:disabled:hover:text-sky-400"
+                                title={isProtectedSysadmin ? 'Cannot edit protected system admin' : 'Edit user'}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => setResetTarget(user)}
+                                disabled={isProtectedSysadmin}
+                                className="text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 font-medium disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-amber-600 dark:disabled:hover:text-amber-400"
+                                title={isProtectedSysadmin ? 'Cannot reset password for protected system admin' : 'Reset password'}
+                              >
+                                Reset PW
+                              </button>
+                              {user.is_active && (
+                                <button
+                                  onClick={() => setDeleteTarget(user)}
+                                  disabled={actionLoadingId === user.id || isProtectedSysadmin}
+                                  className="text-yellow-600 dark:text-yellow-400 hover:text-yellow-700 dark:hover:text-yellow-300 font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+                                  title={isProtectedSysadmin ? 'Cannot deactivate protected system admin' : 'Deactivate user'}
+                                >
+                                  Deactivate
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setDeleteTarget(user)}
+                                disabled={isProtectedSysadmin || actionLoadingId === user.id}
+                                className="text-red-700 dark:text-red-500 hover:text-red-800 dark:hover:text-red-400 font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+                                title={isProtectedSysadmin ? 'Cannot delete protected system admin' : 'Delete user'}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                          {(user.is_deleted || !user.is_active) && (
+                            <button
+                              onClick={() => handleReactivate(user)}
+                              disabled={actionLoadingId === user.id}
+                              className="text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 font-medium disabled:opacity-50"
+                            >
+                              Reactivate
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -392,12 +510,13 @@ function UsersPageInner() {
             <Field label="Role" required>
               <select
                 value={createForm.role}
-                onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as FormState['role'] })}
+                onChange={(e) => setCreateForm({ ...createForm, role: e.target.value as UserRole })}
                 className="w-full px-3 py-2 rounded-lg border border-hiplink-border dark:border-dark-border bg-white dark:bg-dark-card text-hiplink-dark dark:text-dark-text"
               >
                 <option value="user">User</option>
                 <option value="viewer">Viewer</option>
                 <option value="admin">Admin</option>
+                {currentUserIsSysadmin && <option value="sysadmin">Sysadmin</option>}
               </select>
             </Field>
             <label className="flex items-center gap-2 text-sm text-hiplink-dark dark:text-dark-text">
@@ -441,12 +560,13 @@ function UsersPageInner() {
             <Field label="Role" required>
               <select
                 value={editForm.role}
-                onChange={(e) => setEditForm({ ...editForm, role: e.target.value as FormState['role'] })}
+                onChange={(e) => setEditForm({ ...editForm, role: e.target.value as UserRole })}
                 className="w-full px-3 py-2 rounded-lg border border-hiplink-border dark:border-dark-border bg-white dark:bg-dark-card text-hiplink-dark dark:text-dark-text"
               >
                 <option value="user">User</option>
                 <option value="viewer">Viewer</option>
                 <option value="admin">Admin</option>
+                {currentUserIsSysadmin && <option value="sysadmin">Sysadmin</option>}
               </select>
             </Field>
             <label className="flex items-center gap-2 text-sm text-hiplink-dark dark:text-dark-text">
@@ -490,6 +610,45 @@ function UsersPageInner() {
               submitLabel="Reset Password"
             />
           </form>
+        </Modal>
+      )}
+
+      {/* Phase 33: Delete Confirmation Modal */}
+      {deleteTarget && (
+        <Modal title={`Delete User: ${deleteTarget.username}`} onClose={() => setDeleteTarget(null)}>
+          <div className="space-y-4">
+            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+              <p className="text-sm text-red-700 dark:text-red-400 font-medium">
+                ⚠ This will soft-delete the user.
+              </p>
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                The user will be deactivated and marked as deleted. They will not be able to log in.
+                The record is preserved for audit purposes.
+              </p>
+            </div>
+            <div className="text-sm text-hiplink-dark dark:text-dark-text">
+              <p><strong>Username:</strong> {deleteTarget.username}</p>
+              <p><strong>Email:</strong> {deleteTarget.email}</p>
+              <p><strong>Role:</strong> {deleteTarget.role}</p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => handleDelete(deleteTarget)}
+                disabled={actionLoadingId === deleteTarget.id}
+                className="px-4 py-2 rounded-lg font-medium bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+              >
+                {actionLoadingId === deleteTarget.id ? 'Deleting…' : 'Delete User'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="btn-secondary px-4 py-2 rounded-lg font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

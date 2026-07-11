@@ -9,7 +9,7 @@ from app.security.models import User, UserRole, AuditLog, AuditAction
 from app.security.password import hash_password
 
 
-def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.USER, is_active: bool = True) -> User:
+def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.user, is_active: bool = True) -> User:
     user = User(
         username=username,
         email=email,
@@ -58,7 +58,7 @@ class TestAuditLogin:
 
 class TestAuditAdminActions:
     def test_user_created_logged(self, client: TestClient, db_session):
-        admin = _create_user(db_session, "auditcreate", "auditcreate@example.com", "AdminPass123!", role=UserRole.ADMIN)
+        admin = _create_user(db_session, "auditcreate", "auditcreate@example.com", "AdminPass123!", role=UserRole.admin)
         login = client.post("/api/auth/login", json={
             "username_or_email": "auditcreate",
             "password": "AdminPass123!",
@@ -86,8 +86,8 @@ class TestAuditAdminActions:
         assert "newauditeduser" in (log.details or "")
 
     def test_password_reset_logged(self, client: TestClient, db_session):
-        admin = _create_user(db_session, "auditreset", "auditreset@example.com", "AdminPass123!", role=UserRole.ADMIN)
-        user = _create_user(db_session, "resettarget", "resettarget@example.com", "UserPass123!", role=UserRole.USER)
+        admin = _create_user(db_session, "auditreset", "auditreset@example.com", "AdminPass123!", role=UserRole.admin)
+        user = _create_user(db_session, "resettarget", "resettarget@example.com", "UserPass123!", role=UserRole.user)
 
         login = client.post("/api/auth/login", json={
             "username_or_email": "auditreset",
@@ -111,7 +111,7 @@ class TestAuditAdminActions:
 
 class TestAuditLogAPI:
     def test_admin_can_list_audit_logs(self, client: TestClient, db_session):
-        admin = _create_user(db_session, "auditapi", "auditapi@example.com", "AdminPass123!", role=UserRole.ADMIN)
+        admin = _create_user(db_session, "auditapi", "auditapi@example.com", "AdminPass123!", role=UserRole.admin)
         login = client.post("/api/auth/login", json={
             "username_or_email": "auditapi",
             "password": "AdminPass123!",
@@ -127,7 +127,7 @@ class TestAuditLogAPI:
         assert data["page"] == 1
 
     def test_non_admin_cannot_access_audit_logs(self, client: TestClient, db_session):
-        user = _create_user(db_session, "audituser", "audituser@example.com", "UserPass123!", role=UserRole.USER)
+        user = _create_user(db_session, "audituser", "audituser@example.com", "UserPass123!", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "audituser",
             "password": "UserPass123!",
@@ -138,8 +138,8 @@ class TestAuditLogAPI:
         assert res.status_code == 403
 
     def test_audit_logs_filter_by_action(self, client: TestClient, db_session):
-        admin = _create_user(db_session, "auditfilter", "auditfilter@example.com", "AdminPass123!", role=UserRole.ADMIN)
-        _create_user(db_session, "filtertarget", "filtertarget@example.com", "UserPass123!", role=UserRole.USER)
+        admin = _create_user(db_session, "auditfilter", "auditfilter@example.com", "AdminPass123!", role=UserRole.admin)
+        _create_user(db_session, "filtertarget", "filtertarget@example.com", "UserPass123!", role=UserRole.user)
 
         login = client.post("/api/auth/login", json={
             "username_or_email": "auditfilter",

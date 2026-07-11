@@ -10,7 +10,7 @@ from app.security.models import User, UserRole
 from app.security.password import hash_password
 
 
-def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.USER, is_active: bool = True) -> User:
+def _create_user(db_session, username: str, email: str, password: str, role: UserRole = UserRole.user, is_active: bool = True) -> User:
     user = User(
         username=username,
         email=email,
@@ -26,7 +26,7 @@ def _create_user(db_session, username: str, email: str, password: str, role: Use
 
 class TestUploadFileTypeValidation:
     def test_unsupported_file_type_rejected(self, client: TestClient, db_session):
-        user = _create_user(db_session, "uploaduser", "upload@example.com", "UserPass123!", role=UserRole.USER)
+        user = _create_user(db_session, "uploaduser", "upload@example.com", "UserPass123!", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "uploaduser",
             "password": "UserPass123!",
@@ -42,7 +42,7 @@ class TestUploadFileTypeValidation:
         assert "Unsupported file" in res.json()["detail"]
 
     def test_valid_pdf_accepted(self, client: TestClient, db_session):
-        user = _create_user(db_session, "uploadpdf", "uploadpdf@example.com", "UserPass123!", role=UserRole.USER)
+        user = _create_user(db_session, "uploadpdf", "uploadpdf@example.com", "UserPass123!", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "uploadpdf",
             "password": "UserPass123!",
@@ -57,7 +57,7 @@ class TestUploadFileTypeValidation:
         assert res.status_code in (200, 201, 500)  # 500 if extraction fails, which is OK for this test
 
     def test_valid_txt_accepted(self, client: TestClient, db_session):
-        user = _create_user(db_session, "uploadtxt", "uploadtxt@example.com", "UserPass123!", role=UserRole.USER)
+        user = _create_user(db_session, "uploadtxt", "uploadtxt@example.com", "UserPass123!", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "uploadtxt",
             "password": "UserPass123!",
@@ -74,7 +74,7 @@ class TestUploadFileTypeValidation:
 
 class TestUploadSizeLimit:
     def test_oversized_upload_rejected(self, client: TestClient, db_session):
-        user = _create_user(db_session, "uploadsize", "uploadsize@example.com", "UserPass123!", role=UserRole.USER)
+        user = _create_user(db_session, "uploadsize", "uploadsize@example.com", "UserPass123!", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "uploadsize",
             "password": "UserPass123!",
@@ -96,7 +96,7 @@ class TestUploadSizeLimit:
 
 class TestUploadPathTraversal:
     def test_path_traversal_filename_blocked(self, client: TestClient, db_session):
-        user = _create_user(db_session, "uploadtraversal", "uploadtraversal@example.com", "UserPass123!", role=UserRole.USER)
+        user = _create_user(db_session, "uploadtraversal", "uploadtraversal@example.com", "UserPass123!", role=UserRole.user)
         login = client.post("/api/auth/login", json={
             "username_or_email": "uploadtraversal",
             "password": "UserPass123!",
