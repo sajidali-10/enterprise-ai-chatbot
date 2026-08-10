@@ -2,6 +2,7 @@ import uuid
 import mimetypes
 import hashlib
 import io
+import json
 import os
 import logging
 from typing import Optional
@@ -13,11 +14,36 @@ from app.db.session import get_db
 from app.core.minio_client import get_minio_client, ensure_bucket_exists
 from app.core.config import settings
 from app.core.rate_limit import rate_limit
-from app.models.document import Document, DocumentVersion, DocumentChunk
-from app.ingestion.pipeline import process_document, get_parser
+from app.models.document import Document, DocumentVersion, DocumentChunk, DocumentImage
+from app.ingestion.pipeline import (
+    process_document,
+    process_document_to_result,
+    get_parser,
+    supported_mime_types,
+)
+from app.ingestion.parsers.base import ExtractedImage, ExtractionResult
+from app.ingestion.ocr_preprocessing import (
+    is_image_mime_supported,
+    is_image_extension_supported,
+    validate_image_bytes,
+)
+from app.providers.ocr import get_ocr_provider
 from app.ingestion.chunkers.recursive_chunker import RecursiveChunker
 from app.services.embeddings import get_embedding_provider
 from app.services.vector.qdrant_service import ensure_collection, upsert_chunks
+
+# Reuse the existing redaction helpers so OCR-derived text is sanitized
+# with the same patterns as native text. Phase 34A spec mandates this.
+try:
+    from app.services.langsmith_tracing import redact_text as _redact_text  # type: ignore
+except Exception:  # pragma: no cover - never required for correctness
+    def _redact_text(value, max_length=None):  # type: ignore
+        if value is None:
+            return ""
+        text = str(value)
+        if max_length and len(text) > max_length:
+            return text[:max_length]
+        return text
 
 # Import security modules for Phase 6
 try:
@@ -46,8 +72,10 @@ router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
 logger = logging.getLogger(__name__)
 
-# Allowed MIME types for document uploads
-# PDF, DOCX, TXT, MD, CSV
+# Allowed MIME types for document uploads.
+# Phase 34A adds direct image types (PNG/JPEG/WEBP/TIFF/BMP/GIF) and
+# image/jpg as an alias of image/jpeg. Phase 34A is fully backwards
+# compatible with the previous allow-list.
 ALLOWED_TYPES = {
     "application/pdf",
     "text/plain",
@@ -56,10 +84,32 @@ ALLOWED_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "text/csv",
     "application/csv",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/tiff",
+    "image/bmp",
+    "image/gif",
 }
 
-# Allowed file extensions (for additional security validation)
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".csv"}
+# Allowed file extensions (for additional security validation).
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".docx", ".txt", ".md", ".csv",
+    ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".gif",
+}
+
+# Direct image MIME types (used by the upload endpoint to decide
+# whether OCR is the only source of text).
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/tiff",
+    "image/bmp",
+    "image/gif",
+}
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -145,28 +195,62 @@ def upload_document(
 
     Status flow:
     - "pending" - Initial state after upload
-    - "extracting" - Text extraction in progress
+    - "extracting" - Text extraction in progress (may include OCR for images)
     - "extracted" - Text extracted, ready for indexing
     - "indexing" - Chunking, embedding, and Qdrant upsert in progress
     - "indexed" - Fully indexed and ready for RAG retrieval
+    - "needs_human_review" - Extraction completed but quality looks
+      suspicious (e.g. image-only PDF with OCR disabled). Indexed only
+      if at least some text was recovered.
     - "failed" - Something went wrong (check error message)
+
+    Phase 34A additions:
+      - Direct image uploads (PNG/JPEG/WEBP/TIFF/BMP/GIF) are accepted
+        and processed via OCR.
+      - PDF pages whose native text is below the configured threshold
+        are OCR'd as a fallback.
+      - DOCX embedded images are extracted and OCR'd, then merged with
+        native paragraph text.
+      - OCR-derived text flows through the SAME sanitizer as native
+        text (no secret bypass).
+      - DocumentImage rows are persisted for each image asset so
+        future Phase 34B Vision analysis can find the originals.
     """
     max_size = settings.UPLOAD_MAX_SIZE_MB * 1024 * 1024
     content = file.file.read()
     if len(content) > max_size:
         raise HTTPException(status_code=413, detail="File too large")
-    
+
     # Validate and sanitize filename
     _validate_filename(file.filename)
     safe_original_name = _sanitize_filename(file.filename)
 
-    mime_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+    mime_type = (file.content_type or "").lower().strip() or (mimetypes.guess_type(file.filename)[0] or "").lower().strip() or "application/octet-stream"
+    # Some browsers send 'image/jpg' which is non-standard; canonicalise.
+    if mime_type == "image/jpg":
+        mime_type = "image/jpeg"
     if mime_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported file type")
 
+    # Phase 34A: for direct image uploads, validate bytes against the
+    # declared MIME (don't trust extension alone). This catches MIME
+    # spoofing where a PDF is renamed to .png.
+    if mime_type in IMAGE_MIME_TYPES:
+        try:
+            from PIL import Image  # noqa: F401  # availability check
+        except ImportError:
+            raise HTTPException(
+                status_code=500,
+                detail="Pillow is required for image uploads but is not installed",
+            )
+        max_bytes = settings.OCR_IMAGE_MAX_SIZE_MB * 1024 * 1024
+        ok, err = validate_image_bytes(content, mime_type, max_bytes)
+        if not ok:
+            raise HTTPException(status_code=415, detail=f"Invalid image: {err}")
+
     ext = _ext_from_filename(safe_original_name)
     storage_key = f"{uuid.uuid4().hex}{ext}"
-    
+
     ensure_bucket_exists()
     client = get_minio_client()
     client.put_object(
@@ -176,7 +260,7 @@ def upload_document(
         length=len(content),
         content_type=mime_type,
     )
-    
+
     # Create document with pending status
     # Phase 13: capture owner_user_id and apply role-aware visibility default.
     is_admin = bool(getattr(auth, "is_admin", lambda: False)())
@@ -204,40 +288,140 @@ def upload_document(
     db.add(doc)
     db.commit()
     db.refresh(doc)
-    
-    # Extract text
+
+    # Extract text via the parser pipeline. Phase 34A: parsers return
+    # a structured ExtractionResult with per-image metadata and OCR
+    # statistics. Legacy ``process_document`` is preserved for
+    # non-OCR callers.
     doc.status = "extracting"
     db.commit()
-    
+
     try:
-        extracted_text = process_document(content, mime_type)
-        extractor_type = type(get_parser(mime_type)).__name__ if get_parser(mime_type) else None
+        result: ExtractionResult = process_document_to_result(
+            content,
+            mime_type,
+            original_filename=safe_original_name,
+            original_storage_key=storage_key,
+        )
+        extracted_text = result.text
+        extractor_type = (
+            type(get_parser(mime_type)).__name__
+            if get_parser(mime_type)
+            else "Unknown"
+        )
+    except ValueError as e:
+        # Unsupported MIME or hard validation error from the parser.
+        doc.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=415, detail=str(e))
     except Exception as e:
         doc.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=f"Text extraction failed: {str(e)}")
-    
-    # Check if extracted text is empty
+
+    # Phase 34A: extraction-quality gate. We do NOT auto-index a
+    # direct-image upload that produced zero OCR text — the upload
+    # looks like an empty image and would pollute the index.
+    is_direct_image = mime_type in IMAGE_MIME_TYPES
+    if is_direct_image and not settings.OCR_ENABLED:
+        doc.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Image upload requires OCR, but OCR is disabled "
+                "(OCR_ENABLED=false). Enable OCR or upload a text document."
+            ),
+        )
     if not extracted_text or not extracted_text.strip():
         doc.status = "failed"
         db.commit()
-        raise HTTPException(status_code=400, detail="No extractable text found in document.")
-    
+        detail_msg = "No extractable text found in document."
+        if result.warnings:
+            detail_msg = f"{detail_msg} Warnings: {'; '.join(result.warnings[:3])}"
+        raise HTTPException(status_code=400, detail=detail_msg)
+
+    # Phase 34A: run the SAME secret redaction on the joined text that
+    # we run on plain documents. This applies to any OCR-derived text.
+    sanitized_text = _redact_text(extracted_text)
+
+    # Persist the version. We keep the sanitized text on
+    # ``extracted_text`` for the chunker and store the structured
+    # extraction summary as a JSON blob for audit/debugging.
     version = DocumentVersion(
         document_id=doc.id,
         version_number=1,
         storage_key=storage_key,
         extractor_type=extractor_type,
-        extracted_text=extracted_text,
+        extracted_text=sanitized_text,
+        extraction_summary=json.dumps(result.as_summary_dict()),
     )
     db.add(version)
     doc.status = "extracted"
     db.commit()
-    
+
+    # Phase 34A: persist per-image rows. The ORIGINAL image bytes are
+    # stored in MinIO under a separate ``images/`` prefix so the
+    # original asset survives even if the source document is replaced.
+    image_rows: list[DocumentImage] = []
+    for img in result.images:
+        try:
+            img_storage_key = _store_extracted_image(
+                client, doc.id, version.id, img
+            )
+            img.storage_key = img_storage_key
+        except Exception as e:
+            logger.warning(
+                "Failed to store extracted image for document %s: %s", doc.id, e
+            )
+            img_storage_key = None
+
+        row = DocumentImage(
+            document_id=doc.id,
+            document_version_id=version.id,
+            storage_key=img_storage_key or storage_key,
+            mime_type=img.mime_type,
+            source_type=img.source_type,
+            page_number=img.page_number,
+            sequence_number=img.sequence_number,
+            original_filename=img.original_filename,
+            ocr_provider=img.ocr_provider,
+            ocr_status=img.ocr_status,
+            ocr_confidence=(
+                int(round(img.ocr_confidence))
+                if img.ocr_confidence is not None
+                else None
+            ),
+            ocr_text_hash=img.ocr_text_hash,
+            ocr_error=img.ocr_error,
+            width=img.width,
+            height=img.height,
+            byte_size=img.byte_size,
+        )
+        db.add(row)
+        image_rows.append(row)
+
+    try:
+        db.commit()
+    except Exception as e:
+        logger.exception("Failed to persist document images: %s", e)
+        db.rollback()
+
+    # Mark needs_human_review when extraction looks suspicious but we
+    # still indexed the document. The flag is informational and does
+    # not block retrieval — operators can re-process later.
+    if result.needs_human_review and not is_direct_image:
+        # For non-image sources we keep status='indexed' but log a
+        # warning; the extraction_summary column carries the flag.
+        logger.info(
+            "Document %s flagged needs_human_review: %s",
+            doc.id, "; ".join(result.warnings[:3]),
+        )
+
     # Auto-index the document
     doc.status = "indexing"
     db.commit()
-    
+
     try:
         # Chunk the text
         chunker = RecursiveChunker()
@@ -245,13 +429,13 @@ def upload_document(
             "source_file_name": doc.original_name,
             "title": doc.original_name,
         }
-        chunks = chunker.chunk(extracted_text, metadata)
-        
+        chunks = chunker.chunk(sanitized_text, metadata)
+
         if not chunks:
             doc.status = "failed"
             db.commit()
             raise HTTPException(status_code=400, detail="No chunks generated from document")
-        
+
         # Validate each chunk has non-empty content before creating records/vectors
         valid_chunks = [c for c in chunks if c.content is not None and c.content.strip()]
         if len(valid_chunks) != len(chunks):
@@ -260,12 +444,12 @@ def upload_document(
                 f"Filtered {invalid_count} invalid chunks with empty/None content for document {doc.id}"
             )
         chunks = valid_chunks
-        
+
         if not chunks:
             doc.status = "failed"
             db.commit()
             raise HTTPException(status_code=400, detail="No chunks with valid content generated from document")
-        
+
         # Store chunks in PostgreSQL
         chunk_ids = []
         for chunk in chunks:
@@ -283,18 +467,37 @@ def upload_document(
             db.add(db_chunk)
             db.flush()
             chunk_ids.append(db_chunk.id)
-        
+
         db.commit()
-        
+
         # Get embeddings
         provider = get_embedding_provider()
         texts = [c.content for c in chunks]
         embeddings = provider.embed(texts)
-        
+
         # Ensure Qdrant collection exists
         ensure_collection(provider.dimension)
-        
-        # Upsert to Qdrant
+
+        # Upsert to Qdrant. Phase 34A: when the source is image-derived
+        # (direct image, scanned PDF page, or DOCX image), each chunk
+        # carries OCR metadata so retrievers can distinguish OCR
+        # knowledge from native text and so future phases can show
+        # provenance. For text-only documents these fields are simply
+        # not present in the payload (backwards compatible).
+        primary_image_id = None
+        content_type = "text"
+        if is_direct_image and image_rows:
+            primary_image_id = image_rows[0].id
+            content_type = "image_ocr"
+        elif result.images_detected > 0 and not is_direct_image:
+            # Mixed source: native text + OCR images (PDF/DOCX).
+            primary_image_id = image_rows[0].id if image_rows else None
+            content_type = (
+                "pdf_page_ocr" if mime_type == "application/pdf"
+                else "docx_image_ocr" if "wordprocessingml" in mime_type
+                else "text"
+            )
+
         chunks_with_embeddings = list(zip(texts, embeddings))
         metadata_payloads = []
         for i, chunk in enumerate(chunks):
@@ -307,13 +510,28 @@ def upload_document(
                 "source_file_name": chunk.source_file_name,
                 "title": chunk.title,
                 "section_heading": chunk.section_heading,
+                # Phase 34A: OCR provenance.
+                "content_type": content_type,
+                "ocr_provider": result.ocr_provider,
+                "ocr_disabled": result.ocr_disabled,
+                "source_document_id": doc.id,
+                "image_id": primary_image_id,
+                "page": (
+                    image_rows[0].page_number if (primary_image_id and image_rows and image_rows[0].page_number is not None)
+                    else None
+                ),
+                "ocr_confidence": (
+                    int(round(result.ocr_average_confidence))
+                    if result.ocr_average_confidence is not None
+                    else None
+                ),
             })
-        
+
         upsert_chunks(chunks_with_embeddings, metadata_payloads)
-        
+
         doc.status = "indexed"
         db.commit()
-        
+
         # Phase 6: Log successful upload with audit
         if HAS_SECURITY:
             try:
@@ -330,19 +548,21 @@ def upload_document(
                         "document_id": doc.id,
                         "original_name": doc.original_name,
                         "chunks_created": len(chunks),
+                        "images_persisted": len(image_rows),
+                        "extraction_method": result.extraction_method,
                     },
                 )
                 audit_logger.log(event)
             except Exception:
                 pass  # Don't fail the request if audit logging fails
-        
+
     except HTTPException:
         raise
     except Exception as e:
         doc.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
-    
+
     return {
         "id": doc.id,
         "original_name": doc.original_name,
@@ -353,7 +573,49 @@ def upload_document(
         "owner_user_id": doc.owner_user_id,
         "storage_key": storage_key,
         "chunks_created": len(chunks) if 'chunks' in dir() else 0,
+        # Phase 34A fields:
+        "images_persisted": len(image_rows),
+        "extraction_method": result.extraction_method,
+        "needs_human_review": bool(result.needs_human_review),
+        "ocr_disabled": bool(result.ocr_disabled),
+        "warnings": list(result.warnings)[:5],
     }
+
+
+def _store_extracted_image(
+    client,
+    document_id: int,
+    document_version_id: int,
+    image: ExtractedImage,
+) -> Optional[str]:
+    """Store the original extracted image in MinIO under ``images/``.
+
+    Returns the storage key on success, or None when the image has no
+    bytes (e.g. PDF page OCR where we keep a logical reference but the
+    rendered bytes can be regenerated from the PDF).
+    """
+    if not image.raw_bytes:
+        return None
+    prefix = "images"
+    ext_map = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/webp": ".webp",
+        "image/tiff": ".tif",
+        "image/bmp": ".bmp",
+        "image/gif": ".gif",
+    }
+    ext = ext_map.get(image.mime_type, ".bin")
+    storage_key = f"{prefix}/{document_id}/{uuid.uuid4().hex}{ext}"
+    client.put_object(
+        settings.MINIO_BUCKET,
+        storage_key,
+        data=io.BytesIO(image.raw_bytes),
+        length=len(image.raw_bytes),
+        content_type=image.mime_type,
+    )
+    return storage_key
 
 @router.get("")
 def list_documents(

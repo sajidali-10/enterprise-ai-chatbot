@@ -125,6 +125,37 @@ class Settings(BaseSettings):
     RAGAS_MAX_CASES: int = int(os.getenv("RAGAS_MAX_CASES", "20"))
     RAGAS_SAVE_RESULTS: bool = os.getenv("RAGAS_SAVE_RESULTS", "true").lower() in ("true", "1", "yes")
 
+    # -------------------------------------------------------------------
+    # Phase 34A — Enterprise OCR & Image Ingestion
+    # -------------------------------------------------------------------
+    # Master switch for the OCR subsystem. When false, image uploads
+    # are accepted and stored but no OCR is performed — and the upload
+    # endpoint will return a clear 4xx error if a *direct* image is
+    # uploaded with no usable native text. Document processing continues
+    # to work for text-only documents when OCR is disabled.
+    OCR_ENABLED: bool = os.getenv("OCR_ENABLED", "true").lower() in ("true", "1", "yes", "on")
+    # Active OCR provider. Mirrors the LLM/embedding provider pattern.
+    OCR_PROVIDER: str = os.getenv("OCR_PROVIDER", "tesseract")
+    # Default Tesseract language code(s). Comma-separated for multi-lang.
+    OCR_LANGUAGE: str = os.getenv("OCR_LANGUAGE", "eng")
+    # 0..100. Below this threshold an OCR row is flagged low_confidence
+    # but still indexed (with a warning) so knowledge is not lost.
+    OCR_MIN_CONFIDENCE: int = int(os.getenv("OCR_MIN_CONFIDENCE", "60"))
+    # PDF OCR fallback: enable / disable OCR for pages whose native
+    # text is below the per-page minimum.
+    OCR_PDF_FALLBACK: bool = os.getenv("OCR_PDF_FALLBACK", "true").lower() in ("true", "1", "yes", "on")
+    OCR_PDF_PAGE_TEXT_MIN_CHARS: int = int(os.getenv("OCR_PDF_PAGE_TEXT_MIN_CHARS", "40"))
+    # DOCX embedded-image OCR.
+    OCR_DOCX_IMAGES: bool = os.getenv("OCR_DOCX_IMAGES", "true").lower() in ("true", "1", "yes", "on")
+    OCR_DOCX_IMAGE_MAX_COUNT: int = int(os.getenv("OCR_DOCX_IMAGE_MAX_COUNT", "50"))
+    # Per-image safety caps.
+    OCR_IMAGE_MAX_SIZE_MB: int = int(os.getenv("OCR_IMAGE_MAX_SIZE_MB", "15"))
+    OCR_RENDER_DPI: int = int(os.getenv("OCR_RENDER_DPI", "200"))
+    OCR_TIMEOUT_S: float = float(os.getenv("OCR_TIMEOUT_S", "120"))
+    OCR_UPSCALING_ENABLED: bool = os.getenv("OCR_UPSCALING_ENABLED", "true").lower() in ("true", "1", "yes", "on")
+    # TESSDATA_PREFIX (optional override).
+    TESSDATA_PREFIX: str = os.getenv("TESSDATA_PREFIX", "")
+
     # Phase 31B — LangGraph Agentic RAG Pilot (optional, off by default)
     # Master switch. When false, the agentic pipeline is fully inert: it is
     # not imported at request time and the classic knowledge_base path is

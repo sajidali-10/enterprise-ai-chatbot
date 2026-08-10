@@ -4,7 +4,19 @@ import { useState, useRef, DragEvent, ChangeEvent } from 'react'
 import Link from 'next/link'
 import { useAuthFetch } from '@/hooks/useApi'
 
-const ALLOWED_TYPES = ['.pdf', '.txt', '.md', '.docx']
+const ALLOWED_TYPES = [
+  '.pdf',
+  '.txt',
+  '.md',
+  '.docx',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.tif',
+  '.tiff',
+  '.bmp',
+]
 const MAX_SIZE_MB = 20
 const MAX_SIZE = MAX_SIZE_MB * 1024 * 1024
 
@@ -160,7 +172,7 @@ export default function DocumentUploadPage() {
                 <span className="text-blue-500 font-medium">browse</span>
               </span>
               <span className="text-sm text-gray-400 mt-2">
-Allowed types: {ALLOWED_TYPES.join(', ')} | Max size: {MAX_SIZE_MB}MB
+Allowed types: {ALLOWED_TYPES.join(', ')} | Max size: {MAX_SIZE_MB}MB | Images are OCR&#39;d
               </span>
             </label>
           </div>

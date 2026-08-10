@@ -419,6 +419,20 @@ def get_system_status(
         # Never break /status because tracing status failed
         langsmith = {"enabled": False, "available": False, "error": "status_unavailable"}
 
+    # Phase 34A — OCR status. Read via the OCR provider factory which
+    # is safe to call even when the OCR binary is missing (it returns
+    # available=False). Never raises.
+    ocr: dict[str, Any] = {"ocr_enabled": False, "ocr_provider": "tesseract", "ocr_health": {"available": False}}
+    try:
+        from app.providers.ocr import get_ocr_status
+        ocr = get_ocr_status()
+    except Exception:
+        ocr = {
+            "ocr_enabled": False,
+            "ocr_provider": "tesseract",
+            "ocr_health": {"available": False, "details": "status_unavailable"},
+        }
+
     return {
         "gateway": {
             "nginx_proxy": "healthy",
@@ -446,6 +460,7 @@ def get_system_status(
         "security": security,
         "recent_activity": recent_activity,
         "langsmith": langsmith,
+        "ocr": ocr,
         "overall_healthy": all_ok,
         "status_source_note": "Status is based on application connectivity checks, not raw Docker container state.",
     }

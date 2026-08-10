@@ -50,3 +50,16 @@ langsmith>=0.8.0
 # langgraph is already a transitive dependency of langchain-core>=1.4,
 # but we pin it explicitly here to make the agentic pilot reproducible.
 langgraph>=0.2.0,<2.0.0
+
+# Phase 34A — Enterprise OCR & Image Ingestion Foundation
+# Pillow is required for image decoding and preprocessing.
+# It was already a transitive dependency of pypdf/python-docx; we pin
+# it explicitly to make the OCR pipeline reproducible.
+Pillow>=10.0.0
+# pytesseract is the Python wrapper around the tesseract-ocr binary.
+# The binary itself is installed at the OS level via the Dockerfile
+# (apt-get install -y tesseract-ocr tesseract-ocr-eng).
+pytesseract>=0.3.10
+# PyMuPDF is used by the Tesseract provider to render PDF pages to
+# images before OCR. It is also commonly used to extract metadata.
+PyMuPDF>=1.24.0

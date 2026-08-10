@@ -2,6 +2,23 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Phase 34A — Enterprise OCR & Image Ingestion Foundation
+# Tesseract OCR binary + English language pack. Phase 34A only ships
+# the ``eng`` pack; additional languages can be added by appending
+# ``tesseract-ocr-<lang>`` to the apt-get install list and updating
+# the OCR_LANGUAGE env var.
+# tesseract-ocr / tesseract-ocr-eng are required by
+# ``app.providers.ocr.tesseract_provider.TesseractOcrProvider``.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        libjpeg-dev \
+        zlib1g-dev \
+        libwebp-dev \
+        libtiff-dev \
+        libpng-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for production hygiene
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
