@@ -552,6 +552,10 @@ def _run_chat_request(
 
         if not use_agentic or agentic_failed:
             # Pass conversation context SEPARATELY to the prompt, not to retrieval
+            # Phase 34A.1 — pass image_context through to retrieval so the
+            # routing layer can scope to OCR chunks when the user is
+            # asking about the content of an uploaded image.
+            image_ctx = getattr(chat_request, "image_context", None)
             if HAS_SECURITY and auth and auth.is_authenticated:
                 # Use audit-aware RAG generation with permission filtering
                 answer, citations, metadata = generate_answer_with_rag_audit(
@@ -562,6 +566,7 @@ def _run_chat_request(
                     request_ip=client_ip,
                     request_user_agent=user_agent,
                     conversation_context=conversation_context,
+                    image_context=image_ctx,
                 )
             else:
                 # Fall back to regular RAG without auth/audit
@@ -570,6 +575,7 @@ def _run_chat_request(
                     use_hybrid=use_hybrid,
                     debug=debug,
                     conversation_context=conversation_context,
+                    image_context=image_ctx,
                 )
 
             # Tag the metadata so the agentic pilot's output is

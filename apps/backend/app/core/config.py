@@ -156,6 +156,38 @@ class Settings(BaseSettings):
     # TESSDATA_PREFIX (optional override).
     TESSDATA_PREFIX: str = os.getenv("TESSDATA_PREFIX", "")
 
+    # -------------------------------------------------------------------
+    # Phase 34A.1 — RAG Retrieval & DB Migration Hardening
+    # -------------------------------------------------------------------
+    # Maximum number of candidate chunks returned by the initial hybrid
+    # retrieval (before final thresholding). Acts as a ceiling on the
+    # input to MMR + exact-match reranking.
+    RAG_MAX_RETRIEVED_CANDIDATES: int = int(os.getenv("RAG_MAX_RETRIEVED_CANDIDATES", "30"))
+    # Maximum number of final sources presented to the LLM after
+    # relevance thresholding.
+    RAG_MAX_FINAL_SOURCES: int = int(os.getenv("RAG_MAX_FINAL_SOURCES", "6"))
+    # Multiplicative boost applied per exact error-code hit during
+    # reranking. 0.30 = up to +30% per matched code.
+    RAG_EXACT_MATCH_BOOST: float = float(os.getenv("RAG_EXACT_MATCH_BOOST", "0.30"))
+    # Multiplicative boost applied per exact technical-term hit.
+    RAG_EXACT_TERM_BOOST: float = float(os.getenv("RAG_EXACT_TERM_BOOST", "0.15"))
+    # Master switch for image-aware query routing. When false the
+    # pipeline falls back to the existing broad-KB behaviour.
+    RAG_IMAGE_AWARE_ROUTING_ENABLED: bool = os.getenv(
+        "RAG_IMAGE_AWARE_ROUTING_ENABLED", "true"
+    ).lower() in ("true", "1", "yes")
+    # Minimum fused-retrieval score required for a chunk to be
+    # forwarded to the LLM. Chunks below this are dropped.
+    RAG_MIN_RELEVANCE_FLOOR: float = float(os.getenv("RAG_MIN_RELEVANCE_FLOOR", "0.10"))
+    # Production-safe schema policy. When false (the default), the
+    # backend startup does NOT call Base.metadata.create_all() — Alembic
+    # is the sole owner of production schema. Tests opt in via the
+    # DB_AUTO_CREATE_SCHEMA=true env var or by using a sqlite test DB
+    # in conftest.py (which calls create_all itself).
+    DB_AUTO_CREATE_SCHEMA: bool = os.getenv("DB_AUTO_CREATE_SCHEMA", "false").lower() in (
+        "true", "1", "yes"
+    )
+
     # Phase 31B — LangGraph Agentic RAG Pilot (optional, off by default)
     # Master switch. When false, the agentic pipeline is fully inert: it is
     # not imported at request time and the classic knowledge_base path is

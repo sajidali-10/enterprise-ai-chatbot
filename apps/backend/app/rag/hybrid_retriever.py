@@ -18,6 +18,7 @@ from app.services.vector.qdrant_service import search as qdrant_search
 from app.services.search.keyword_search import search_chunks_keyword
 from app.services.embeddings import get_embedding_provider
 from app.rag.reranker import get_reranker, RerankerBase, RerankResult
+from app.rag.exact_match import apply_exact_match_boost as _exact_match_boost_helper
 from app.services.langsmith_tracing import trace_span
 
 
@@ -423,6 +424,9 @@ def retrieve_chunks_hybrid(
     query: str,
     config: Optional[RetrievalConfig] = None,
     reranker: Optional[RerankerBase] = None,
+    query_analysis: Optional[object] = None,
+    exact_match_boost: float = 0.30,
+    exact_term_boost: float = 0.15,
 ) -> Tuple[List[dict], dict]:
     """
     Perform hybrid retrieval combining vector and keyword search.
@@ -515,6 +519,27 @@ def retrieve_chunks_hybrid(
             vector_weight=config.vector_weight,
             keyword_weight=config.keyword_weight,
         )
+
+    # 3a. Phase 34A.1 — exact-match reranking.
+    # Multiplicative boost per matched error code / technical term so
+    # that an exact identifier hit ranks above a higher-vector-score
+    # chunk that does not contain the identifier. Skipped when the
+    # query analysis reports no identifiers.
+    exact_match_count = 0
+    if query_analysis is not None and getattr(query_analysis, "has_identifiers", lambda: False)():
+        for chunk in fused_chunks:
+            if chunk.content and any(
+                code.lower() in chunk.content.lower()
+                for code in (getattr(query_analysis, "error_codes", []) or [])
+            ):
+                exact_match_count += 1
+        fused_chunks = _apply_exact_match_to_scored_chunks(
+            fused_chunks,
+            query_analysis,
+            exact_match_boost,
+            exact_term_boost,
+        )
+    fused_results_count = len(fused_chunks)
     
     # 4. Apply min_score filter
     if config.min_score > 0:
@@ -560,14 +585,66 @@ def retrieve_chunks_hybrid(
     metadata = {
         "vector_results_count": len(vector_chunks),
         "keyword_results_count": len(keyword_chunks),
-        "fused_results_count": len(fused_chunks),
+        "fused_results_count": fused_results_count,
         "final_results_count": len(final_chunks),
         "reranker_type": config.reranker_type,
         "vector_weight": config.vector_weight,
         "keyword_weight": config.keyword_weight,
+        "exact_match_count": exact_match_count,
     }
-    
+
     return final_chunks, metadata
+
+
+def _apply_exact_match_to_scored_chunks(
+    fused_chunks: List[ScoredChunk],
+    query_analysis: object,
+    code_boost: float,
+    term_boost: float,
+) -> List[ScoredChunk]:
+    """Apply multiplicative exact-match boost to scored chunks.
+
+    Mirrors `app.rag.exact_match.apply_exact_match_boost` but operates
+    on `ScoredChunk` dataclasses so we do not need to convert to dict
+    and back. The boost is computed by re-using the same normalisation
+    and code-matching helpers from `exact_match.py`.
+    """
+    from app.rag.exact_match import compute_exact_match_score
+
+    if not fused_chunks:
+        return fused_chunks
+    if query_analysis is None or not getattr(
+        query_analysis, "has_identifiers", lambda: False
+    )():
+        return fused_chunks
+
+    boosted: list[ScoredChunk] = []
+    for chunk in fused_chunks:
+        synthetic = {
+            "content": chunk.content,
+            "title": chunk.title,
+            "section_heading": getattr(chunk, "section_heading", ""),
+        }
+        match = compute_exact_match_score(synthetic, query_analysis, code_boost, term_boost)
+        new_fused = chunk.fused_score * (1.0 + match["score"])
+        # Preserve ScoredChunk fields; expose the boost as attributes
+        # via __dict__ so downstream code can read them.
+        chunk_dict = chunk.__dict__.copy()
+        chunk_dict["fused_score"] = new_fused
+        chunk_dict["_exact_match_count"] = len(match["matched_codes"]) + len(
+            match["matched_terms"]
+        )
+        chunk_dict["_exact_match_boost"] = match["score"]
+        chunk_dict["_matched_codes"] = match["matched_codes"]
+        chunk_dict["_matched_terms"] = match["matched_terms"]
+        boosted.append(ScoredChunk(**{k: v for k, v in chunk_dict.items() if k in (
+            "chunk_id", "document_id", "chunk_index", "content",
+            "source_file_name", "title", "vector_score", "keyword_score",
+            "fused_score", "is_from_vector", "is_from_keyword",
+        )}))
+
+    boosted.sort(key=lambda c: c.fused_score, reverse=True)
+    return boosted
 
 
 # ============================================================================
@@ -662,6 +739,9 @@ def retrieve_with_strategy(
     config: Optional[RetrievalConfig] = None,
     mmr_lambda: Optional[float] = None,
     top_n: Optional[int] = None,
+    query_analysis: Optional[object] = None,
+    exact_match_boost: float = 0.30,
+    exact_term_boost: float = 0.15,
 ) -> Tuple[List[dict], dict]:
     """
     Retrieve chunks using a named strategy.
@@ -693,7 +773,13 @@ def retrieve_with_strategy(
         requested = "hybrid"
 
     # Run the standard hybrid retrieval pipeline (vector + keyword fusion).
-    chunks, inner_meta = retrieve_chunks_hybrid(query=query, config=config)
+    chunks, inner_meta = retrieve_chunks_hybrid(
+        query=query,
+        config=config,
+        query_analysis=query_analysis,
+        exact_match_boost=exact_match_boost,
+        exact_term_boost=exact_term_boost,
+    )
 
     processed, metadata = _apply_strategy_to_chunks(
         chunks=chunks,

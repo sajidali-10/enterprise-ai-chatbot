@@ -63,10 +63,56 @@ app.include_router(admin_rag_config_router.router)
 app.include_router(admin_security_router.router)
 
 
+def _should_autocreate_schema() -> bool:
+    """
+    Phase 34A.1 — Database Migration Hardening.
+
+    Production schema MUST be owned by Alembic. Application startup
+    must NOT silently create missing production tables.
+
+    `Base.metadata.create_all(bind=engine)` is gated behind a
+    combination of:
+
+      1. Explicit opt-in via the DB_AUTO_CREATE_SCHEMA env var (or
+         equivalent settings flag), AND/OR
+      2. A test-shaped DATABASE_URL (sqlite:///./test.db,
+         sqlite:///:memory:, or sqlite:///./test_*.db).
+
+    For any other DATABASE_URL (e.g. a real PostgreSQL connection),
+    `create_all` is suppressed so a missing Alembic migration can
+    never be silently masked by a startup-side schema creation.
+    Tests opt in via their own fixture-driven create_all (see
+    `tests/conftest.py:db_session`) and do not depend on this hook.
+    """
+    try:
+        if settings.DB_AUTO_CREATE_SCHEMA:
+            return True
+    except Exception:
+        pass
+
+    try:
+        url = (settings.DATABASE_URL or "").lower()
+    except Exception:
+        url = ""
+    if url.startswith("sqlite"):
+        # SQLite is only used for the local pytest harness. Production
+        # and staging always run against PostgreSQL.
+        return True
+    return False
+
+
 @app.on_event("startup")
 def startup():
     validate_startup()
-    Base.metadata.create_all(bind=engine)
+    if _should_autocreate_schema():
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception:
+            logger.exception("Base.metadata.create_all failed during startup.")
+    else:
+        logger.info(
+            "DB_AUTO_CREATE_SCHEMA=false; relying on Alembic for schema management."
+        )
     _bootstrap_admin_user()
 
 

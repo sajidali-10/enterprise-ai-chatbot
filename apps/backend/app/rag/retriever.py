@@ -16,6 +16,9 @@ from app.rag.hybrid_retriever import (
     RetrievalConfig,
 )
 from app.rag.query_rewriter import get_query_rewriter
+from app.rag.query_analysis import analyze_query
+from app.rag.relevance_filter import apply_relevance_threshold
+from app.rag.image_routing import select_image_aware_chunks
 from app.core.config import settings
 from app.services.langsmith_tracing import trace_span, redact_filenames, safe_chunk_content, get_current_span
 
@@ -96,6 +99,11 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
         rewriter = get_query_rewriter(settings.RETRIEVAL_QUERY_REWRITER)
         rewritten_query = rewriter.rewrite(query)
 
+        # Phase 34A.1 — deterministic query analysis. Used to drive
+        # exact-match reranking and image-aware routing. Never makes
+        # an LLM call.
+        query_analysis = analyze_query(rewritten_query)
+
         # Build retrieval config from settings
         config = RetrievalConfig(
             vector_top_k=settings.RETRIEVAL_VECTOR_TOP_K,
@@ -117,7 +125,39 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
             strategy=strategy,
             config=config,
             mmr_lambda=mmr_lambda,
+            query_analysis=query_analysis,
+            exact_match_boost=getattr(settings, "RAG_EXACT_MATCH_BOOST", 0.30),
+            exact_term_boost=getattr(settings, "RAG_EXACT_TERM_BOOST", 0.15),
         )
+
+        # Phase 34A.1 — relevance floor + max sources cap. Applied AFTER
+        # hybrid scoring + exact-match reranking so the threshold acts
+        # on the most informative score we have.
+        try:
+            min_floor = float(getattr(settings, "RAG_MIN_RELEVANCE_FLOOR", 0.10) or 0.0)
+        except Exception:
+            min_floor = 0.0
+        try:
+            max_sources = int(getattr(settings, "RAG_MAX_FINAL_SOURCES", 6) or 6)
+        except Exception:
+            max_sources = 6
+
+        chunks, filter_meta = apply_relevance_threshold(
+            chunks, min_score=min_floor, max_results=max_sources
+        )
+        metadata["relevance_filter"] = filter_meta
+        metadata["candidate_count"] = filter_meta.get("candidate_count", 0)
+        metadata["filtered_count"] = filter_meta.get("filtered_count", 0)
+        metadata["final_source_count"] = filter_meta.get("final_source_count", len(chunks))
+
+        # Surface Phase 34A.1 diagnostics.
+        metadata["query_type"] = query_analysis.query_type
+        metadata["query_analysis"] = query_analysis.to_dict()
+        metadata["exact_match_count"] = metadata.get("exact_match_count", 0)
+        metadata["retrieval_mode"] = "image_aware" if (
+            getattr(settings, "RAG_IMAGE_AWARE_ROUTING_ENABLED", True)
+            and query_analysis.references_uploaded_image
+        ) else "standard"
 
         # Phase 31A — fill retrieval span metadata now that we know the outcome.
         if retrieval_span is not None:

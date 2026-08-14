@@ -22,6 +22,10 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="User message text")
     mode: str = Field(default="general_chat", description="Chat mode: 'general_chat', 'knowledge_base', or 'debug'")
     session_id: Optional[int] = Field(default=None, description="Existing session ID to continue; creates a new session if omitted")
+    # Phase 34A.1 — image-aware query routing. Optional dict the
+    # frontend sends when the user has an image in scope. Recognised
+    # keys: image_id, document_id, document_version_id, recent_images.
+    image_context: Optional[dict] = Field(default=None, description="Optional image context describing the uploaded image in scope")
 
 
 # Phase 20C: Typed suggestion interface for type safety

@@ -31,6 +31,8 @@ from app.rag.grounding import (
     has_citations,
     check_citations,
 )
+from app.rag.image_routing import select_image_aware_chunks
+from app.rag.query_analysis import analyze_query, QueryAnalysis
 from app.services.llm import get_llm_provider
 from app.schemas.chat import ChatRequest, ChatResponse, MessageRole
 from app.core.config import settings
@@ -282,6 +284,7 @@ def generate_answer_with_rag(
     debug: bool = False,
     min_relevance_score: Optional[float] = None,
     conversation_context: str = "",
+    image_context: Optional[dict] = None,
 ) -> tuple[str, list[dict], dict]:
     """
     Full RAG pipeline: retrieve chunks, build prompt, call LLM, return answer + citations.
@@ -318,6 +321,42 @@ def generate_answer_with_rag(
     else:
         chunks = retrieve_chunks(query=query, limit=top_k, score_threshold=score_threshold)
         retrieval_metadata = {}
+
+    # Phase 34A.1 — image-aware routing. When the query references an
+    # uploaded image, scope retrieval to OCR-derived chunks so unrelated
+    # KB sources (e.g. admin_test.txt) do not pollute the answer.
+    analysis_for_routing = QueryAnalysis(query=query)
+    try:
+        qa = retrieval_metadata.get("query_analysis") or {}
+        analysis_for_routing = QueryAnalysis(
+            query=query,
+            query_type=qa.get("query_type", "general"),
+            error_codes=list(qa.get("error_codes", [])),
+            technical_terms=list(qa.get("technical_terms", [])),
+            references_uploaded_image=bool(retrieval_metadata.get("image_context_used"))
+            or (
+                retrieval_metadata.get("query_type") == "image_content"
+            ),
+        )
+    except Exception:
+        pass
+
+    if getattr(settings, "RAG_IMAGE_AWARE_ROUTING_ENABLED", True):
+        chunks, routing_meta = select_image_aware_chunks(
+            chunks, analysis_for_routing, image_context=image_context
+        )
+        retrieval_metadata["image_routing"] = routing_meta
+        retrieval_metadata["image_context_used"] = bool(
+            routing_meta.get("image_context_used")
+        )
+    else:
+        retrieval_metadata["image_routing"] = {
+            "routing_mode": "disabled",
+            "image_context_used": False,
+            "kept_count": len(chunks),
+            "dropped_count": 0,
+        }
+        retrieval_metadata["image_context_used"] = False
 
     # Phase 10: Apply grounding checks BEFORE calling LLM
     # Phase 11.2: Pass query for topic relevance checking
@@ -508,6 +547,7 @@ def generate_answer_with_rag_audit(
     request_user_agent: Optional[str] = None,
     min_relevance_score: Optional[float] = None,
     conversation_context: str = "",
+    image_context: Optional[dict] = None,
 ) -> tuple[str, list[dict], dict]:
     """
     Full RAG pipeline with permission filtering and audit logging (Phase 6).
@@ -557,6 +597,40 @@ def generate_answer_with_rag_audit(
     else:
         # No auth, fall back to regular retrieval
         chunks, retrieval_metadata = retrieve_chunks_with_settings(query, debug=debug)
+
+    # Phase 34A.1 — image-aware routing. Restrict results when the user
+    # is asking about content in an uploaded image; otherwise pass
+    # through.
+    analysis_for_routing = QueryAnalysis(query=query)
+    try:
+        qa = retrieval_metadata.get("query_analysis") or {}
+        analysis_for_routing = QueryAnalysis(
+            query=query,
+            query_type=qa.get("query_type", "general"),
+            error_codes=list(qa.get("error_codes", [])),
+            technical_terms=list(qa.get("technical_terms", [])),
+            references_uploaded_image=bool(retrieval_metadata.get("image_context_used"))
+            or (retrieval_metadata.get("query_type") == "image_content"),
+        )
+    except Exception:
+        pass
+
+    if getattr(settings, "RAG_IMAGE_AWARE_ROUTING_ENABLED", True):
+        chunks, routing_meta = select_image_aware_chunks(
+            chunks, analysis_for_routing, image_context=image_context
+        )
+        retrieval_metadata["image_routing"] = routing_meta
+        retrieval_metadata["image_context_used"] = bool(
+            routing_meta.get("image_context_used")
+        )
+    else:
+        retrieval_metadata["image_routing"] = {
+            "routing_mode": "disabled",
+            "image_context_used": False,
+            "kept_count": len(chunks),
+            "dropped_count": 0,
+        }
+        retrieval_metadata["image_context_used"] = False
 
     # Phase 10: Apply grounding checks BEFORE calling LLM
     # Phase 11.2: Pass query for topic relevance checking
