@@ -342,11 +342,27 @@ def generate_answer_with_rag(
     # Phase 34A.1.2 — fast path for image_content questions. We attempt
     # to resolve the image FIRST so the OCR is used as primary evidence
     # without depending on semantic similarity against the entire KB.
+    #
+    # Phase 34A.2.1 — also attempt pre-resolution when `image_context`
+    # is supplied even if the query text does NOT match image-intent
+    # patterns. "What error code is shown here?" with explicit
+    # `image_context` should still use the in-scope image.
     pre_resolved_meta: dict = {}
     pre_resolved_chunks: list[dict] = []
     try:
         pre_analysis = analyze_query(query)
-        if pre_analysis.query_type == "image_content":
+        
+        # Phase 34A.2.1 — check for image_context even when the
+        # query analysis did not classify as "image_content".
+        # The frontend supplies `image_context` with real IDs when
+        # the user has an attached image in scope. This is a
+        # stronger signal than the query text.
+        has_context_for_image = bool(
+            image_context and isinstance(image_context, dict)
+            and (image_context.get("document_id") or image_context.get("image_id"))
+        )
+        
+        if pre_analysis.query_type == "image_content" or has_context_for_image:
             # Step 1: explicit image_context
             explicit = extract_explicit_target(image_context)
             resolved_doc_id = explicit.document_id

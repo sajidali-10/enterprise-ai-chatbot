@@ -91,6 +91,21 @@ _IMAGE_INTENT_PATTERNS = [
     re.compile(r"\bwhat\s+(?:error|code|message|number)\s+(?:is|are)\s+(?:shown|displayed|visible)\s+(?:in|on)\s+(?:the|my|a)\s+(?:image|screenshot|picture)\b", re.IGNORECASE),
     re.compile(r"\bocr\s+text\b", re.IGNORECASE),
     re.compile(r"\b(?:read|extract|tell\s+me)\s+(?:the\s+)?text\s+from\s+(?:the|my)\s+(?:image|screenshot|picture|attachment|photo)\b", re.IGNORECASE),
+    # Phase 34A.2.1 — "attached image" / "the attached image" / "attached screenshot"
+    # The word "attached" in front of "image"/"screenshot"/"picture" is a
+    # strong signal the user is referring to their own uploaded image.
+    # Matches: "What text is shown in the attached image?"
+    #         "What does the attached image say?"
+    re.compile(r"\b(?:the\s+)?attached\s+(?:image|screenshot|picture|photo|file)\b", re.IGNORECASE),
+    # Phase 34A.2.1 — "shown here" / "here" as an image reference when the
+    # user has an active image_context and "here" refers to the previewed
+    # image. "here" alone is too broad ("click here", "type here") so we
+    # require it to be adjacent to a visible/displayed/show/error verb
+    # or to appear in a question about what the image shows.
+    # Matches: "What error code is shown here?"
+    #         "What text is displayed here?"
+    #         "What does this image show here?"
+    re.compile(r"\bshown\s+here\b", re.IGNORECASE),
 ]
 
 

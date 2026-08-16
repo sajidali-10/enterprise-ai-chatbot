@@ -252,10 +252,19 @@ def select_image_content_chunks(
         "resolved_filename": resolved_filename,
     }
 
-    if analysis is None or analysis.query_type != "image_content":
-        # Only image_content questions get routed through this path.
-        # Anything else returns empty so the caller can fall back to
-        # the regular hybrid retrieval.
+    # Phase 34A.2.1 — also route when `image_context` is present even if
+    # the query analysis did not classify as "image_content". The
+    # frontend supplies `image_context` with real IDs when the user
+    # has an attached image in scope.
+    has_context_for_image = bool(
+        image_context and isinstance(image_context, dict)
+        and (image_context.get("document_id") or image_context.get("image_id"))
+    )
+    
+    if analysis is None or (analysis.query_type != "image_content" and not has_context_for_image):
+        # Only image_content questions or explicit image_context
+        # get routed through this path. Anything else returns empty
+        # so the caller can fall back to regular hybrid retrieval.
         routing_meta["routing_mode"] = "skipped_not_image_content"
         return [], routing_meta
 
@@ -414,10 +423,53 @@ def select_image_aware_chunks(
     query_type = (analysis.query_type if analysis else "general") or "general"
     is_image_content = query_type == "image_content"
 
+    # Phase 34A.2.1 — check for explicit image_context even when the
+    # query analysis did not detect image-intent words. The frontend
+    # sends `image_context` with real document_id and image_id when
+    # the user has an attached image in scope. This is a stronger
+    # signal than the query text alone.
+    has_image_context = bool(
+        image_context
+        and isinstance(image_context, dict)
+        and (image_context.get("document_id") or image_context.get("image_id") or image_context.get("document_version_id"))
+    )
+    
     if not references_image:
+        # If the query has NO image-intent reference but the
+        # frontend supplied an explicit `image_context`, the user
+        # is asking about THEIR image — treat as image-content.
+        # "What error code is shown here?" never mentions an
+        # image but the `image_context` dict proves the user has
+        # one in scope.
+        if has_image_context:
+            image_chunks = [c for c in chunks if _is_image_source_with_fallback(c)]
+            if image_chunks:
+                # The user has an image in scope. Scope to
+                # image-only chunks so "here" / "attached"
+                # references are answered from the correct image.
+                target_ids = _extract_target_ids(image_context)
+                if target_ids:
+                    preferred = [c for c in image_chunks if _chunk_matches_targets(c, target_ids)]
+                    if preferred:
+                        return preferred, {
+                            "routing_mode": "image_content_explicit",
+                            "image_context_used": True,
+                            "scoped_count": len(preferred),
+                            "kept_count": len(preferred),
+                            "dropped_count": len(chunks) - len(preferred),
+                        }
+                return image_chunks, {
+                    "routing_mode": "image_content_context_fallback",
+                    "image_context_used": True,
+                    "scoped_count": len(image_chunks),
+                    "kept_count": len(image_chunks),
+                    "dropped_count": len(chunks) - len(image_chunks),
+                }
+            # Fall through to pass-through: no image chunks in
+            # the candidate set (query was not image-related).
         return list(chunks), {
             "routing_mode": "passthrough",
-            "image_context_used": False,
+            "image_context_used": bool(has_image_context),
             "scoped_count": 0,
             "kept_count": len(chunks),
             "dropped_count": 0,
