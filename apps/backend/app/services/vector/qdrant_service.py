@@ -63,28 +63,88 @@ def upsert_chunks(chunks_with_embeddings: List[tuple], metadata: List[dict]):
     """
     chunks_with_embeddings: list of (chunk_content, embedding_vector)
     metadata: list of dicts with chunk metadata (id, document_id, chunk_index, source_file_name, etc.)
+
+    Phase 34A.1.1 — structured OCR/source-type metadata.
+
+    The payload now carries the full set of OCR / image-derived fields
+    the upload endpoint passes in, so that downstream retrieval can
+    distinguish image-derived chunks from native text. Fields written:
+
+        - source_type           (canonical: image_ocr | pdf_ocr | docx_image_ocr | native_text)
+        - content_type          (legacy alias for source_type)
+        - image_id              (DocumentImage.id for OCR-derived chunks)
+        - ocr_provider          (e.g. tesseract)
+        - ocr_confidence        (0-100 int)
+        - page_number           (PDF/DOCX page)
+        - mime_type             (chunk / document MIME)
+        - is_ocr                (bool shortcut for image-derived chunks)
+
+    Existing chunks (indexed before this change) keep working — they
+    just don't carry these fields, and the legacy fallback in
+    `app.rag.image_routing` will classify them from their content.
     """
     client = get_qdrant_client()
     points = []
     for i, ((chunk_content, embedding), meta) in enumerate(zip(chunks_with_embeddings, metadata)):
         # Use integer ID to avoid Qdrant 1.18+ parsing issues with underscore-separated strings
         point_id = meta['chunk_id']
+
+        # Phase 34A.1.1: derive canonical source_type. Trust the
+        # caller-supplied `source_type` if present, otherwise fall
+        # back to `content_type`, otherwise infer from `image_id`,
+        # otherwise default to native_text.
+        source_type = (
+            meta.get("source_type")
+            or meta.get("content_type")
+            or ("image_ocr" if meta.get("image_id") else "native_text")
+        )
+        content_type = meta.get("content_type") or source_type
+        is_ocr = source_type in {
+            "image_ocr",
+            "pdf_ocr",
+            "pdf_page_ocr",
+            "docx_image_ocr",
+        }
+
+        # Resolve page_number — accept either `page_number` or `page`
+        # (legacy alias used by the upload endpoint).
+        page_number = meta.get("page_number")
+        if page_number is None:
+            page_number = meta.get("page")
+
+        payload = {
+            "chunk_id": meta["chunk_id"],
+            "document_id": meta["document_id"],
+            "document_version_id": meta["document_version_id"],
+            "chunk_index": meta["chunk_index"],
+            "content": chunk_content,
+            "content_hash": meta["content_hash"],
+            "source_file_name": meta.get("source_file_name", ""),
+            "title": meta.get("title"),
+            "section_heading": meta.get("section_heading"),
+            # Phase 34A.1.1 — structured source / OCR metadata
+            "source_type": source_type,
+            "content_type": content_type,
+            "image_id": meta.get("image_id"),
+            "ocr_provider": meta.get("ocr_provider"),
+            "ocr_confidence": meta.get("ocr_confidence"),
+            "page_number": page_number,
+            "mime_type": meta.get("mime_type"),
+            "is_ocr": is_ocr,
+        }
+
+        # Strip None values so legacy payloads stay clean and Qdrant
+        # doesn't store a bunch of explicit-null fields. Fields that
+        # downstream code looks up via .get() handle None gracefully
+        # already; this just keeps payloads tidy.
+        payload = {k: v for k, v in payload.items() if v is not None}
+
         points.append(PointStruct(
             id=point_id,
             vector=embedding,
-            payload={
-                "chunk_id": meta["chunk_id"],
-                "document_id": meta["document_id"],
-                "document_version_id": meta["document_version_id"],
-                "chunk_index": meta["chunk_index"],
-                "content": chunk_content,
-                "content_hash": meta["content_hash"],
-                "source_file_name": meta.get("source_file_name", ""),
-                "title": meta.get("title"),
-                "section_heading": meta.get("section_heading"),
-            }
+            payload=payload,
         ))
-    
+
     client.upsert(
         collection_name=settings.QDRANT_COLLECTION,
         points=points,
@@ -98,3 +158,24 @@ def search(query_embedding: list[float], limit: int = 5) -> list:
         limit=limit,
     )
     return results
+
+
+def get_point(point_id: int) -> Optional[dict]:
+    """Fetch a single Qdrant point by ID (for diagnostics / reindex helpers).
+
+    Returns the raw payload dict, or None if the point does not exist.
+    """
+    try:
+        client = get_qdrant_client()
+        points = client.retrieve(
+            collection_name=settings.QDRANT_COLLECTION,
+            ids=[point_id],
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not points:
+            return None
+        p = points[0]
+        return getattr(p, "payload", None) or {}
+    except Exception:
+        return None

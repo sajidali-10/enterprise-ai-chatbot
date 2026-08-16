@@ -78,8 +78,9 @@ def test_routing_passthrough_for_non_image_query():
 
 
 def test_image_content_question_scopes_to_ocr_chunks():
-    """When the user asks an image-content question, only OCR chunks
-    survive. Unrelated KB sources are dropped."""
+    """When the user asks an image-content question and supplies an
+    explicit image_context, only OCR chunks from THAT image survive.
+    Unrelated KB sources and unrelated OCR chunks are both dropped."""
     chunks = [
         _chunk("unrelated admin notes", source_type="native_text"),
         _chunk("Error 902 - rejected", source_type="image_ocr", image_id=42),
@@ -88,10 +89,12 @@ def test_image_content_question_scopes_to_ocr_chunks():
     ]
     a = analyze_query("What error code is shown in the image I uploaded?")
     out, meta = select_image_aware_chunks(chunks, a, image_context={"image_id": 42})
-    assert meta["routing_mode"] == "image_content_scoped"
+    # Phase 34A.1.1 — with explicit image_context, scope to the matching
+    # image_id only (no stale historical images).
+    assert meta["routing_mode"] == "image_content_scoped_explicit"
     assert all(c["source_type"] == "image_ocr" for c in out)
-    assert len(out) == 2
-    # The image_context-matching chunk is preferred.
+    assert len(out) == 1
+    # Only the matching chunk survives.
     assert out[0].get("image_id") == 42
 
 
@@ -105,8 +108,9 @@ def test_image_content_no_ocr_available_passthrough():
 
 
 def test_image_content_falls_back_to_any_image_chunk():
-    """When no chunk matches the supplied image_context, fall back to
-    any available image-source chunk."""
+    """When no chunk matches the supplied image_context AND no recent
+    image target is supplied, fall back to a single best-effort OCR
+    chunk (never an arbitrary historical image)."""
     chunks = [
         _chunk("unrelated", source_type="native_text"),
         _chunk("some OCR text", source_type="image_ocr", image_id=99),
@@ -115,7 +119,10 @@ def test_image_content_falls_back_to_any_image_chunk():
     out, meta = select_image_aware_chunks(
         chunks, a, image_context={"image_id": 42}
     )
-    # No chunk matches image_id=42; fall back to the available OCR chunk.
+    # Phase 34A.1.1 — explicit image_context, no chunk matches, no
+    # recent_images target → best-effort fallback to a single OCR chunk
+    # rather than serving a stale historical image.
+    assert meta["routing_mode"] == "image_content_scoped_fallback"
     assert len(out) == 1
     assert out[0]["source_type"] == "image_ocr"
 

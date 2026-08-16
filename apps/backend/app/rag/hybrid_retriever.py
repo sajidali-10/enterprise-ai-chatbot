@@ -465,6 +465,14 @@ def retrieve_chunks_hybrid(
 
         for result in vector_results:
             payload = result.payload if hasattr(result, 'payload') else result
+            # Phase 34A.1.1 — extract the structured source / OCR
+            # metadata so downstream image-aware routing can classify
+            # chunks without round-tripping to Qdrant. Fields written
+            # by qdrant_service.upsert_chunks (newer chunks only —
+            # legacy chunks fall back to content-based detection in
+            # image_routing).
+            source_type = payload.get("source_type") or payload.get("content_type")
+            image_id = payload.get("image_id")
             vector_chunks.append({
                 "chunk_id": payload.get("chunk_id"),
                 "document_id": payload.get("document_id"),
@@ -475,6 +483,15 @@ def retrieve_chunks_hybrid(
                 "title": payload.get("title", ""),
                 "section_heading": payload.get("section_heading"),
                 "score": getattr(result, 'score', 0.0) if hasattr(result, 'score') else 0.0,
+                # Phase 34A.1.1 — image / OCR provenance
+                "source_type": source_type,
+                "content_type": payload.get("content_type"),
+                "image_id": image_id,
+                "ocr_provider": payload.get("ocr_provider"),
+                "ocr_confidence": payload.get("ocr_confidence"),
+                "page_number": payload.get("page_number"),
+                "mime_type": payload.get("mime_type"),
+                "is_ocr": payload.get("is_ocr"),
             })
         if vector_span is not None:
             try:

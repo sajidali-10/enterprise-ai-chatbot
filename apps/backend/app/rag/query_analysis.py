@@ -249,11 +249,46 @@ def _detect_image_intent(query: str) -> bool:
 
 
 def _detect_troubleshooting_intent(query: str) -> bool:
-    """Return True if the query is a troubleshooting/knowledge lookup."""
+    """Return True if the query is a troubleshooting/knowledge lookup.
+
+    Broad match: used for diagnostics and observability only.
+    """
     if not query:
         return False
     q = query.lower()
     return any(h in q for h in _TROUBLESHOOTING_HINTS)
+
+
+# Strong troubleshooting verbs used by `analyze_query` to disambiguate
+# image_content vs. error_lookup-with-image-context. These are the
+# unambiguous "I want KB help" verbs that override an image reference.
+_STRONG_TROUBLESHOOTING_HINTS = (
+    "troubleshoot",
+    "fix",
+    "resolve",
+    "debug",
+    "diagnose",
+    "workaround",
+    "how do i",
+    "how to",
+    "what causes",
+)
+
+
+def _detect_strong_troubleshooting_intent(query: str) -> bool:
+    """Stronger, image-reference-safe troubleshooting detector.
+
+    Returns True only when the query contains unambiguous troubleshooting
+    verbs. Weak hints like "what does", "meaning", "what is error" are
+    excluded — they describe the image-content ask when an image is
+    referenced and only count as troubleshooting when no image is
+    referenced (in which case `_detect_troubleshooting_intent` returns
+    True and the general path handles it).
+    """
+    if not query:
+        return False
+    q = query.lower()
+    return any(h in q for h in _STRONG_TROUBLESHOOTING_HINTS)
 
 
 def analyze_query(query: str) -> QueryAnalysis:
@@ -273,11 +308,42 @@ def analyze_query(query: str) -> QueryAnalysis:
     analysis.technical_terms = _extract_technical_terms(query)
     analysis.references_uploaded_image = _detect_image_intent(query)
 
-    # Classify intent.
-    troubleshooting_intent = _detect_troubleshooting_intent(query)
-    if analysis.references_uploaded_image and not analysis.error_codes and not analysis.technical_terms and not troubleshooting_intent:
+    # Phase 34A.1.1 — refined intent classification.
+    #
+    # When the user references an uploaded image, we must distinguish
+    # between:
+    #
+    #   (A) "image_content"   — "What error code is shown in the image
+    #                          I uploaded?", "What does the screenshot
+    #                          I uploaded say?", "Read the text from my
+    #                          image". The user wants the content of
+    #                          THEIR image. Scope retrieval to OCR
+    #                          chunks only.
+    #
+    #   (B) "error_lookup" with image context — "How do I troubleshoot
+    #                          error 902 shown in the image?",
+    #                          "Resolve the rejection error in the
+    #                          screenshot". The user wants broader KB
+    #                          help AND the image as supporting
+    #                          evidence. Keep all chunks; exact-match
+    #                          booster ranks the OCR chunk.
+    #
+    # The disambiguation uses STRONG troubleshooting verbs ("troubleshoot",
+    # "fix", "resolve", "debug") plus the presence of an identifier. Weak
+    # hints like "what does", "meaning", "what is error" are excluded when
+    # an image is referenced because they describe the image content ask,
+    # not a KB lookup. Without an image reference they still count as
+    # troubleshooting hints.
+    strong_troubleshooting_intent = _detect_strong_troubleshooting_intent(query)
+
+    if (
+        analysis.references_uploaded_image
+        and not analysis.error_codes
+        and not analysis.technical_terms
+        and not strong_troubleshooting_intent
+    ):
         # Pure image-content question: ask what's in the image, no
-        # identifier, no troubleshooting language.
+        # identifier, no explicit troubleshooting verb.
         analysis.query_type = "image_content"
     elif analysis.error_codes or analysis.technical_terms:
         # Identifiers present (with or without image reference) →
@@ -286,7 +352,7 @@ def analyze_query(query: str) -> QueryAnalysis:
         # the query analysis reports the intent as error_lookup so
         # downstream diagnostics are consistent.
         analysis.query_type = "error_lookup"
-    elif analysis.references_uploaded_image and troubleshooting_intent:
+    elif analysis.references_uploaded_image and strong_troubleshooting_intent:
         # Troubleshooting question that references the user's image.
         analysis.query_type = "error_lookup"
     else:
@@ -297,6 +363,7 @@ def analyze_query(query: str) -> QueryAnalysis:
         "technical_terms_count": len(analysis.technical_terms),
         "image_intent_matched": analysis.references_uploaded_image,
         "troubleshooting_matched": _detect_troubleshooting_intent(query),
+        "strong_troubleshooting_matched": strong_troubleshooting_intent,
     }
 
     return analysis

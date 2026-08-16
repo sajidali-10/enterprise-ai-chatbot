@@ -773,7 +773,41 @@ def index_document(
         # Ensure Qdrant collection exists
         ensure_collection(provider.dimension)
         
-        # Upsert to Qdrant
+        # Upsert to Qdrant. Phase 34A.1.1 — preserve OCR / image
+        # provenance where available so retrieval can distinguish
+        # image-derived chunks from native text.
+        from app.models.document import DocumentImage
+        from sqlalchemy import select
+
+        primary_image_id = None
+        content_type = "native_text"
+        mime_type = doc.mime_type
+        ocr_provider = None
+        ocr_confidence = None
+        page_number = None
+        try:
+            image_row = db.execute(
+                select(DocumentImage)
+                .where(DocumentImage.document_id == document_id)
+                .order_by(DocumentImage.sequence_number.asc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if image_row is not None:
+                primary_image_id = image_row.id
+                mime_type = image_row.mime_type or mime_type
+                ocr_provider = image_row.ocr_provider
+                ocr_confidence = image_row.ocr_confidence
+                page_number = image_row.page_number
+                # Map DocumentImage.source_type -> canonical chunk source_type
+                mapping = {
+                    "direct_image": "image_ocr",
+                    "pdf_page_ocr": "pdf_ocr",
+                    "docx_image_ocr": "docx_image_ocr",
+                }
+                content_type = mapping.get(image_row.source_type, "native_text")
+        except Exception:
+            pass
+
         chunks_with_embeddings = list(zip(texts, embeddings))
         metadata_payloads = []
         for i, chunk in enumerate(chunks):
@@ -786,10 +820,18 @@ def index_document(
                 "source_file_name": chunk.source_file_name,
                 "title": chunk.title,
                 "section_heading": chunk.section_heading,
+                # Phase 34A.1.1 — structured source / OCR metadata
+                "source_type": content_type,
+                "content_type": content_type,
+                "mime_type": mime_type,
+                "image_id": primary_image_id,
+                "ocr_provider": ocr_provider,
+                "ocr_confidence": ocr_confidence,
+                "page": page_number,
             })
-        
+
         upsert_chunks(chunks_with_embeddings, metadata_payloads)
-        
+
         doc.status = "indexed"
         db.commit()
         
