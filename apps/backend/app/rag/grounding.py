@@ -529,6 +529,36 @@ def decide_evidence_level(
         metadata["rationale"].append("no_chunks_retrieved")
         return EvidenceLevel.WEAK, metadata
 
+    # Phase 34A.1.2 — resolved image_content sources.
+    #
+    # When the chunks were fetched by image_id / document_id payload
+    # filter (the recent-image / explicit-context path), the user is
+    # explicitly asking about THAT source. The OCR body rarely shares
+    # vocabulary with the user's meta-question (e.g. "What error code
+    # is shown in the image I uploaded?") so the lexical-anchor check
+    # below would otherwise reject every well-resolved image-content
+    # question. Grant STRONG evidence here so the LLM answers from
+    # the OCR rather than falling through to the insufficient-info
+    # response.
+    retrieval_mode = (retrieval_metadata or {}).get("retrieval_mode") or ""
+    query_type = (retrieval_metadata or {}).get("query_type") or ""
+    image_routing_mode = (
+        (retrieval_metadata or {}).get("image_routing", {}) or {}
+    ).get("routing_mode") or ""
+    is_resolved_image_content = (
+        retrieval_mode in {"image_content", "image_content_recent", "image_content_explicit"}
+        or image_routing_mode in {"image_content_explicit", "image_content_recent"}
+        or query_type == "image_content"
+        and any(
+            c.get("_retrieval_channel") in {"qdrant_direct_by_id", "qdrant_direct_by_image_id"}
+            for c in chunks
+        )
+    )
+    if is_resolved_image_content:
+        metadata["rationale"].append("resolved_image_content_source")
+        metadata["decision"] = "strong"
+        return EvidenceLevel.STRONG, metadata
+
     extract_signals = _get_signal_extractor()
     signals = extract_signals(query or "")
     metadata["question_signals"] = {
@@ -805,6 +835,8 @@ def apply_grounding_checks(
     query: Optional[str] = None,
     retrieval_metadata: Optional[dict] = None,
     evidence_level: Optional[EvidenceLevel] = None,
+    *,
+    bypass_topic_relevance: bool = False,
 ) -> tuple[bool, Optional[str], dict]:
     """
     Apply all grounding checks in sequence.
@@ -832,6 +864,10 @@ def apply_grounding_checks(
         query: User's original query (required for topic relevance check).
         retrieval_metadata: Optional retrieval metadata for cross-checks.
         evidence_level: Optional pre-computed evidence level (skips re-computation).
+        bypass_topic_relevance: Phase 34A.1.2 — when True, skip the topic-relevance
+            check. Used for explicitly-resolved image_content sources where the
+            source relationship itself is the relevance signal (the OCR text
+            rarely shares vocabulary with the user's meta-question).
 
     Returns:
         Tuple of (should_block, fallback_message, metadata).
@@ -849,6 +885,7 @@ def apply_grounding_checks(
         query=query,
         retrieval_metadata=retrieval_metadata,
         evidence_level=evidence_level,
+        bypass_topic_relevance=bypass_topic_relevance,
     )
 
 
@@ -860,6 +897,8 @@ def _apply_grounding_checks_traced(
     query: Optional[str] = None,
     retrieval_metadata: Optional[dict] = None,
     evidence_level: Optional[EvidenceLevel] = None,
+    *,
+    bypass_topic_relevance: bool = False,
 ) -> tuple[bool, Optional[str], dict]:
     with trace_span(
         "evidence_grounding",
@@ -878,6 +917,7 @@ def _apply_grounding_checks_traced(
             query=query,
             retrieval_metadata=retrieval_metadata,
             evidence_level=evidence_level,
+            bypass_topic_relevance=bypass_topic_relevance,
         )
         # Phase 31A — attach the final evidence-grounding decision to the
         # span. We do this after _run_grounding_checks returns so that
@@ -921,6 +961,8 @@ def _run_grounding_checks(
     retrieval_metadata: Optional[dict] = None,
     evidence_level: Optional[EvidenceLevel] = None,
     grounding_span=None,
+    *,
+    bypass_topic_relevance: bool = False,
 ) -> tuple[bool, Optional[str], dict]:
     metadata: dict = {}
 
@@ -946,8 +988,13 @@ def _run_grounding_checks(
             }
             return True, message, metadata
 
-    # Check 3: Topic relevance (Phase 11.2) - only if query is provided
-    if query is not None:
+    # Check 3: Topic relevance (Phase 11.2) - only if query is provided.
+    # Phase 34A.1.2 — bypass when the source was resolved by image_id /
+    # document_id. The user's meta-question ("What error code is shown in
+    # the image?") rarely shares vocabulary with the OCR body, so the
+    # generic keyword-overlap check would otherwise reject every
+    # image_content question even when the OCR clearly answers it.
+    if query is not None and not bypass_topic_relevance:
         should_block, message, topic_meta = check_topic_relevance(query, chunks)
         metadata.update(topic_meta)
         if should_block:
@@ -957,6 +1004,9 @@ def _run_grounding_checks(
                 "rationale": [topic_meta.get("blocked_reason", "topic_not_relevant")],
             }
             return True, message, metadata
+    elif bypass_topic_relevance:
+        metadata["topic_checked"] = False
+        metadata["topic_bypassed_reason"] = "image_content_resolved_source"
 
     # Check 4: Minimum relevance threshold
     should_block, message, relevance_meta = check_minimum_relevance(chunks, threshold)
@@ -1022,15 +1072,26 @@ def get_debug_info(
     """
     _, _, metadata = grounding_result
     
+    # Phase 34A.1.2 — by-id chunks (Qdrant payload filter lookup) have
+    # ``score=None`` (no semantic similarity score). Treat None as
+    # "not applicable" rather than as 0.0, so the debug report does
+    # not crash and does not incorrectly report the threshold as
+    # unmet for resolved image_content sources.
+    top_score = chunks[0].get("score") if chunks else None
+    if top_score is None:
+        top_score_met = True  # by-id chunks are relevant by construction
+    else:
+        top_score_met = top_score >= threshold
+
     debug_info = {
         "retrieval": {
             "chunk_count": len(chunks),
-            "top_score": chunks[0].get("score") if chunks else None,
+            "top_score": top_score,
             "source_files": list(set(c.get("source_file_name", "unknown") for c in chunks)),
         },
         "threshold": {
             "configured": threshold,
-            "top_score_met": chunks[0].get("score", 0) >= threshold if chunks else False,
+            "top_score_met": top_score_met,
         },
         "grounding": {
             "blocked": grounding_result[0],

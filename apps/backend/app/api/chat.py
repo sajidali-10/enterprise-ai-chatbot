@@ -557,7 +557,10 @@ def _run_chat_request(
             # asking about the content of an uploaded image.
             image_ctx = getattr(chat_request, "image_context", None)
             if HAS_SECURITY and auth and auth.is_authenticated:
-                # Use audit-aware RAG generation with permission filtering
+                # Use audit-aware RAG generation with permission filtering.
+                # Phase 34A.1.2 — pass the DB session so the
+                # recent-image resolver can run when the frontend
+                # hasn't supplied an explicit image_context.
                 answer, citations, metadata = generate_answer_with_rag_audit(
                     query=retrieval_query,
                     auth=auth,
@@ -567,6 +570,7 @@ def _run_chat_request(
                     request_user_agent=user_agent,
                     conversation_context=conversation_context,
                     image_context=image_ctx,
+                    db=db,
                 )
             else:
                 # Fall back to regular RAG without auth/audit
@@ -576,6 +580,8 @@ def _run_chat_request(
                     debug=debug,
                     conversation_context=conversation_context,
                     image_context=image_ctx,
+                    db=db,
+                    auth=auth,
                 )
 
             # Tag the metadata so the agentic pilot's output is
@@ -597,6 +603,15 @@ def _run_chat_request(
                 max_excerpts=3,
                 debug_mode=is_debug_mode
             )
+
+        # Phase 34A.1.2 — defensive: answer must always be a non-None
+        # string for the ChatResponse Pydantic model. If the upstream
+        # pipeline returned None (e.g. blocked path that forgot to set
+        # a fallback message), fall back to the standard grounded
+        # "not enough information" string so the chat endpoint never
+        # 500s.
+        if answer is None:
+            answer = "I don't have enough information in the provided sources on that topic. Please upload the relevant guide if available, or rephrase the question."
 
         response = ChatResponse(
             message=answer,

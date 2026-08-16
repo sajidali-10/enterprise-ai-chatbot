@@ -174,6 +174,167 @@ def references_uploaded_image(query: str) -> bool:
     return _r(query)
 
 
+# Phase 34A.1.2 — Routing modes for image-content questions.
+#
+# These describe HOW an image-content question was resolved. They are
+# observable from metadata but are NOT used for chunk ranking: the
+# routing layer chooses chunks; the relevance floor applies after the
+# choice. Image-content routing is the one place where the source
+# relationship itself is the relevance signal and the threshold does
+# NOT apply.
+ROUTING_MODE_IMAGE_CONTENT_EXPLICIT = "image_content_explicit"
+ROUTING_MODE_IMAGE_CONTENT_RECENT = "image_content_recent"
+ROUTING_MODE_IMAGE_CONTENT_FALLBACK = "image_content_fallback"
+ROUTING_MODE_IMAGE_TROUBLESHOOTING_BROADENED = "image_troubleshooting_broadened"
+ROUTING_MODE_NORMAL_RAG = "normal_rag"
+
+
+def select_image_content_chunks(
+    analysis: Optional[QueryAnalysis],
+    image_context: Optional[Dict[str, Any]],
+    *,
+    resolved_document_id: Optional[int] = None,
+    resolved_image_id: Optional[int] = None,
+    resolved_filename: Optional[str] = None,
+    direct_chunks_provider: Optional[Any] = None,
+    recent_targets_provider: Optional[Any] = None,
+) -> Tuple[List[dict], Dict[str, Any]]:
+    """Phase 34A.1.2 — Resolve OCR chunks for an ``image_content`` question.
+
+    This is a SEPARATE retrieval path from `select_image_aware_chunks`.
+    It is used when the query analysis classifies the user's question
+    as pure image-content (e.g. "What error code is shown in the
+    image I uploaded?") and the routing layer wants the OCR of THE
+    image, not a semantic search over the whole KB.
+
+    Sequence:
+        1. If ``image_context`` supplies document_id / image_id, use
+           that — mode = ``image_content_explicit``.
+        2. Else, if the caller already resolved a recent image
+           (resolved_document_id / resolved_image_id), use that —
+           mode = ``image_content_recent``.
+        3. Else, if ``image_context.recent_images`` lists candidates,
+           pick the first that produces OCR chunks — mode
+           ``image_content_recent``.
+        4. Else, return empty + mode ``image_content_unresolved``.
+
+    The relevance threshold (RAG_MIN_RELEVANCE_FLOOR) does NOT apply
+    here because the source relationship is the relevance signal.
+
+    Args:
+        analysis: QueryAnalysis (only ``query_type == "image_content"``
+            is meaningful).
+        image_context: Optional frontend-supplied dict.
+        resolved_document_id / resolved_image_id / resolved_filename:
+            Backend resolver output. ``direct_chunks_provider`` and
+            ``recent_targets_provider`` are injectable for testing.
+        direct_chunks_provider: Callable ``(doc_id, image_id) -> List[dict]``.
+            Defaults to ``qdrant_service.fetch_chunks_by_document_id``
+            (which also handles the optional image_id narrowing).
+        recent_targets_provider: Callable ``() -> List[Tuple[doc_id, image_id]]``
+            that returns the candidate targets from
+            ``image_context.recent_images`` if present.
+
+    Returns:
+        Tuple of (selected chunks, routing metadata dict). The
+        routing metadata is intended to be merged into the response
+        debug payload so observability can see which resolution
+        branch fired.
+    """
+    routing_meta: Dict[str, Any] = {
+        "routing_mode": ROUTING_MODE_NORMAL_RAG,
+        "image_context_used": bool(image_context),
+        "scoped_count": 0,
+        "kept_count": 0,
+        "dropped_count": 0,
+        "resolved_document_id": None,
+        "resolved_image_id": None,
+        "resolved_filename": resolved_filename,
+    }
+
+    if analysis is None or analysis.query_type != "image_content":
+        # Only image_content questions get routed through this path.
+        # Anything else returns empty so the caller can fall back to
+        # the regular hybrid retrieval.
+        routing_meta["routing_mode"] = "skipped_not_image_content"
+        return [], routing_meta
+
+    # Lazy defaults so tests can patch the provider. The production
+    # implementation calls Qdrant directly by document_id / image_id
+    # payload filters (no semantic similarity needed).
+    if direct_chunks_provider is None:
+        from app.services.vector.qdrant_service import (
+            fetch_chunks_by_document_id as _default_provider,
+        )
+
+        def direct_chunks_provider(doc_id, image_id):
+            return _default_provider(document_id=doc_id, image_id=image_id)
+
+    if recent_targets_provider is None:
+        from app.rag.image_resolver import recent_targets_from_image_context as _r
+        recent_targets_provider = lambda: _r(image_context)
+
+    # --- Step 1: explicit image_context ---
+    explicit_doc_id: Optional[int] = None
+    explicit_image_id: Optional[int] = None
+    if image_context and isinstance(image_context, dict):
+        try:
+            v = image_context.get("document_id")
+            if v is not None:
+                explicit_doc_id = int(v)
+        except Exception:
+            explicit_doc_id = None
+        try:
+            v = image_context.get("image_id")
+            if v is not None:
+                explicit_image_id = int(v)
+        except Exception:
+            explicit_image_id = None
+
+    if explicit_doc_id is not None or explicit_image_id is not None:
+        chunks = direct_chunks_provider(explicit_doc_id, explicit_image_id) or []
+        if chunks:
+            routing_meta.update({
+                "routing_mode": ROUTING_MODE_IMAGE_CONTENT_EXPLICIT,
+                "scoped_count": len(chunks),
+                "kept_count": len(chunks),
+                "resolved_document_id": explicit_doc_id,
+                "resolved_image_id": explicit_image_id,
+            })
+            return chunks, routing_meta
+        # Explicit target but no chunks: fall through to recent list.
+
+    # --- Step 2: backend resolver-supplied recent image ---
+    if resolved_document_id is not None or resolved_image_id is not None:
+        chunks = direct_chunks_provider(resolved_document_id, resolved_image_id) or []
+        if chunks:
+            routing_meta.update({
+                "routing_mode": ROUTING_MODE_IMAGE_CONTENT_RECENT,
+                "scoped_count": len(chunks),
+                "kept_count": len(chunks),
+                "resolved_document_id": resolved_document_id,
+                "resolved_image_id": resolved_image_id,
+            })
+            return chunks, routing_meta
+
+    # --- Step 3: image_context.recent_images candidates ---
+    for doc_id, image_id in (recent_targets_provider() or []):
+        chunks = direct_chunks_provider(doc_id, image_id) or []
+        if chunks:
+            routing_meta.update({
+                "routing_mode": ROUTING_MODE_IMAGE_CONTENT_RECENT,
+                "scoped_count": len(chunks),
+                "kept_count": len(chunks),
+                "resolved_document_id": doc_id,
+                "resolved_image_id": image_id,
+            })
+            return chunks, routing_meta
+
+    # --- Step 4: nothing resolved ---
+    routing_meta["routing_mode"] = "image_content_unresolved"
+    return [], routing_meta
+
+
 def select_image_aware_chunks(
     chunks: List[dict],
     analysis: Optional[QueryAnalysis],

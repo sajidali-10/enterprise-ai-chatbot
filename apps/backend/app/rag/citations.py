@@ -159,7 +159,16 @@ def score_excerpt_relevance(
     """
     if not excerpt:
         return 0.0
-    
+
+    # Phase 34A.1.2 — by-id chunks (resolved image_content sources)
+    # carry ``score=None`` because they were fetched by payload filter
+    # rather than semantic similarity. Treat None as a high
+    # relevance baseline so the citation-grouping logic does not
+    # crash and so the resolved image source ranks above any
+    # incidental low-score KB noise.
+    if relevance_score is None:
+        relevance_score = 1.0
+
     # Base score from retrieval
     score = relevance_score * 0.4
     

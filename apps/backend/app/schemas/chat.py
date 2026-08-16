@@ -25,6 +25,13 @@ class ChatRequest(BaseModel):
     # Phase 34A.1 — image-aware query routing. Optional dict the
     # frontend sends when the user has an image in scope. Recognised
     # keys: image_id, document_id, document_version_id, recent_images.
+    #
+    # Phase 34A.1.2 — even when this field is omitted (the current
+    # Documents -> Upload -> Chat workflow does not attach it yet) the
+    # backend now resolves the most recently uploaded accessible image
+    # via the image_resolver and uses its OCR chunks directly. Supply
+    # image_context here only when the frontend knows the specific
+    # image/document the user is referring to.
     image_context: Optional[dict] = Field(default=None, description="Optional image context describing the uploaded image in scope")
 
 

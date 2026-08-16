@@ -179,3 +179,125 @@ def get_point(point_id: int) -> Optional[dict]:
         return getattr(p, "payload", None) or {}
     except Exception:
         return None
+
+
+def fetch_chunks_by_document_id(
+    document_id: int,
+    image_id: Optional[int] = None,
+    limit: int = 32,
+) -> List[dict]:
+    """Phase 34A.1.2 — fetch chunks for a specific document_id (and optionally
+    a specific image_id) directly from Qdrant using payload filters.
+
+    This bypasses semantic similarity and is the safe retrieval path for
+    explicit / recently-resolved image-content queries, where the source
+    relationship itself is the relevance signal.
+
+    Returns:
+        A list of chunk dicts in the same shape as `search()` results,
+        each containing at minimum: chunk_id, document_id, chunk_index,
+        content, source_file_name, title, score (None — by-id lookup
+        has no semantic score), and any payload fields the indexer
+        stored (source_type, image_id, ocr_provider, etc.).
+    """
+    if not document_id:
+        return []
+    try:
+        client = get_qdrant_client()
+        must = [FieldCondition(key="document_id", match=MatchValue(value=int(document_id)))]
+        if image_id is not None:
+            must.append(FieldCondition(key="image_id", match=MatchValue(value=int(image_id))))
+        results = client.scroll(
+            collection_name=settings.QDRANT_COLLECTION,
+            scroll_filter=Filter(must=must),
+            limit=max(1, min(int(limit or 32), 256)),
+            with_payload=True,
+            with_vectors=False,
+        )
+        points = results[0] if results else []
+    except Exception:
+        return []
+
+    chunks: List[dict] = []
+    for point in points or []:
+        payload = getattr(point, "payload", None) or {}
+        chunks.append({
+            "chunk_id": payload.get("chunk_id"),
+            "document_id": payload.get("document_id"),
+            "document_version_id": payload.get("document_version_id"),
+            "chunk_index": payload.get("chunk_index"),
+            "content": payload.get("content", ""),
+            "source_file_name": payload.get("source_file_name", ""),
+            "title": payload.get("title"),
+            "section_heading": payload.get("section_heading"),
+            "score": None,  # by-id lookup has no semantic score
+            "source_type": payload.get("source_type"),
+            "content_type": payload.get("content_type"),
+            "image_id": payload.get("image_id"),
+            "ocr_provider": payload.get("ocr_provider"),
+            "ocr_confidence": payload.get("ocr_confidence"),
+            "page_number": payload.get("page_number"),
+            "mime_type": payload.get("mime_type"),
+            "is_ocr": payload.get("is_ocr"),
+            "_retrieval_channel": "qdrant_direct_by_id",
+        })
+    # Stable order: by chunk_index then chunk_id (deterministic citation order).
+    chunks.sort(key=lambda c: (
+        int(c.get("chunk_index") or 0) if c.get("chunk_index") is not None else 0,
+        str(c.get("chunk_id") or ""),
+    ))
+    return chunks
+
+
+def fetch_chunks_by_image_id(image_id: int, limit: int = 32) -> List[dict]:
+    """Phase 34A.1.2 — fetch chunks for a specific DocumentImage.id.
+
+    Thin wrapper over `fetch_chunks_by_document_id` for callers that
+    only know the image_id (e.g. when DocumentImage is the first
+    anchor the resolver has access to).
+    """
+    if not image_id:
+        return []
+    try:
+        client = get_qdrant_client()
+        results = client.scroll(
+            collection_name=settings.QDRANT_COLLECTION,
+            scroll_filter=Filter(must=[
+                FieldCondition(key="image_id", match=MatchValue(value=int(image_id)))
+            ]),
+            limit=max(1, min(int(limit or 32), 256)),
+            with_payload=True,
+            with_vectors=False,
+        )
+        points = results[0] if results else []
+    except Exception:
+        return []
+
+    chunks: List[dict] = []
+    for point in points or []:
+        payload = getattr(point, "payload", None) or {}
+        chunks.append({
+            "chunk_id": payload.get("chunk_id"),
+            "document_id": payload.get("document_id"),
+            "document_version_id": payload.get("document_version_id"),
+            "chunk_index": payload.get("chunk_index"),
+            "content": payload.get("content", ""),
+            "source_file_name": payload.get("source_file_name", ""),
+            "title": payload.get("title"),
+            "section_heading": payload.get("section_heading"),
+            "score": None,
+            "source_type": payload.get("source_type"),
+            "content_type": payload.get("content_type"),
+            "image_id": payload.get("image_id"),
+            "ocr_provider": payload.get("ocr_provider"),
+            "ocr_confidence": payload.get("ocr_confidence"),
+            "page_number": payload.get("page_number"),
+            "mime_type": payload.get("mime_type"),
+            "is_ocr": payload.get("is_ocr"),
+            "_retrieval_channel": "qdrant_direct_by_image_id",
+        })
+    chunks.sort(key=lambda c: (
+        int(c.get("chunk_index") or 0) if c.get("chunk_index") is not None else 0,
+        str(c.get("chunk_id") or ""),
+    ))
+    return chunks
