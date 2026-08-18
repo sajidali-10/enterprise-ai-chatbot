@@ -10,6 +10,10 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import Header from '@/components/Header'
 import ProtectedRoute from '@/components/ProtectedRoute'
+// Phase 34A.2 — Direct image attachment for chat
+import { useChatAttachment, type AttachmentState as ChatAttachmentState } from '@/hooks/useChatAttachment'
+import { ChatAttachmentButton } from '@/components/chat/ChatAttachmentButton'
+import { ChatAttachmentPreview } from '@/components/chat/ChatAttachmentPreview'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,6 +173,9 @@ function ChatPageInner() {
   const { theme } = useTheme()
   const sidebarRef = useRef<HTMLDivElement>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Phase 34A.2 — Chat image attachment state
+  const chatAttachment = useChatAttachment()
 
   // Determine effective role and permissions
   const rawRole = auth?.role ||
@@ -367,6 +374,29 @@ function ChatPageInner() {
     const trimmed = messageOverride ?? input.trim()
     if (!trimmed || loading) return
 
+    // Phase 34A.2 — if an image is attached, upload it first (blocking)
+    // so the backend has the OCR content before the chat question.
+    // Then resolve the identifiers and attach as image_context.
+    let imageCtx: Record<string, unknown> | undefined = undefined
+    if (chatAttachment.attachment.file && chatAttachment.attachment.status !== 'ready') {
+      // Upload is not yet complete — wait for it.
+      // The caller (form submit) should have already triggered uploadImage
+      // during the attachment flow. If the status is still 'selecting' or
+      // 'uploading', we block submission here.
+      if (chatAttachment.isProcessing) {
+        return
+      }
+    }
+
+    // If the attachment is ready (already uploaded from a previous
+    // user interaction), include the identifiers.
+    if (chatAttachment.attachment.status === 'ready') {
+      imageCtx = {
+        document_id: chatAttachment.attachment.documentId,
+        image_id: chatAttachment.attachment.imageId,
+      }
+    }
+
     const userMessage: Message = { role: 'user', text: trimmed }
     setMessages(prev => [...prev, userMessage])
     setInput('')
@@ -374,10 +404,18 @@ function ChatPageInner() {
     setError(null)
     scrollToBottom()
 
+    // Clear attachment after sending (single-use)
+    chatAttachment.reset()
+
     try {
       const body: Record<string, unknown> = { message: trimmed, mode }
       if (activeSessionId !== null) {
         body.session_id = activeSessionId
+      }
+      // Phase 34A.2: when an image is attached, send explicit image_context
+      // so the backend uses the exact attached image, not the recent-image fallback.
+      if (imageCtx) {
+        body.image_context = imageCtx
       }
 
       const res = await authFetch('/api/chat', {
@@ -726,19 +764,40 @@ function ChatPageInner() {
 
             {/* Input row - sticky at bottom */}
             <div className="border-t border-hiplink-border dark:border-dark-border p-4 bg-white dark:bg-dark-card">
+              {/* Phase 34A.2 — Attachment preview strip */}
+              {chatAttachment.attachment.file &&
+                chatAttachment.attachment.status !== 'idle' &&
+                chatAttachment.attachment.status !== 'removed' && (
+                <div className="max-w-4xl mx-auto mb-4">
+                  <ChatAttachmentPreview
+                    attachment={chatAttachment.attachment}
+                    onRemove={chatAttachment.removeAttachment}
+                    onRetry={() => chatAttachment.uploadImage(chatAttachment.attachment.file!)}
+                  />
+                </div>
+              )}
               <form onSubmit={handleSubmit} className="flex gap-3 max-w-4xl mx-auto">
+                {/* Phase 34A.2 — Attachment button */}
+                <ChatAttachmentButton
+                  onFileSelect={(file) => {
+                    // Validate client-side first, then upload immediately
+                    chatAttachment.selectFile(file);
+                    chatAttachment.uploadImage(file);
+                  }}
+                  disabled={loading || chatAttachment.isProcessing}
+                />
                 <input
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   disabled={loading}
-                  placeholder="Type your message..."
+                  placeholder="Ask HipLink AI..."
                   className="flex-1 border border-hiplink-border dark:border-dark-border rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-hiplink-blue dark:focus:ring-sky-400 focus:border-transparent disabled:bg-gray-100 dark:bg-dark-elevated disabled:cursor-not-allowed text-hiplink-dark dark:text-dark-text placeholder:text-gray-400 dark:placeholder:text-dark-text-dim bg-white dark:bg-dark-card"
                 />
                 <button
                   type="submit"
-                  disabled={loading || !input.trim()}
+                  disabled={loading || (!input.trim() && !chatAttachment.attachment.file)}
                   className="btn-primary px-6 py-3 flex items-center gap-2"
                 >
                   <span>Send</span>

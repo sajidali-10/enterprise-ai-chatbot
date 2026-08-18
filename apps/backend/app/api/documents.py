@@ -579,6 +579,8 @@ def upload_document(
         "needs_human_review": bool(result.needs_human_review),
         "ocr_disabled": bool(result.ocr_disabled),
         "warnings": list(result.warnings)[:5],
+        # Phase 34A.2 — first image ID for frontend image_context
+        "image_id": image_rows[0].id if image_rows else None,
     }
 
 
@@ -616,6 +618,79 @@ def _store_extracted_image(
         content_type=image.mime_type,
     )
     return storage_key
+
+@router.get("/{document_id}")
+def get_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("can_view_documents")),
+):
+    """
+    Get a single document with its image metadata.
+
+    Phase 34A.2: returns the document fields plus associated
+    DocumentImage rows so the frontend can build explicit
+    ``image_context`` after an upload.
+
+    **Authentication Required:** Yes
+    **Permission Required:** can_view_documents
+
+    Visibility rules (Phase 13):
+      - Only returns documents the caller is authorized to see.
+      - Hides documents with 404 when the caller cannot view them.
+    """
+    from app.security.permissions import get_accessible_document_ids, can_access_document
+
+    if not can_access_document(auth, document_id, db=db):
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Fetch all DocumentImage rows for this document
+    from sqlalchemy import select
+    images = list(
+        db.execute(
+            select(DocumentImage)
+            .where(DocumentImage.document_id == document_id)
+            .order_by(DocumentImage.sequence_number.asc())
+        ).scalars().all()
+    )
+
+    owner_username = None
+    if doc.owner:
+        owner_username = getattr(doc.owner, "username", None)
+
+    return {
+        "id": doc.id,
+        "original_name": doc.original_name,
+        "mime_type": doc.mime_type,
+        "size_bytes": doc.size_bytes,
+        "status": doc.status,
+        "visibility": doc.visibility,
+        "owner_user_id": doc.owner_user_id,
+        "owner_username": owner_username,
+        "images": [
+            {
+                "id": img.id,
+                "mime_type": img.mime_type,
+                "source_type": img.source_type,
+                "page_number": img.page_number,
+                "sequence_number": img.sequence_number,
+                "original_filename": img.original_filename,
+                "ocr_provider": img.ocr_provider,
+                "ocr_status": img.ocr_status,
+                "ocr_confidence": img.ocr_confidence,
+                "width": img.width,
+                "height": img.height,
+                "byte_size": img.byte_size,
+            }
+            for img in images
+        ],
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+    }
+
 
 @router.get("")
 def list_documents(
