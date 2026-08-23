@@ -75,5 +75,11 @@ class ChatResponse(BaseModel):
     grouped_sources: Optional[List[GroupedSource]] = Field(default=None, description="Grouped sources by document for user-friendly display")
     debug_info: Optional[dict[str, Any]] = Field(default=None, description="Debug info about retrieval when debug=true or mode=debug")
     observation_id: Optional[int] = Field(default=None, description="ID for this observation - used for feedback submission")
+    # Phase 34B — Automatic Vision Intelligence. Surface the
+    # image-routing decision so the frontend (and observability) can
+    # see whether Vision was invoked, whether the result came from
+    # cache, and which provider handled the request. Never includes
+    # raw image bytes, API keys, or MinIO credentials.
+    vision: Optional[dict[str, Any]] = Field(default=None, description="Phase 34B vision intelligence metadata: processing_mode, vision_called, vision_cache_hit, vision_provider, vision_model, vision_latency_ms, vision_error")
     # Phase 20C: Now returns typed suggestion objects, not string[]
     suggested_followups: Optional[List[Suggestion]] = Field(default=None, description="Suggested follow-up prompts with label, prompt, and type")

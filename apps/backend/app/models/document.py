@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, func
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, func, JSON
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -53,10 +53,19 @@ class DocumentImage(Base):
     One row per image — whether the image was uploaded directly,
     rendered from a scanned PDF page, or extracted from a DOCX.
     Captures OCR provider, status, confidence, storage key, dimensions,
-    and provenance. Phase 34B will add nullable Vision columns here
-    (vision_provider, vision_description, vision_tags, image_type,
-    detected_entities, objects, vision_confidence) without changing
-    the Phase 34A shape.
+    and provenance.
+
+    Phase 34B (Automatic Vision Intelligence) — adds nullable Vision
+    columns populated by the Vision orchestrator's cache/persistence
+    layer. Vision results are STRICTLY ADDITIONAL to OCR; OCR remains
+    the default evidence source. The columns are nullable so all
+    Phase 34A / 34A.1 / 34A.1.1 / 34A.1.2 / 34A.2 / 34A.2.1 rows
+    remain valid after migration 013.
+
+    See:
+      * alembic/versions/013_phase34b_vision_columns.py (schema)
+      * app/vision/persistence.py (read/write logic)
+      * app/vision/orchestrator.py (cache lookup + write-through)
     """
 
     __tablename__ = "document_images"
@@ -85,6 +94,39 @@ class DocumentImage(Base):
     byte_size = Column(Integer, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # ------------------------------------------------------------------
+    # Phase 34B — Vision Intelligence columns (migration 013)
+    # All nullable. Existing Phase 34A rows keep NULL — non-destructive.
+    # ------------------------------------------------------------------
+    # pending | success | failed | disabled | skipped
+    vision_status = Column(String(length=32), nullable=True)
+    # e.g. "mock", "openai-compatible"
+    vision_provider = Column(String(length=40), nullable=True)
+    # Provider-specific model identifier (e.g. "mock-v1", "gpt-4o-mini")
+    vision_model = Column(String(length=120), nullable=True)
+    # Structured description used in the Evidence Builder prompt section.
+    vision_description = Column(Text, nullable=True)
+    # Cheap image-type inference from the Vision provider.
+    vision_image_type = Column(String(length=40), nullable=True)
+    # JSONB arrays of structured findings / entities / states / tags.
+    # We deliberately use the wide-open JSON column type so the
+    # provider can return arbitrary structured data without breaking
+    # the schema.
+    vision_findings = Column(JSON, nullable=True)
+    vision_entities = Column(JSON, nullable=True)
+    visual_states = Column("vision_states", JSON, nullable=True)
+    vision_tags = Column(JSON, nullable=True)
+    # 0..100 — coerced by the Evidence Builder to the valid range.
+    vision_confidence = Column(Integer, nullable=True)
+    # Timestamp of the most recent successful Vision analysis.
+    vision_processed_at = Column(DateTime, nullable=True)
+    # Safe error string from the most recent failed attempt.
+    vision_error = Column(Text, nullable=True)
+    # sha256 prefix used as the cache key for reuse decisions.
+    # Bumping VISION_CACHE_SCHEMA_VERSION invalidates ALL persisted
+    # rows at once.
+    vision_cache_key = Column(String(length=200), nullable=True)
 
     document = relationship("Document", back_populates="images")
     document_version = relationship("DocumentVersion", back_populates="images")

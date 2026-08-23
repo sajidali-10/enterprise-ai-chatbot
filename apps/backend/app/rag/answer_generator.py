@@ -38,6 +38,23 @@ from app.rag.image_resolver import (
     extract_explicit_target,
     resolve_recent_image,
 )
+
+# Phase 34B — Automatic Vision Intelligence. OCR remains the default
+# and cheapest path; Vision is ADDITIONAL visual understanding that
+# runs only when the Image Intelligence Router justifies it. The
+# orchestrator degrades gracefully to OCR when Vision is disabled,
+# the provider is unavailable, or the cache is hit (in which case
+# no provider call is made).
+try:
+    from app.vision.integration import maybe_run_vision as _maybe_run_vision
+except Exception:  # pragma: no cover - defensive
+    def _maybe_run_vision(*args, **kwargs):
+        return (args[1] if len(args) > 1 else kwargs.get("chunks", [])), None, {
+            "image_processing_mode": "skipped",
+            "vision_required": False,
+            "vision_called": False,
+            "vision_cache_hit": False,
+        }
 from app.services.llm import get_llm_provider
 from app.schemas.chat import ChatRequest, ChatResponse, MessageRole
 from app.core.config import settings
@@ -498,6 +515,12 @@ def _run_rag_with_chunks(
     debug: bool,
     relevance_threshold_bypass: bool,
     image_routing_meta: dict,
+    image_context: Optional[dict] = None,
+    db: Optional["object"] = None,
+    ocr_text: str = "",
+    ocr_confidence: Optional[int] = None,
+    ocr_status: str = "success",
+    ocr_error: Optional[str] = None,
 ) -> tuple[str, list[dict], dict]:
     """Phase 34A.1.2 — shared LLM/grounding pipeline used by both the
     pre-resolved image-content path and the standard hybrid path.
@@ -506,7 +529,61 @@ def _run_rag_with_chunks(
     we skip the ``RAG_MIN_RELEVANCE_FLOOR`` because the source
     relationship IS the relevance signal. All other grounding checks
     (citation enforcement, retries, attachment) still run.
+
+    Phase 34B: when ``image_context`` is supplied and Vision is
+    enabled, the Vision orchestrator runs and may prepend a
+    synthetic evidence chunk to ``chunks``. The orchestrator never
+    raises — OCR remains the default evidence source.
     """
+
+    # Phase 34B — run the Vision orchestrator BEFORE grounding so any
+    # vision chunk participates in the same pre-LLM and post-LLM
+    # grounding decisions as the OCR chunks. OCR is preserved
+    # unconditionally; Vision is purely additive.
+    if image_context and isinstance(image_context, dict):
+        try:
+            chunks, _vision_outcome, vision_meta = _maybe_run_vision(
+                db,
+                question=query,
+                chunks=chunks,
+                image_context=image_context,
+                ocr_text=ocr_text,
+                ocr_confidence=ocr_confidence,
+                ocr_status=ocr_status,
+                ocr_error=ocr_error,
+            )
+            if vision_meta:
+                retrieval_metadata["vision"] = dict(vision_meta)
+                # Convenience top-level aliases so downstream code can
+                # assert on them without digging into the nested dict.
+                retrieval_metadata["image_processing_mode"] = (
+                    vision_meta.get("image_processing_mode") or "skipped"
+                )
+                retrieval_metadata["vision_called"] = bool(
+                    vision_meta.get("vision_called")
+                )
+                retrieval_metadata["vision_cache_hit"] = bool(
+                    vision_meta.get("vision_cache_hit")
+                )
+                retrieval_metadata["vision_provider"] = vision_meta.get(
+                    "vision_provider", ""
+                )
+                retrieval_metadata["vision_model"] = vision_meta.get(
+                    "vision_model", ""
+                )
+                retrieval_metadata["vision_latency_ms"] = int(
+                    vision_meta.get("vision_latency_ms", 0) or 0
+                )
+        except Exception as exc:
+            retrieval_metadata["vision"] = {
+                "image_processing_mode": "skipped",
+                "vision_called": False,
+                "vision_cache_hit": False,
+                "vision_error": f"orchestrator_failed: {str(exc)[:200]}",
+            }
+            retrieval_metadata["image_processing_mode"] = "skipped"
+            retrieval_metadata["vision_called"] = False
+            retrieval_metadata["vision_cache_hit"] = False
 
     # Phase 34A.1.2 — for image_content paths, by-id chunks carry
     # ``score=None`` (Qdrant payload filter lookup, not similarity).
@@ -901,6 +978,10 @@ def generate_answer_with_rag_audit(
             model_name=model_name,
             request_ip=request_ip,
             request_user_agent=request_user_agent,
+            image_context=image_context,
+            db=db,
+            ocr_text=_extract_ocr_text_from_chunks(pre_resolved_chunks),
+            ocr_status="success",
         )
         return answer, citations, retrieval_metadata
 
@@ -977,13 +1058,70 @@ def _run_rag_with_chunks_audit(
     model_name: str,
     request_ip: Optional[str],
     request_user_agent: Optional[str],
+    image_context: Optional[dict] = None,
+    db: Optional["object"] = None,
+    ocr_text: str = "",
+    ocr_confidence: Optional[int] = None,
+    ocr_status: str = "success",
+    ocr_error: Optional[str] = None,
 ) -> tuple[str, list[dict], dict]:
     """Phase 34A.1.2 — audit-aware counterpart of ``_run_rag_with_chunks``.
 
     Same bypass semantics for the relevance threshold on
     ``image_content`` paths. Adds the existing audit logging + permission
     filter pass-through that the original function relied on.
+
+    Phase 34B — Vision orchestrator hook (identical semantics to the
+    non-audit helper). The orchestrator never raises; OCR is always
+    preserved as the baseline.
     """
+    # Phase 34B — run the Vision orchestrator BEFORE grounding so any
+    # vision chunk participates in the same pre-LLM and post-LLM
+    # grounding decisions as the OCR chunks. OCR is preserved
+    # unconditionally; Vision is purely additive.
+    if image_context and isinstance(image_context, dict):
+        try:
+            chunks, _vision_outcome, vision_meta = _maybe_run_vision(
+                db,
+                question=query,
+                chunks=chunks,
+                image_context=image_context,
+                ocr_text=ocr_text,
+                ocr_confidence=ocr_confidence,
+                ocr_status=ocr_status,
+                ocr_error=ocr_error,
+            )
+            if vision_meta:
+                retrieval_metadata["vision"] = dict(vision_meta)
+                retrieval_metadata["image_processing_mode"] = (
+                    vision_meta.get("image_processing_mode") or "skipped"
+                )
+                retrieval_metadata["vision_called"] = bool(
+                    vision_meta.get("vision_called")
+                )
+                retrieval_metadata["vision_cache_hit"] = bool(
+                    vision_meta.get("vision_cache_hit")
+                )
+                retrieval_metadata["vision_provider"] = vision_meta.get(
+                    "vision_provider", ""
+                )
+                retrieval_metadata["vision_model"] = vision_meta.get(
+                    "vision_model", ""
+                )
+                retrieval_metadata["vision_latency_ms"] = int(
+                    vision_meta.get("vision_latency_ms", 0) or 0
+                )
+        except Exception as exc:
+            retrieval_metadata["vision"] = {
+                "image_processing_mode": "skipped",
+                "vision_called": False,
+                "vision_cache_hit": False,
+                "vision_error": f"orchestrator_failed: {str(exc)[:200]}",
+            }
+            retrieval_metadata["image_processing_mode"] = "skipped"
+            retrieval_metadata["vision_called"] = False
+            retrieval_metadata["vision_cache_hit"] = False
+
     # Phase 34A.1.2 — bypass the relevance floor for image_content
     # sources (by-id chunks have score=None). Source relationship is
     # the relevance signal.

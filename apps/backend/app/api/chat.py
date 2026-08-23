@@ -625,6 +625,70 @@ def _run_chat_request(
         if (is_debug_mode or debug) and metadata:
             response.debug_info = metadata
 
+        # Phase 34B — surface image-routing metadata so the frontend
+        # and observability layer can see whether Vision was invoked,
+        # whether the result came from cache, and which provider/model
+        # answered. This is also returned in non-debug mode because
+        # the field is small and only contains safe structured
+        # metadata (no raw images, no secrets, no API keys).
+        try:
+            if metadata and isinstance(metadata, dict):
+                vision_meta = metadata.get("vision") or {}
+                if vision_meta:
+                    response.vision = {
+                        "image_processing_mode": metadata.get(
+                            "image_processing_mode"
+                        )
+                        or vision_meta.get("image_processing_mode")
+                        or "skipped",
+                        "vision_required": bool(
+                            vision_meta.get("vision_required")
+                        ),
+                        "vision_called": bool(
+                            metadata.get("vision_called")
+                            or vision_meta.get("vision_called")
+                        ),
+                        "vision_cache_hit": bool(
+                            metadata.get("vision_cache_hit")
+                            or vision_meta.get("vision_cache_hit")
+                        ),
+                        "vision_provider": (
+                            metadata.get("vision_provider")
+                            or vision_meta.get("vision_provider")
+                            or ""
+                        ),
+                        "vision_model": (
+                            metadata.get("vision_model")
+                            or vision_meta.get("vision_model")
+                            or ""
+                        ),
+                        "vision_latency_ms": int(
+                            metadata.get("vision_latency_ms")
+                            or vision_meta.get("vision_latency_ms")
+                            or 0
+                        ),
+                        "vision_error": vision_meta.get("vision_error"),
+                        # Phase 34B — surface the router's decision
+                        # signals so observability + the frontend
+                        # can see WHY Vision was (or wasn't) called.
+                        # The orchestrator already publishes the full
+                        # list under ``routing_reasons``; we also
+                        # expose the legacy singular alias so existing
+                        # consumers keep working.
+                        "vision_trigger_reasons": list(
+                            vision_meta.get("routing_reasons") or []
+                        ),
+                        "vision_trigger_reason": (
+                            (vision_meta.get("routing_reasons") or [None])[0]
+                            if vision_meta.get("routing_reasons")
+                            else None
+                        ),
+                    }
+        except Exception:
+            # Vision metadata is purely informational — never break
+            # the chat response if metadata shaping fails.
+            pass
+
         # Phase 20B: Add suggested follow-ups based on response characteristics
         # Phase 20C: Contextual suggestions now shown when there's conversation context
         is_fallback = is_fallback_response(answer, citations)

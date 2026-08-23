@@ -93,4 +93,26 @@ def get_rag_config() -> dict:
             "sample_rate": settings.LANGSMITH_SAMPLE_RATE,
             "has_tracing_key": bool(os.environ.get("LANGSMITH_API_KEY", "").strip()),
         },
+        # Phase 34B — Automatic Vision Intelligence status. Safe
+        # summary for admin consumption: NO API keys, NO base URL
+        # secrets, NO image bytes are exposed.
+        "vision_status": {
+            "vision_enabled": settings.VISION_ENABLED,
+            "vision_provider": settings.VISION_PROVIDER,
+            "vision_model": settings.VISION_MODEL,
+            "vision_router_enabled": settings.VISION_ROUTER_ENABLED,
+            "vision_ocr_confidence_threshold": settings.VISION_OCR_CONFIDENCE_THRESHOLD,
+            "vision_min_ocr_text_length": settings.VISION_MIN_OCR_TEXT_LENGTH,
+            "vision_timeout_seconds": settings.VISION_TIMEOUT_SECONDS,
+            "vision_max_retries": settings.VISION_MAX_RETRIES,
+            "vision_cache_schema_version": settings.VISION_CACHE_SCHEMA_VERSION,
+            "has_vision_api_key": bool(os.environ.get("VISION_API_KEY", "").strip()),
+            "has_vision_base_url": bool((settings.VISION_BASE_URL or "").strip()),
+            "warning": (
+                "VISION_ENABLED is true but VISION_PROVIDER is set to an unknown value."
+                if settings.VISION_ENABLED
+                and settings.VISION_PROVIDER not in ("mock", "openai-compatible")
+                else None
+            ),
+        },
     }

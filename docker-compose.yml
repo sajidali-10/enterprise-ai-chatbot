@@ -175,6 +175,19 @@ services:
       - PYTHONUNBUFFERED=1
       - HF_HOME=/tmp/hf_home
       - TRANSFORMERS_CACHE=/tmp/hf_home/transformers
+      # Phase 34B — Automatic Vision Intelligence. Master kill
+      # switch + safe defaults. Real openai-compatible provider is
+      # configured via env_file (.env) at deploy time.
+      - VISION_ENABLED=${VISION_ENABLED:-true}
+      - VISION_PROVIDER=${VISION_PROVIDER:-mock}
+      - VISION_MODEL=${VISION_MODEL:-mock-v1}
+      - VISION_OCR_CONFIDENCE_THRESHOLD=${VISION_OCR_CONFIDENCE_THRESHOLD:-55}
+      - VISION_MIN_OCR_TEXT_LENGTH=${VISION_MIN_OCR_TEXT_LENGTH:-25}
+      - VISION_ROUTER_ENABLED=${VISION_ROUTER_ENABLED:-true}
+      - VISION_TIMEOUT_SECONDS=${VISION_TIMEOUT_SECONDS:-30}
+      - VISION_MAX_RETRIES=${VISION_MAX_RETRIES:-1}
+      - VISION_MAX_IMAGE_BYTES=${VISION_MAX_IMAGE_BYTES:-8388608}
+      - VISION_CACHE_SCHEMA_VERSION=${VISION_CACHE_SCHEMA_VERSION:-1}
     env_file:
       - .env
     depends_on:

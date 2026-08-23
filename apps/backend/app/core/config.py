@@ -261,6 +261,66 @@ class Settings(BaseSettings):
     LANGSMITH_MAX_CONTEXT_CHARS: int = int(os.getenv("LANGSMITH_MAX_CONTEXT_CHARS", "400"))
     LANGSMITH_SAMPLE_RATE: float = float(os.getenv("LANGSMITH_SAMPLE_RATE", "1.0"))
 
+    # -------------------------------------------------------------------
+    # Phase 34B — Automatic Vision Intelligence
+    # -------------------------------------------------------------------
+    # Vision settings are INDEPENDENT from the text LLM settings
+    # (LLM_PROVIDER / LLM_MODEL / OPENAI_*) so operators can configure
+    # a separate Vision-capable model (e.g. gpt-4o-mini-vision) without
+    # changing the chat model.
+    #
+    # Master switch. When false the Image Intelligence Router degrades
+    # to OCR-only for every image — the existing Phase 34A pipeline
+    # runs untouched and ZERO Vision API calls are made.
+    VISION_ENABLED: bool = os.getenv("VISION_ENABLED", "false").lower() in (
+        "true", "1", "yes", "on"
+    )
+    # Active Vision provider. Built-in: mock | openai-compatible.
+    # mock is the safe default — deterministic, no network, no key.
+    # openai-compatible speaks the OpenAI Chat Completions Vision
+    # protocol (works against OpenAI, OpenRouter, Azure-OpenAI, local
+    # vLLM gateways, etc.).
+    VISION_PROVIDER: str = os.getenv("VISION_PROVIDER", "mock")
+    # Provider-specific base URL (openai-compatible).
+    VISION_BASE_URL: str = os.getenv("VISION_BASE_URL", "")
+    # Model name for the Vision provider (independent from LLM_MODEL).
+    VISION_MODEL: str = os.getenv("VISION_MODEL", "")
+    # API key read directly from env at runtime, NEVER stored in
+    # Settings — same pattern as LANGSMITH_API_KEY.
+    # VISION_TIMEOUT_SECONDS — per-call timeout for the Vision provider.
+    VISION_TIMEOUT_SECONDS: float = float(os.getenv("VISION_TIMEOUT_SECONDS", "30"))
+    # VISION_MAX_RETRIES — number of times the provider layer may
+    # retry transient failures (rate limit, timeout). 0 = no retry.
+    VISION_MAX_RETRIES: int = int(os.getenv("VISION_MAX_RETRIES", "1"))
+    # Router threshold: OCR confidence (0..100) below which Vision is
+    # considered as a fallback to enrich low-confidence OCR.
+    VISION_OCR_CONFIDENCE_THRESHOLD: int = int(
+        os.getenv("VISION_OCR_CONFIDENCE_THRESHOLD", "55")
+    )
+    # Router threshold: OCR text length below which Vision is
+    # considered as a fallback (diagrams, screenshots with little
+    # textual content).
+    VISION_MIN_OCR_TEXT_LENGTH: int = int(
+        os.getenv("VISION_MIN_OCR_TEXT_LENGTH", "25")
+    )
+    # Router master switch. When false, every image is OCR-only
+    # regardless of intent / thresholds (useful for debugging the
+    # router itself in isolation).
+    VISION_ROUTER_ENABLED: bool = os.getenv(
+        "VISION_ROUTER_ENABLED", "true"
+    ).lower() in ("true", "1", "yes", "on")
+    # Maximum number of bytes the provider may receive in a single
+    # image call. Guards against oversized image uploads.
+    VISION_MAX_IMAGE_BYTES: int = int(
+        os.getenv("VISION_MAX_IMAGE_BYTES", str(8 * 1024 * 1024))
+    )
+    # Cache schema version — bump to invalidate ALL persisted Vision
+    # results across the deployment. Persisted rows with a different
+    # schema_version are treated as cache-misses and re-analysed.
+    VISION_CACHE_SCHEMA_VERSION: int = int(
+        os.getenv("VISION_CACHE_SCHEMA_VERSION", "1")
+    )
+
     def get_cors_origins(self) -> list[str]:
         """Return the list of allowed CORS origins based on configuration."""
         if self.AUTH_MODE == "dev":
