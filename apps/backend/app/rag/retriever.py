@@ -63,7 +63,11 @@ def retrieve_chunks(query: str, limit: int = 5, score_threshold: float = 0.5) ->
     return chunks
 
 
-def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list[dict], dict]:
+def retrieve_chunks_with_settings(
+    query: str,
+    debug: bool = False,
+    image_context: Optional[dict] = None,
+) -> tuple[list[dict], dict]:
     """
     Retrieve chunks using hybrid retrieval with configurable settings.
 
@@ -80,6 +84,12 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
     Args:
         query: User's search query.
         debug: If True, return debug metadata about retrieval process.
+        image_context: Optional Phase 34A image context dict
+            (``document_id`` / ``image_id``). Used by the Phase 34C
+            multimodal retrieval overlay to detect intent. Source
+            scoping still goes through the Phase 34A.1.2 router; the
+            overlay only decides whether to boost image-knowledge
+            candidates.
 
     Returns:
         Tuple of (chunks list, metadata dict).
@@ -150,6 +160,31 @@ def retrieve_chunks_with_settings(query: str, debug: bool = False) -> tuple[list
         metadata["filtered_count"] = filter_meta.get("filtered_count", 0)
         metadata["final_source_count"] = filter_meta.get("final_source_count", len(chunks))
 
+        # Phase 34C -- Persistent Multimodal Knowledge overlay.
+        # Pull additional image-knowledge candidates from Qdrant
+        # (source_type=image_knowledge), merge, apply the image-intent
+        # boost, demote for product-meaning queries, and cap at
+        # MULTIMODAL_MAX_IMAGE_SOURCES. Runs BEFORE RBAC so the
+        # existing permission filter (in retrieve_chunks_with_auth)
+        # removes image knowledge the user cannot access.
+        try:
+            from app.services.multimodal.retrieval import integrate_image_knowledge
+
+            chunks, mm_meta = integrate_image_knowledge(
+                rewritten_query,
+                chunks,
+                query_analysis,
+                image_context=image_context,
+            )
+            metadata["multimodal"] = mm_meta
+        except Exception as exc:
+            # Never let the multimodal overlay break Phase 34A / 34B
+            # retrieval; log and continue with the base chunks.
+            metadata["multimodal"] = {
+                "enabled": False,
+                "error": f"overlay_exception: {str(exc)[:160]}",
+            }
+
         # Surface Phase 34A.1 diagnostics.
         metadata["query_type"] = query_analysis.query_type
         metadata["query_analysis"] = query_analysis.to_dict()
@@ -219,6 +254,7 @@ def retrieve_chunks_with_auth(
     query: str,
     auth: AuthContext,
     debug: bool = False,
+    image_context: Optional[dict] = None,
 ) -> tuple[list[dict], dict]:
     """
     Retrieve chunks with permission filtering (Phase 6).
@@ -241,10 +277,10 @@ def retrieve_chunks_with_auth(
     """
     if not HAS_SECURITY:
         # Security module not available, fall back to unfiltered retrieval
-        return retrieve_chunks_with_settings(query, debug)
-    
+        return retrieve_chunks_with_settings(query, debug, image_context=image_context)
+
     # Get all chunks from hybrid retrieval
-    chunks, metadata = retrieve_chunks_with_settings(query, debug)
+    chunks, metadata = retrieve_chunks_with_settings(query, debug, image_context=image_context)
     
     if not chunks:
         metadata["permission_filtered"] = False

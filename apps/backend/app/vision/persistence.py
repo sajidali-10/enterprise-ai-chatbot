@@ -211,6 +211,26 @@ def persist_vision_result(
             error=f"persist_write_error: {str(exc)[:200]}",
         )
 
+    # Phase 34C -- Persistent Multimodal Knowledge. After a successful
+    # Vision write, refresh the image knowledge point so the OCR-only
+    # point is upgraded to OCR+Vision in place. The point id is
+    # deterministic so this is an in-place overwrite -- no duplicates.
+    # The hook is fault-tolerant: failures here MUST NOT break the
+    # Vision persistence contract. Indexing failures are logged but
+    # not returned to the caller.
+    try:
+        from app.services.multimodal.lifecycle import refresh_image_knowledge
+
+        refresh_image_knowledge(db, int(document_image_id))
+    except Exception as exc:  # pragma: no cover - defensive guard
+        try:
+            logger.warning(
+                "vision.persist: multimodal refresh failed for image_id=%s: %s",
+                document_image_id, exc,
+            )
+        except Exception:
+            pass
+
     return PersistenceResult(cache_hit=False, vision_result=vision_result)
 
 

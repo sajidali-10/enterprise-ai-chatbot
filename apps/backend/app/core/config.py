@@ -321,6 +321,45 @@ class Settings(BaseSettings):
         os.getenv("VISION_CACHE_SCHEMA_VERSION", "1")
     )
 
+    # -------------------------------------------------------------------
+    # Phase 34C -- Persistent Multimodal Knowledge
+    # -------------------------------------------------------------------
+    # Turns persisted OCR + Vision analysis into searchable image
+    # knowledge points in the existing Qdrant collection (new
+    # source_type=image_knowledge). When false the entire Phase 34C
+    # subsystem is inert: no indexing happens, no retrieval overlay
+    # applies. Phase 34A / 34B behaviour is unchanged.
+    MULTIMODAL_KNOWLEDGE_ENABLED: bool = os.getenv(
+        "MULTIMODAL_KNOWLEDGE_ENABLED", "true"
+    ).lower() in ("true", "1", "yes", "on")
+    # Schema version embedded in the knowledge text format and in the
+    # deterministic Qdrant point id. Bump this to invalidate ALL
+    # previously indexed image knowledge points -- the next reindex /
+    # backfill will write fresh points with the new id.
+    MULTIMODAL_KNOWLEDGE_SCHEMA_VERSION: int = int(
+        os.getenv("MULTIMODAL_KNOWLEDGE_SCHEMA_VERSION", "1")
+    )
+    # Multiplicative boost applied to image_knowledge candidates when
+    # the query carries image-intent signals (e.g. "which screenshot",
+    # "show me the dashboard"). 0.0 disables boosting entirely without
+    # hiding the candidates.
+    MULTIMODAL_IMAGE_INTENT_BOOST: float = float(
+        os.getenv("MULTIMODAL_IMAGE_INTENT_BOOST", "0.25")
+    )
+    # Hard cap on the number of image_knowledge sources that may
+    # appear in a final answer. Prevents image knowledge from
+    # crowding out authoritative KB documentation in mixed answers.
+    MULTIMODAL_MAX_IMAGE_SOURCES: int = int(
+        os.getenv("MULTIMODAL_MAX_IMAGE_SOURCES", "2")
+    )
+    # Maximum characters of knowledge_text fed to the embedding
+    # provider. Vision outputs + OCR are concatenated deterministically
+    # and truncated here so a hostile provider response cannot inflate
+    # the embedding budget.
+    MULTIMODAL_KNOWLEDGE_TEXT_MAX_CHARS: int = int(
+        os.getenv("MULTIMODAL_KNOWLEDGE_TEXT_MAX_CHARS", "1800")
+    )
+
     def get_cors_origins(self) -> list[str]:
         """Return the list of allowed CORS origins based on configuration."""
         if self.AUTH_MODE == "dev":

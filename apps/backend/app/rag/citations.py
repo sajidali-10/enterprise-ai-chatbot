@@ -322,13 +322,37 @@ def format_citations(chunks: list[dict]) -> List[dict]:
         citations = []
         for i, chunk in enumerate(chunks, 1):
             content = chunk.get("content", "")
-            citations.append({
+            citation = {
                 "index": i,
                 "source_file_name": chunk.get("source_file_name", "Unknown"),
                 "content_snippet": clean_excerpt(content),
                 "relevance_score": chunk.get("score"),
                 "chunk_id": chunk.get("id"),
-            })
+            }
+            # Phase 34C -- Persistent Multimodal Knowledge. Image
+            # knowledge citations carry extra fields so the citation
+            # layer can distinguish them from KB / OCR chunks and so
+            # the response renderer can show the original filename
+            # and image metadata. We do NOT change the [N] marker
+            # format; the distinction lives in the structured fields
+            # of each citation dict.
+            if (chunk.get("source_type") or chunk.get("content_type")) == "image_knowledge":
+                citation.update({
+                    "citation_kind": "image_knowledge",
+                    "image_id": chunk.get("image_id"),
+                    "image_type": chunk.get("image_type") or chunk.get("mime_type"),
+                    "vision_provider": chunk.get("vision_provider"),
+                    "vision_model": chunk.get("vision_model"),
+                    "has_vision": bool(chunk.get("has_vision")),
+                    "knowledge_schema_version": chunk.get("knowledge_schema_version"),
+                    # Prefer the (shorter, human-readable) vision
+                    # description as the snippet when present. Fall
+                    # back to a clipped knowledge_text excerpt so the
+                    # snippet stays bounded either way.
+                    "content_snippet": _format_image_knowledge_snippet(chunk),
+                    "document_id": chunk.get("document_id"),
+                })
+            citations.append(citation)
         if cite_span is not None:
             try:
                 cite_span.set_meta("citation_count", len(citations))
@@ -341,6 +365,23 @@ def format_citations(chunks: list[dict]) -> List[dict]:
             except Exception:
                 pass
         return citations
+
+
+def _format_image_knowledge_snippet(chunk: dict, max_length: int = 240) -> str:
+    """Pick the best human-readable excerpt for an image knowledge citation.
+
+    Prefers the persisted vision description when present (the
+    Phase 34B output). Falls back to the knowledge_text excerpt.
+    Never logs OCR or vision raw bodies elsewhere in the pipeline.
+    """
+    # The retriever embeds the knowledge text on ``content``; the
+    # vision description is not separately carried on the chunk dict
+    # at this point in the pipeline. We use the knowledge_text as the
+    # primary source and clip it for readability.
+    raw = chunk.get("content") or chunk.get("knowledge_text") or ""
+    if not raw:
+        return ""
+    return clean_excerpt(raw, max_length=max_length)
 
 
 def attach_citations_to_answer(

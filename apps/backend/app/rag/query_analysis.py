@@ -387,3 +387,76 @@ def analyze_query(query: str) -> QueryAnalysis:
 def references_uploaded_image(query: str) -> bool:
     """Convenience wrapper: True if the query references an uploaded image."""
     return _detect_image_intent(query or "")
+
+
+# ---------------------------------------------------------------------------
+# Phase 34C -- Persistent Multimodal Knowledge helpers
+# ---------------------------------------------------------------------------
+#
+# These helpers are kept on ``query_analysis`` because both the
+# retrieval overlay (`app.services.multimodal.retrieval`) and the
+# citation layer (`app.rag.citations`) need them. Putting them here
+# keeps the public intent-detection surface in one module.
+
+# Historical image-intent phrases. These signal that the user is
+# asking about a previously uploaded image rather than the image
+# attached to the current chat. They are intentionally NOT merged
+# into ``_IMAGE_INTENT_PATTERNS``: doing so would flip the query
+# classification into ``query_type=="image_content"`` (which scopes
+# the OCR routing) and hide KB answers. Phase 34C only uses them to
+# boost the image-knowledge retrieval overlay -- the existing
+# Phase 34A.1.2 routing continues to gate on the in-scope
+# image_context.
+_HISTORICAL_IMAGE_INTENT_PATTERNS = [
+    re.compile(r"\bwhich\s+(?:screenshot|image|diagram|picture|photo|attachment|figure)\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+(?:screenshot|image|diagram|picture)\s+(?:showed|shows|show|contained|contains|displayed)\b", re.IGNORECASE),
+    re.compile(r"\b(?:find|show|search|locate)\s+(?:the\s+|a\s+|an\s+|any\s+)?(?:screenshot|image|diagram|picture|photo)\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+we\s+have\s+(?:a|an|any)\s+(?:screenshot|image|diagram|picture)\b", re.IGNORECASE),
+    re.compile(r"\bprevious(?:ly)?\s+(?:uploaded\s+)?(?:screenshot|image|diagram|picture|photo)\b", re.IGNORECASE),
+    re.compile(r"\b(?:a|the)\s+dashboard\s+(?:showing|with|of|where)\b", re.IGNORECASE),
+    re.compile(r"\b(?:a|the)\s+diagram\s+(?:showing|with|of|where)\b", re.IGNORECASE),
+    re.compile(r"\b(?:image|screenshot|screen|photo)\s+where\b", re.IGNORECASE),
+    re.compile(r"\bany\s+(?:image|screenshot)\s+(?:showing|with|of)\b", re.IGNORECASE),
+]
+
+
+def has_historical_image_intent(query: str) -> bool:
+    """Return True if the query references previously uploaded images.
+
+    Pure helper -- no side effects. Used by the Phase 34C retrieval
+    overlay to decide whether to boost ``image_knowledge`` candidates.
+    Returns True when one of the historical phrases matches.
+    """
+    if not query:
+        return False
+    for pat in _HISTORICAL_IMAGE_INTENT_PATTERNS:
+        if pat.search(query):
+            return True
+    return False
+
+
+def is_product_meaning_query(analysis: "QueryAnalysis | None") -> bool:
+    """True when the query wants authoritative product knowledge.
+
+    Examples: "What does error 902 mean?", "How do I fix the failure?",
+    "Resolve error 902".
+
+    Phase 34C uses this to demote image-knowledge candidates relative
+    to KB documentation: image knowledge can still appear as supporting
+    evidence but the authoritative KB chunk must outrank it. The
+    retrieval layer applies the explicit demote plus the
+    ``MULTIMODAL_MAX_IMAGE_SOURCES`` cap when this returns True.
+
+    Image-intent and image-content queries are explicitly NOT product
+    meaning -- the user wants the image, not authoritative
+    documentation.
+    """
+    if analysis is None:
+        return False
+    if getattr(analysis, "references_uploaded_image", False):
+        return False
+    if getattr(analysis, "query_type", "") == "image_content":
+        return False
+    has_id = bool(getattr(analysis, "error_codes", None) or getattr(analysis, "technical_terms", None))
+    strong_troubleshooting = bool(getattr(analysis, "raw_signals", {}).get("strong_troubleshooting_matched"))
+    return has_id or strong_troubleshooting

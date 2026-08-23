@@ -944,6 +944,24 @@ def index_document(
         doc.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
+    finally:
+        # Phase 34C -- Persistent Multimodal Knowledge. Rebuild image
+        # knowledge points AFTER the new OCR chunks have been indexed
+        # so the knowledge text reflects the latest OCR. Best-effort:
+        # a failed reindex must NOT mask a successful chunk index.
+        try:
+            from app.services.multimodal.lifecycle import reindex_document_images
+
+            mm_summary = reindex_document_images(db, int(document_id))
+            logger.info(
+                "documents.reindex: multimodal reindex summary for doc %s: %s",
+                document_id, mm_summary,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "documents.reindex: multimodal reindex hook failed for doc %s: %s",
+                document_id, exc,
+            )
 
 
 @router.delete("/{document_id}")
@@ -1001,6 +1019,17 @@ def delete_document(
         deleted_vectors = delete_vectors_by_document_id(document_id)
     except Exception:
         deleted_vectors = 0
+
+    # Phase 34C -- Persistent Multimodal Knowledge. The existing
+    # document-id filter already removes every image knowledge point
+    # (each one carries ``document_id``), but the explicit call makes
+    # the lifecycle intent visible and is a no-op when the feature is
+    # disabled.
+    try:
+        from app.services.multimodal.lifecycle import delete_image_knowledge_for_document
+        delete_image_knowledge_for_document(int(document_id))
+    except Exception:
+        pass  # Never fail the user-facing delete on cleanup errors.
 
     # Delete chunks from PostgreSQL
     db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
