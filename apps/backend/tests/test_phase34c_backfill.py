@@ -157,9 +157,20 @@ def test_backfill_dry_run_summary_shape(monkeypatch):
     monkeypatch.setattr(
         backfill_mod, "_resolve_target_documents", lambda db, args: [1, 2],
     )
+    # Phase 34C.1 dry-run categorisation path uses ``_image_rows`` (not
+    # ``_image_ids_for``) so it can split OCR-only vs Vision-enriched
+    # candidates. The test stubs both for symmetry / future-proofing.
     monkeypatch.setattr(
         backfill_mod, "_image_ids_for",
         lambda db, did, *, include_ocr_empty: [10, 11] if did == 1 else [20],
+    )
+    monkeypatch.setattr(
+        backfill_mod, "_image_rows",
+        lambda db, did, *, include_ocr_empty: (
+            [(10, "success", "success"), (11, "success", None)]
+            if did == 1
+            else [(20, "success", None)]
+        ),
     )
 
     summary = run(_build_args(dry_run=True))

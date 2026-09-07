@@ -50,9 +50,15 @@ def delete_vectors_by_document_id(document_id: int) -> int:
         )
         if results[0]:
             point_ids = [p.id for p in results[0]]
+            # qdrant-client==1.9.1 renamed the parameter from ``points``
+            # to ``points_selector``. The old ``points=`` kwarg raises
+            # TypeError on the installed client. The Phase 34C
+            # lifecycle contract relies on document deletion cleaning up
+            # both text chunks AND image knowledge points; this fix
+            # keeps the path working.
             client.delete(
                 collection_name=settings.QDRANT_COLLECTION,
-                points=point_ids,
+                points_selector=point_ids,
             )
             return len(point_ids)
     except Exception:

@@ -81,10 +81,12 @@ class StubQdrantClient:
     def retrieve(self, *, collection_name, ids, with_payload, with_vectors):
         return [type("Point", (), {"id": pid, "payload": self.points[pid].payload})() for pid in ids if pid in self.points]
 
-    def delete(self, *, collection_name, points):
-        for pid in points:
+    def delete(self, *, collection_name, points_selector, **kwargs):
+        # qdrant-client==1.9.1 uses ``points_selector``; the legacy
+        # ``points=`` kwarg raises TypeError on the installed client.
+        for pid in points_selector:
             self.points.pop(pid, None)
-        self.delete_calls.append(list(points))
+        self.delete_calls.append(list(points_selector))
 
 
 def _matches(payload: Dict[str, Any], flt) -> bool:

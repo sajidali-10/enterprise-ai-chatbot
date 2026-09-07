@@ -204,6 +204,62 @@ def check_high_risk_domain(
     return False, None, meta
 
 
+# ---------------------------------------------------------------------------
+# Phase 34C.1 -- Source-aware historical-image observation bypass
+# ---------------------------------------------------------------------------
+# The private regex / chunk-filter implementation that lived here has
+# been replaced by a thin re-export of the public classifier in
+# ``app.rag.image_observation_helpers``. The single-source-of-truth
+# decision logic now lives in one module so grounding, prompt-building,
+# and synthesis all consume the same answer.
+#
+# The helper still applies the original four preconditions:
+#   1. The query is a historical-image observation question
+#      ("Which screenshot showed error 902?") rather than a
+#      product-meaning / root-cause / troubleshooting question.
+#   2. Every supplied chunk is image-derived
+#      (``source_type=image_knowledge`` / ``image_ocr``).
+#   3. Path A: an identifier token from the query appears verbatim
+#      in the OCR / knowledge text, OR
+#      Path B: a single unrelated image dominates the candidate set
+#      with a clear score margin.
+#
+# Note: chunk-level RBAC is enforced upstream by the retrieval layer
+# (the permission filter); this helper trusts that the chunks the
+# caller passed in are already authorized. The synthesizer
+# independently re-checks authorization as defense in depth.
+
+from app.rag.image_observation_helpers import (
+    HISTORICAL_IMAGE_INTENT_RE,        # noqa: F401  (kept for backward-compat names)
+    PRODUCT_MEANING_INTENT_RE,         # noqa: F401
+    IDENTIFIER_TOKEN_RE,               # noqa: F401
+    classify_image_observation_query,
+    is_image_knowledge_chunk,
+)
+
+
+def _is_image_observation_query(query: str, chunks: list[dict]) -> bool:
+    """Backward-compatible wrapper around the public classifier.
+
+    Returns True when either Path A (exact identifier) or Path B
+    (semantic dominance) is eligible. Path B is invoked with the
+    default ``image_score_threshold=0.65`` and ``dominance_ratio=1.40``
+    so the grounding decision matches the synthesizer's tuning.
+
+    Authorization is assumed True here because the retrieval layer
+    has already filtered chunks; the synthesizer re-checks it
+    separately as defense in depth.
+    """
+    if not query or not chunks:
+        return False
+    decision = classify_image_observation_query(
+        query,
+        chunks,
+        authorized=True,
+    )
+    return bool(decision.any_path_eligible())
+
+
 def check_retrieval_guardrail(chunks: list[dict]) -> tuple[bool, Optional[str], dict]:
     """
     Check if retrieval returned any chunks.
@@ -995,15 +1051,40 @@ def _run_grounding_checks(
     # generic keyword-overlap check would otherwise reject every
     # image_content question even when the OCR clearly answers it.
     if query is not None and not bypass_topic_relevance:
-        should_block, message, topic_meta = check_topic_relevance(query, chunks)
-        metadata.update(topic_meta)
-        if should_block:
-            metadata["evidence_level"] = EvidenceLevel.WEAK.value
-            metadata["evidence_meta"] = {
-                "decision": "weak",
-                "rationale": [topic_meta.get("blocked_reason", "topic_not_relevant")],
-            }
-            return True, message, metadata
+        # Phase 34C.1 — source-aware bypass for historical-image
+        # observation queries. When ALL of the following are true we
+        # treat the image-knowledge evidence as legitimate grounding
+        # even if the user's question shares little surface vocabulary
+        # with the OCR body:
+        #   1. The query is a historical-image observation question
+        #      ("Which screenshot showed error 902?") rather than a
+        #      product-meaning / root-cause / troubleshooting question.
+        #   2. At least one identifier (numeric code, screenshot name,
+        #      or token that appears verbatim in the OCR content)
+        #      matches between the query and at least one chunk.
+        #   3. Every chunk in scope is from source_type=image_knowledge
+        #      (no KB doc-chunks to outvote it).
+        #   4. The user is authorized for those chunks (the caller has
+        #      already applied the permission filter before chunks
+        #      reach us, so we trust visibility as supplied).
+        # The bypass is OFF for product-meaning / configuration /
+        # troubleshooting / root-cause queries — those still demand
+        # authoritative KB evidence.
+        if _is_image_observation_query(query, chunks):
+            metadata["topic_checked"] = False
+            metadata["topic_bypassed_reason"] = (
+                "phase34c1_historical_image_observation"
+            )
+        else:
+            should_block, message, topic_meta = check_topic_relevance(query, chunks)
+            metadata.update(topic_meta)
+            if should_block:
+                metadata["evidence_level"] = EvidenceLevel.WEAK.value
+                metadata["evidence_meta"] = {
+                    "decision": "weak",
+                    "rationale": [topic_meta.get("blocked_reason", "topic_not_relevant")],
+                }
+                return True, message, metadata
     elif bypass_topic_relevance:
         metadata["topic_checked"] = False
         metadata["topic_bypassed_reason"] = "image_content_resolved_source"
@@ -1044,12 +1125,30 @@ def _run_grounding_checks(
     # STRONG or MEDIUM evidence - retrieval checks pass.
     # Check 6: Answer grounding (only if answer provided)
     if answer is not None:
-        should_block, message, grounding_meta = check_answer_grounding(
-            answer, chunks, require_citations
+        # Phase 34C.1 — for image-observation queries the multimodal
+        # citation renderer attaches the image citation after the LLM
+        # answer is generated, so neither [n] markers nor the model's
+        # self-reported "insufficient information" refusal apply here.
+        # We skip the entire post-LLM check for image-observation
+        # queries so legitimate "this screenshot shows X" answers are
+        # shipped. The strict path still runs for product-meaning /
+        # configuration / troubleshooting queries.
+        is_image_obs = (
+            query is not None
+            and _is_image_observation_query(query, chunks)
         )
-        metadata.update(grounding_meta)
-        if should_block:
-            return True, message, metadata
+        if is_image_obs:
+            metadata["answer_check_skipped"] = True
+            metadata["answer_check_skip_reason"] = (
+                "phase34c1_historical_image_observation"
+            )
+        else:
+            should_block, message, grounding_meta = check_answer_grounding(
+                answer, chunks, require_citations
+            )
+            metadata.update(grounding_meta)
+            if should_block:
+                return True, message, metadata
 
     return False, None, metadata
 

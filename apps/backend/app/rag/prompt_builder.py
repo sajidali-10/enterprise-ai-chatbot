@@ -156,6 +156,34 @@ Base your answer on both the conversation context and the retrieved document inf
     # Phase 30E Hotfix v2: medium-evidence caveat is appended after context.
     evidence_section = _evidence_caveat_section(evidence_level)
 
+    # Phase 34C.1 — IMAGE-OBSERVATION EVIDENCE NOTE. When the user's
+    # question is about a previously uploaded screenshot / image AND the
+    # retrieved chunks contain OCR text (image_knowledge / image_ocr
+    # source_type), the OCR body IS the answer. Without this note the
+    # LLM defaults to the "insufficient information" refusal pattern
+    # because the OCR text shares little surface vocabulary with the
+    # meta-question ("Which screenshot showed error 902?").
+    image_observation_note = ""
+    try:
+        from app.rag.grounding import _is_image_observation_query
+        if _is_image_observation_query(query, chunks):
+            image_observation_note = """
+
+PHASE 34C.1 — IMAGE-OBSERVATION EVIDENCE NOTE:
+The user is asking about a historical screenshot or previously uploaded
+image. The numbered sources below contain the OCR text and image
+metadata of the matching images. Answer the user's question directly
+using ONLY the source_file_name and the OCR text from the numbered
+sources. Do NOT refuse as "insufficient information" \u2014 the OCR body is
+the authoritative evidence for an image-observation lookup. Identify
+the screenshot by its source_file_name (e.g. "Screenshot 2026-08-05
+174611.png") and quote the matching OCR line.
+"""
+    except Exception:
+        # If the helper cannot import (e.g. test env without full app
+        # stack), skip the note \u2014 the existing strict path still runs.
+        image_observation_note = ""
+
     # Phase 30E: Cleaner answer structure for business users
     formatting_rules = """
 ANSWER STRUCTURE (general):

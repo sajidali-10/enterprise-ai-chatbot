@@ -38,6 +38,13 @@ from app.rag.image_resolver import (
     extract_explicit_target,
     resolve_recent_image,
 )
+# Phase 34C.1 -- Deterministic image-observation synthesis.
+# Post-LLM refusal recovery: when the LLM emits a known refusal phrase
+# AND the query is a historical-image observation (not product meaning),
+# synthesize a citation-bearing answer directly from the OCR body.
+from app.rag.image_observation_synthesis import (
+    maybe_synthesize_image_observation_answer,
+)
 
 # Phase 34B — Automatic Vision Intelligence. OCR remains the default
 # and cheapest path; Vision is ADDITIONAL visual understanding that
@@ -682,6 +689,8 @@ def _run_rag_with_chunks(
     # Phase 34A.1.2 — pass retrieval_metadata so the post-LLM evidence
     # decision recognises resolved image_content sources and grants
     # STRONG evidence rather than rejecting with weak_evidence.
+    # Phase 34C.1 — also pass ``query`` so the image-observation bypass
+    # in grounding.py can recognise legitimate historical-image lookups.
     should_block, fallback_message, answer_grounding_meta = apply_grounding_checks(
         chunks=chunks,
         answer=answer,
@@ -689,6 +698,7 @@ def _run_rag_with_chunks(
         require_citations=True,  # Require citations in the answer
         retrieval_metadata=retrieval_metadata,
         bypass_topic_relevance=relevance_threshold_bypass,
+        query=query,
     )
 
     retrieval_metadata["grounding"].update(answer_grounding_meta)
@@ -737,6 +747,32 @@ def _run_rag_with_chunks(
         citation_repair_meta["final_citation_count"] = citation_count_meta.get("citation_count", 0)
         crag_decision["citation_count"] = citation_count_meta.get("citation_count", 0)
 
+    # Phase 34C.1 -- deterministic image-observation synthesis. When
+    # the LLM emitted a known refusal phrase AND the query is a
+    # historical-image observation (not product meaning / not
+    # troubleshooting) AND the candidate set contains authorized
+    # image-knowledge evidence, ship a citation-bearing synthesized
+    # answer directly from the OCR body. The hook re-checks every
+    # precondition; a buggy caller cannot synthesize from chunks the
+    # user is not authorized to see. Substantive (non-refusal) LLM
+    # answers pass through untouched.
+    synth = maybe_synthesize_image_observation_answer(
+        query=query,
+        chunks=chunks,
+        answer=answer,
+        accessible_doc_ids=retrieval_metadata.get("accessible_doc_ids"),
+        authorized=bool(retrieval_metadata.get("authorized", True)),
+    )
+    if synth is not None:
+        answer = synth.answer
+        citations = list(synth.citations)
+        final_has_citations = has_citations(answer)
+        citation_repair_meta["final_has_citations"] = final_has_citations
+        citation_repair_meta["final_citation_count"] = len(citations)
+        crag_decision["citation_count"] = len(citations)
+        retrieval_metadata["grounding"]["synthesis"] = dict(synth.meta)
+        retrieval_metadata["grounding"]["synthesis_applied"] = True
+
     # Final block check only if citations still missing after ALL repair attempts.
     # Phase 34A.1.2 — for resolved image_content sources, the source
     # relationship IS the relevance signal. We have an answer and the
@@ -764,6 +800,7 @@ def _run_rag_with_chunks(
                 require_citations=True,
                 retrieval_metadata=retrieval_metadata,
                 bypass_topic_relevance=relevance_threshold_bypass,
+                query=query,  # Phase 34C.1 — enable image-observation bypass
             )
             retrieval_metadata["grounding"].update(answer_grounding_meta)
             citation_repair_meta["blocked_reason"] = "answer_lacks_citations"
@@ -1296,10 +1333,32 @@ def _run_rag_with_chunks_audit(
         _, citation_count_meta = check_citations(answer)
         citation_repair_meta["final_citation_count"] = citation_count_meta.get("citation_count", 0)
 
+    # Phase 34C.1 -- deterministic image-observation synthesis (audit
+    # counterpart). Identical semantics to the non-audit pipeline:
+    # when the LLM emitted a known refusal phrase and the public
+    # classifier agrees Path A or Path B is safe, ship a citation-
+    # bearing synthesized answer; otherwise let the strict path run.
+    synth_audit = maybe_synthesize_image_observation_answer(
+        query=query,
+        chunks=chunks,
+        answer=answer,
+        accessible_doc_ids=retrieval_metadata.get("accessible_doc_ids"),
+        authorized=bool(retrieval_metadata.get("authorized", True)),
+    )
+    if synth_audit is not None:
+        answer = synth_audit.answer
+        citations = list(synth_audit.citations)
+        final_has_citations = has_citations(answer)
+        citation_repair_meta["final_has_citations"] = final_has_citations
+        citation_repair_meta["final_citation_count"] = len(citations)
+
     retrieval_metadata["grounding"]["citation_repair"] = citation_repair_meta
     retrieval_metadata["grounding"]["final_citation_count"] = citation_repair_meta["final_citation_count"]
     retrieval_metadata["grounding"]["final_has_citations"] = final_has_citations
     crag_decision["citation_count"] = citation_repair_meta.get("final_citation_count", 0)
+    if synth_audit is not None:
+        retrieval_metadata["grounding"]["synthesis"] = dict(synth_audit.meta)
+        retrieval_metadata["grounding"]["synthesis_applied"] = True
 
     # Block only if citations still missing after ALL repair attempts.
     # Phase 34A.1.2 — resolved image_content sources short-circuit the
@@ -1319,6 +1378,7 @@ def _run_rag_with_chunks_audit(
                 require_citations=True,
                 retrieval_metadata=retrieval_metadata,
                 bypass_topic_relevance=relevance_threshold_bypass,
+                query=query,  # Phase 34C.1 — enable image-observation bypass
             )
             retrieval_metadata["grounding"].update(answer_grounding_meta)
             citation_repair_meta["blocked_reason"] = "answer_lacks_citations"

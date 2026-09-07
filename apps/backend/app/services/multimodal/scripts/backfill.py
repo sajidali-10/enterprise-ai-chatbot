@@ -159,6 +159,32 @@ def _image_ids_for(db, document_id: int, *, include_ocr_empty: bool) -> List[int
         return []
 
 
+def _image_rows(db, document_id: int, *, include_ocr_empty: bool):
+    """Yield ``(image_id, ocr_status, vision_status)`` rows for dry-run categorisation.
+
+    Mirrors the eligibility filter used by ``_image_ids_for`` but exposes
+    the OCR / Vision status so the dry-run can split candidates into
+    OCR-only vs Vision-enriched buckets.
+    """
+    try:
+        from app.models.document import DocumentImage
+    except Exception as exc:
+        logger.warning("backfill: cannot import DocumentImage: %s", exc)
+        return []
+
+    try:
+        q = db.query(DocumentImage.id, DocumentImage.ocr_status, DocumentImage.vision_status).filter(
+            DocumentImage.document_id == int(document_id)
+        )
+        if not include_ocr_empty:
+            q = q.filter(DocumentImage.ocr_status == "success")
+        rows = q.order_by(DocumentImage.id.asc()).all()
+        return [(int(r[0]), r[1], r[2]) for r in rows]
+    except Exception as exc:
+        logger.warning("backfill: cannot list image rows for document_id=%s: %s", document_id, exc)
+        return []
+
+
 def run(args: argparse.Namespace) -> Dict[str, Any]:
     """Execute the backfill CLI according to ``args`` and return a summary."""
     summary: Dict[str, Any] = {
@@ -185,18 +211,60 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         return summary
 
     if bool(args.dry_run):
-        # Dry-run path: count what we WOULD index and return.
+        # Dry-run path: count and categorise what we WOULD index and return.
         try:
+            # Ensure both Document and User mappers are initialised before
+            # any query runs (the Document.owner relationship resolves the
+            # "User" class lazily; without this import the mapper init
+            # silently fails and db.query(Document.id).all() returns []).
+            import app.security.models  # noqa: F401  (registers User mapper)
+            from sqlalchemy.orm import configure_mappers
+            try:
+                configure_mappers()
+            except Exception as cm_exc:
+                logger.warning("backfill: configure_mappers raised (non-fatal): %s", cm_exc)
             from app.db.session import SessionLocal
+            from app.models.document import Document, DocumentImage
+            from app.services.multimodal.knowledge_record import compute_point_id
+
+            schema_version = int(getattr(_settings, "MULTIMODAL_KNOWLEDGE_SCHEMA_VERSION", 1) or 1)
 
             db = SessionLocal()
             try:
                 document_ids = _resolve_target_documents(db, args)
-                image_count = 0
+                ocr_only_ids: List[int] = []
+                vision_enriched_ids: List[int] = []
+                ineligible_ids: List[int] = []
+                ineligible_reasons: Dict[str, int] = {}
+                expected_point_ids: List[int] = []
+
                 for did in document_ids:
-                    image_count += len(_image_ids_for(db, did, include_ocr_empty=bool(args.include_ocr_empty)))
-                summary["scanned"] = image_count
-                summary["would_index"] = image_count
+                    rows = _image_rows(db, did, include_ocr_empty=bool(args.include_ocr_empty))
+                    for image_id, ocr_status, vision_status in rows:
+                        if ocr_status != "success" and not bool(args.include_ocr_empty):
+                            ineligible_ids.append(image_id)
+                            ineligible_reasons["ocr_not_success"] = ineligible_reasons.get("ocr_not_success", 0) + 1
+                            continue
+                        if vision_status == "success":
+                            vision_enriched_ids.append(image_id)
+                        else:
+                            ocr_only_ids.append(image_id)
+                        expected_point_ids.append(
+                            compute_point_id(int(did), int(image_id), schema_version)
+                        )
+
+                summary["scanned"] = len(ocr_only_ids) + len(vision_enriched_ids)
+                summary["would_index"] = len(ocr_only_ids) + len(vision_enriched_ids)
+                summary["ocr_only_candidates"] = len(ocr_only_ids)
+                summary["vision_enriched_candidates"] = len(vision_enriched_ids)
+                summary["invalid_or_ineligible"] = len(ineligible_ids)
+                summary["ineligible_reasons"] = ineligible_reasons
+                summary["expected_point_id_count"] = len(set(expected_point_ids))
+                summary["expected_point_id_unique"] = len(expected_point_ids) == len(set(expected_point_ids))
+                summary["vision_calls_expected"] = 0
+                # Sample of expected deterministic point IDs (capped)
+                sample_size = min(10, len(expected_point_ids))
+                summary["expected_point_id_sample"] = expected_point_ids[:sample_size]
                 return summary
             finally:
                 db.close()
@@ -207,6 +275,16 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
 
     # Real backfill.
     try:
+        # Ensure both Document and User mappers are initialised before
+        # any query runs. Same rationale as the dry-run path; without
+        # this import the mapper init silently fails and the document
+        # list comes back empty.
+        import app.security.models  # noqa: F401  (registers User mapper)
+        from sqlalchemy.orm import configure_mappers
+        try:
+            configure_mappers()
+        except Exception as cm_exc:
+            logger.warning("backfill: configure_mappers raised (non-fatal): %s", cm_exc)
         from app.db.session import SessionLocal
         from app.services.multimodal.lifecycle import reindex_all_images
 

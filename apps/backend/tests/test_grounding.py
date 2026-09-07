@@ -602,8 +602,216 @@ class TestHighRiskDomainCheck:
     def test_stock_market_classified_as_financial(self):
         """'invest in the stock market' should be classified as financial domain."""
         from app.rag.grounding import _classify_query_domain
-        
+
         query = "should I invest in the stock market right now?"
         domains = _classify_query_domain(query)
-        
+
         assert "financial" in domains
+
+
+# ---------------------------------------------------------------------------
+# Phase 34C.1 -- Source-aware historical-image observation bypass
+# ---------------------------------------------------------------------------
+# These tests pin the exact rule added in Phase 34C.1:
+#   _is_image_observation_query returns True only when ALL four preconditions
+#   hold (image-observation intent, NOT product-meaning, image_knowledge-only
+#   chunks, identifier-token match). If any precondition fails the helper
+#   returns False and the existing strict topic-relevance path runs.
+#
+#   The integration test then confirms apply_grounding_checks() does not
+#   block a legitimate historical-image observation answer while still
+#   blocking product-meaning queries whose only evidence is image_knowledge.
+# ---------------------------------------------------------------------------
+
+
+def _img_chunk(content: str, score: float = 0.85) -> dict:
+    """Build an image_knowledge chunk for the tests."""
+    return {
+        "content": content,
+        "source_type": "image_knowledge",
+        "source_file_name": "Screenshot 2026-08-05 174611.png",
+        "document_id": 60,
+        "image_id": 6,
+        "score": score,
+    }
+
+
+class TestImageObservationBypass:
+    """Direct unit tests for _is_image_observation_query."""
+
+    def test_902_screenshot_observation_allowed(self):
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country")]
+        assert _is_image_observation_query("Which screenshot showed error 902?", chunks) is True
+
+    def test_screenshot_file_name_observation_allowed(self):
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [_img_chunk("File: Screenshot 2026-08-05 174611.png Page: -")]
+        assert _is_image_observation_query(
+            "Which screenshot shows the 2026-08-05 dashboard?", chunks
+        ) is True
+
+    def test_carrier_observation_allowed(self):
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [_img_chunk("Carrier: Vodafone-UK Timestamp: 2026-08-20 14:32:11 UTC")]
+        assert _is_image_observation_query(
+            "Which screenshot shows Vodafone-UK delivery?", chunks
+        ) is True
+
+    def test_product_meaning_query_blocked_even_with_image_evidence(self):
+        """'What does error 902 mean and how do I fix it?' must NOT bypass."""
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country")]
+        assert _is_image_observation_query(
+            "What does error 902 mean and how do I fix it?", chunks
+        ) is False
+
+    def test_troubleshooting_query_blocked(self):
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country")]
+        assert _is_image_observation_query(
+            "How do I troubleshoot error 902 in our messaging pipeline?", chunks
+        ) is False
+
+    def test_general_question_without_image_intent_blocked(self):
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country")]
+        assert _is_image_observation_query(
+            "Tell me about error 902", chunks
+        ) is False
+
+    def test_mixed_evidence_blocks_bypass(self):
+        """If even ONE chunk is a doc-chunk, the strict path must run."""
+        from app.rag.grounding import _is_image_observation_query
+        mixed = [
+            _img_chunk("Failed Reason: 902 Message delivery failed"),
+            {
+                "content": "Error 902 is described in chapter 4 of the Installation Guide.",
+                "source_type": "document_chunk",
+                "source_file_name": "Installation_Guide.pdf",
+                "score": 0.5,
+            },
+        ]
+        assert _is_image_observation_query("Which screenshot showed error 902?", mixed) is False
+
+    def test_image_id_without_source_type_still_qualifies(self):
+        """Grounding chunks often drop ``source_type``; image_id is sufficient."""
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [
+            {
+                "content": "Failed Reason: 902 Message delivery failed",
+                "image_id": 6,
+                "document_id": 60,
+                "source_file_name": "Screenshot 2026-08-05 174611.png",
+                "score": 0.85,
+            }
+        ]
+        assert _is_image_observation_query("Which screenshot showed error 902?", chunks) is True
+
+    def test_image_ocr_source_type_qualifies(self):
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [
+            {
+                "content": "Failed Reason: 902 Message delivery failed",
+                "source_type": "image_ocr",
+                "image_id": 8,
+                "score": 0.85,
+            }
+        ]
+        assert _is_image_observation_query("Which screenshot showed error 902?", chunks) is True
+
+    def test_identifier_without_match_blocks_bypass(self):
+        """If no identifier from the query matches the OCR AND the
+        candidate score is below the Path B threshold, the bypass is OFF.
+
+        Phase 34C.1 adds Path B (semantic-dominant match without
+        identifier). For a high-scoring chunk with no identifier
+        match, Path B may still legitimately enable the bypass. This
+        test pins the case where neither path applies: no identifier
+        match AND score is below the 0.65 threshold.
+        """
+        from app.rag.grounding import _is_image_observation_query
+        chunks = [_img_chunk("Some unrelated OCR text without the number", score=0.40)]
+        assert _is_image_observation_query(
+            "Which screenshot showed error 902?", chunks
+        ) is False
+
+    def test_empty_inputs_return_false(self):
+        from app.rag.grounding import _is_image_observation_query
+        assert _is_image_observation_query("Which screenshot showed error 902?", []) is False
+        assert _is_image_observation_query("", [_img_chunk("Failed Reason: 902")]) is False
+
+
+class TestImageObservationGroundingIntegration:
+    """apply_grounding_checks() integration tests for the bypass."""
+
+    def test_902_screenshot_passes_grounding(self):
+        """Phase 34C.1 acceptance: 'Which screenshot showed error 902?' must not be blocked."""
+        from app.rag.grounding import apply_grounding_checks
+
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country", score=0.85)]
+        should_block, message, meta = apply_grounding_checks(
+            query="Which screenshot showed error 902?",
+            chunks=chunks,
+            threshold=0.1,
+        )
+        assert should_block is False, f"unexpected block: {message} ({meta.get('blocked_reason')})"
+        assert meta.get("topic_bypassed_reason") == "phase34c1_historical_image_observation"
+
+    def test_product_meaning_still_blocked_when_only_image_evidence(self):
+        """Phase 34C.1 acceptance: 'How do I fix error 902?' must still require KB evidence."""
+        from app.rag.grounding import apply_grounding_checks
+
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country", score=0.85)]
+        should_block, message, meta = apply_grounding_checks(
+            query="How do I fix error 902?",
+            chunks=chunks,
+            threshold=0.1,
+        )
+        # Either topic_not_relevant (preferred) or weak_evidence (downstream)
+        # is acceptable as long as the strict path is NOT bypassed.
+        assert meta.get("topic_bypassed_reason") != "phase34c1_historical_image_observation"
+        assert should_block is True or meta.get("evidence_level") == "weak"
+
+    def test_image_observation_answer_without_citations_passes(self):
+        """LLM answer to a screenshot lookup is shipped even without [n] markers.
+
+        The multimodal citation renderer attaches the image citation later;
+        the post-LLM answer-grounding check is fully skipped for image-
+        observation queries so legitimate visual answers are not blocked.
+        """
+        from app.rag.grounding import apply_grounding_checks
+
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country", score=0.85)]
+        # Answer text without [n] citation markers — would normally be blocked.
+        answer = "The screenshot showing error 902 is Screenshot 2026-08-05 174611.png."
+        should_block, message, meta = apply_grounding_checks(
+            query="Which screenshot showed error 902?",
+            chunks=chunks,
+            answer=answer,
+            threshold=0.1,
+            require_citations=True,
+        )
+        assert should_block is False, f"unexpected block: {message} ({meta.get('blocked_reason')})"
+        assert meta.get("answer_check_skipped") is True
+        assert meta.get("answer_check_skip_reason") == "phase34c1_historical_image_observation"
+
+    def test_product_meaning_answer_without_citations_still_blocked(self):
+        """Product-meaning queries must STILL require [n] markers in the answer."""
+        from app.rag.grounding import apply_grounding_checks
+
+        chunks = [_img_chunk("Failed Reason: 902 Message delivery failed: rejected-forbidden-country", score=0.85)]
+        answer = "To fix error 902 you need to check the recipient country code."
+        should_block, message, meta = apply_grounding_checks(
+            query="How do I fix error 902?",
+            chunks=chunks,
+            answer=answer,
+            threshold=0.1,
+            require_citations=True,
+        )
+        # product-meaning never enters the bypass; the existing strict
+        # citation requirement still blocks it. The block may fire at
+        # the topic stage OR at the citation stage, both are fine.
+        assert meta.get("topic_bypassed_reason") != "phase34c1_historical_image_observation"
+        assert meta.get("answer_check_skipped") is not True
+        assert should_block is True

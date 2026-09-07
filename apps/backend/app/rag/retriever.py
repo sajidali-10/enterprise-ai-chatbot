@@ -298,11 +298,48 @@ def retrieve_chunks_with_auth(
     # Filter chunks to only those from accessible documents
     original_count = len(chunks)
     filtered_chunks = [
-        c for c in chunks 
+        c for c in chunks
         if c.get("document_id") in accessible_doc_ids_set
     ]
     final_count = len(filtered_chunks)
-    
+
+    # Phase 34C.1 — defense-in-depth cleanup of debug metadata.
+    # ``integrate_image_knowledge`` runs BEFORE this permission filter,
+    # so ``metadata['multimodal']['image_knowledge_source_ids']`` and
+    # ``metadata['multimodal']['image_knowledge_candidates']`` may list
+    # image_ids / doc_ids the caller cannot actually access. The real
+    # chunks are already filtered above (the LLM never sees them), so
+    # this is a debug-visibility concern only — but the leaked IDs make
+    # it look like the user could access those images. Re-filter the
+    # debug lists down to the accessible set so observability matches
+    # reality.
+    try:
+        mm = metadata.get("multimodal") or {}
+        if mm:
+            raw_ids = mm.get("image_knowledge_source_ids") or []
+            # Visible image_ids = the image_ids of image_knowledge
+            # chunks that survived the permission filter above.
+            visible_image_ids = sorted({
+                int(c["image_id"])
+                for c in filtered_chunks
+                if c.get("source_type") == "image_knowledge"
+                and c.get("image_id") is not None
+            })
+            visible_doc_ids = sorted({
+                int(c["document_id"])
+                for c in filtered_chunks
+                if c.get("source_type") == "image_knowledge"
+                and c.get("document_id") is not None
+            })
+            mm["image_knowledge_source_ids"] = visible_image_ids
+            mm["image_knowledge_candidates"] = len(visible_image_ids)
+            mm["visible_image_doc_ids"] = visible_doc_ids
+            mm["permission_filtered_image_count"] = (
+                len(raw_ids) - len(visible_image_ids)
+            ) if raw_ids else 0
+    except Exception as exc:
+        logger.debug("permission-aware multimodal metadata cleanup skipped: %s", exc)
+
     # Update metadata
     metadata["permission_filtered"] = True
     metadata["accessible_count"] = final_count
@@ -311,11 +348,22 @@ def retrieve_chunks_with_auth(
     metadata["user_id"] = auth.user_id
     metadata["username"] = auth.username
     metadata["user_role"] = auth.role.value if hasattr(auth.role, 'value') else str(auth.role)
-    
+    # Phase 34C.1 — expose the RBAC-filtered accessible document IDs
+    # so downstream callers (notably the image-observation synthesizer
+    # in app.rag.image_observation_synthesis) can re-check auth without
+    # having to re-query permissions. This is the canonical set the
+    # chunks above were filtered against; the synthesizer uses it for
+    # defense in depth (the chunks themselves are already authorized).
+    metadata["accessible_doc_ids"] = sorted({
+        int(d) for d in accessible_doc_ids_set
+    })
+
     if debug or settings.RETRIEVAL_SHOW_DEBUG:
         metadata["debug"] = True
         metadata["original_query"] = query
-        metadata["accessible_document_ids"] = list(accessible_doc_ids_set)
+        metadata["accessible_document_ids"] = sorted({
+            int(d) for d in accessible_doc_ids_set
+        })
     
     return filtered_chunks, metadata
 

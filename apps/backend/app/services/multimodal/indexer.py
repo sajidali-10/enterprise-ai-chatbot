@@ -296,7 +296,14 @@ def _delete_with_filter(scroll_filter, *, collection: Optional[str] = None) -> D
         points = results[0] if results else []
         ids = [p.id for p in points]
         if ids:
-            client.delete(collection_name=collection or _collection_name(), points=ids)
+            # qdrant-client==1.9.1 renamed the parameter from ``points``
+            # to ``points_selector``. Passing ``points=`` here raises
+            # ``TypeError: delete() got an unexpected keyword argument 'points'``
+            # which would silently disable every Phase 34C delete path.
+            client.delete(
+                collection_name=collection or _collection_name(),
+                points_selector=ids,
+            )
         return DeleteResult(deleted=len(ids))
     except Exception as exc:
         logger.warning("multimodal: delete failed: %s", exc)
