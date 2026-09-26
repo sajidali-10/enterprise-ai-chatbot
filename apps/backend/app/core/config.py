@@ -360,6 +360,71 @@ class Settings(BaseSettings):
         os.getenv("MULTIMODAL_KNOWLEDGE_TEXT_MAX_CHARS", "1800")
     )
 
+    # -------------------------------------------------------------------
+    # Phase 34D — Advanced Visual Understanding (task-aware)
+    # -------------------------------------------------------------------
+    # Master kill switch. When false the advanced vision layer is fully
+    # inert: no task classification runs, no provider calls happen, no
+    # Redis traffic is generated. Phase 34A / 34B / 34C / 34C.1
+    # behaviour is unchanged.
+    ADVANCED_VISION_ENABLED: bool = os.getenv(
+        "ADVANCED_VISION_ENABLED", "false"
+    ).lower() in ("true", "1", "yes", "on")
+    # Router on/off (independent kill switch for the classifier).
+    ADVANCED_VISION_ROUTER_ENABLED: bool = os.getenv(
+        "ADVANCED_VISION_ROUTER_ENABLED", "true"
+    ).lower() in ("true", "1", "yes", "on")
+    # Schema version baked into the Redis cache key. Bump to
+    # invalidate every cached analysis in one deployment.
+    ADVANCED_VISION_SCHEMA_VERSION: int = int(
+        os.getenv("ADVANCED_VISION_SCHEMA_VERSION", "1")
+    )
+    # Prompt template version. Bumping refreshes the task-specific
+    # prompts sent to the provider without invalidating the Redis
+    # cache (cache key uses ADVANCED_VISION_SCHEMA_VERSION instead).
+    ADVANCED_VISION_PROMPT_VERSION: int = int(
+        os.getenv("ADVANCED_VISION_PROMPT_VERSION", "1")
+    )
+    # Maximum number of images per advanced vision request. The brief
+    # sets this to 2 (comparison flow). A higher value would expand
+    # scope and is intentionally NOT supported in Phase 34D.
+    ADVANCED_VISION_MAX_IMAGES_PER_REQUEST: int = int(
+        os.getenv("ADVANCED_VISION_MAX_IMAGES_PER_REQUEST", "2")
+    )
+    # Hard cap on per-image bytes (defensive). Inherited from
+    # VISION_MAX_IMAGE_BYTES when 0.
+    ADVANCED_VISION_MAX_IMAGE_BYTES: int = int(
+        os.getenv("ADVANCED_VISION_MAX_IMAGE_BYTES", "0")
+    )
+    # Per-call timeout (seconds). Inherited from VISION_TIMEOUT_SECONDS
+    # when 0.
+    ADVANCED_VISION_TIMEOUT_SECONDS: float = float(
+        os.getenv("ADVANCED_VISION_TIMEOUT_SECONDS", "0")
+    )
+    # Redis-backed cache on/off. When false every request is a cache
+    # miss (provider always called). Default true.
+    ADVANCED_VISION_CACHE_ENABLED: bool = os.getenv(
+        "ADVANCED_VISION_CACHE_ENABLED", "true"
+    ).lower() in ("true", "1", "yes", "on")
+    # TTL for cached VisualReasoningResult entries (seconds).
+    ADVANCED_VISION_CACHE_TTL_SECONDS: int = int(
+        os.getenv("ADVANCED_VISION_CACHE_TTL_SECONDS", "3600")
+    )
+    # Redis key namespace.
+    ADVANCED_VISION_CACHE_NAMESPACE: str = os.getenv(
+        "ADVANCED_VISION_CACHE_NAMESPACE", "advanced_vision"
+    )
+    # Optional in-process LRU cache (optimization only; never
+    # authoritative). Default OFF to keep behaviour deterministic.
+    ADVANCED_VISION_PROCESS_CACHE_ENABLED: bool = os.getenv(
+        "ADVANCED_VISION_PROCESS_CACHE_ENABLED", "false"
+    ).lower() in ("true", "1", "yes", "on")
+    # Optional in-process LRU capacity (only used when the process
+    # cache is enabled).
+    ADVANCED_VISION_PROCESS_CACHE_MAXSIZE: int = int(
+        os.getenv("ADVANCED_VISION_PROCESS_CACHE_MAXSIZE", "64")
+    )
+
     def get_cors_origins(self) -> list[str]:
         """Return the list of allowed CORS origins based on configuration."""
         if self.AUTH_MODE == "dev":

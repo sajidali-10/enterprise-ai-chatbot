@@ -683,6 +683,51 @@ def _run_chat_request(
                             if vision_meta.get("routing_reasons")
                             else None
                         ),
+                        # Phase 34D — surface task-aware advanced vision
+                        # metadata so the frontend + observability can see
+                        # whether the advanced orchestrator ran, which task
+                        # it classified, whether it hit the Redis cache, and
+                        # which provider/model handled it. The full struct is
+                        # under ``metadata['vision']['advanced_vision']``; we
+                        # also expose convenient top-level aliases mirrored in
+                        # ``AdvancedOrchestratorOutcome.to_dict()``. No image
+                        # bytes, JWTs, API keys, or provider internals.
+                        "advanced_vision": dict(
+                            vision_meta.get("advanced_vision") or {}
+                        ) or None,
+                        "advanced_vision_ran": bool(
+                            vision_meta.get("advanced_vision_ran")
+                        ),
+                        "advanced_vision_task_type": vision_meta.get(
+                            "advanced_vision_task_type"
+                        ),
+                        "advanced_vision_called": bool(
+                            vision_meta.get("advanced_vision_called")
+                        ),
+                        "advanced_vision_cache_hit": bool(
+                            vision_meta.get("advanced_vision_cache_hit")
+                        ),
+                        "advanced_vision_provider": vision_meta.get(
+                            "advanced_vision_provider", ""
+                        ) or "",
+                        "advanced_vision_model": vision_meta.get(
+                            "advanced_vision_model", ""
+                        ) or "",
+                        "advanced_vision_latency_ms": int(
+                            vision_meta.get("advanced_vision_latency_ms") or 0
+                        ),
+                        "advanced_vision_image_count": int(
+                            vision_meta.get("advanced_vision_image_count") or 0
+                        ),
+                        "advanced_vision_image_ids": list(
+                            vision_meta.get("advanced_vision_image_ids") or []
+                        ),
+                        "advanced_vision_skipped_reason": vision_meta.get(
+                            "advanced_vision_skipped_reason"
+                        ),
+                        "advanced_vision_error": vision_meta.get(
+                            "advanced_vision_error"
+                        ),
                     }
         except Exception:
             # Vision metadata is purely informational — never break

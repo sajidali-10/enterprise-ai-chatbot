@@ -61,7 +61,24 @@ except Exception:  # pragma: no cover - defensive
             "vision_required": False,
             "vision_called": False,
             "vision_cache_hit": False,
+            "vision_provider": "",
+            "vision_model": "",
+            "vision_latency_ms": 0,
         }
+
+try:
+    from app.vision.integration import (
+        _maybe_run_comparison_vision as _maybe_run_comparison_vision_impl,
+    )
+except Exception:  # pragma: no cover - defensive
+    def _maybe_run_comparison_vision_impl(*args, **kwargs):
+        return None
+
+try:
+    from app.rag.image_resolver import extract_comparison_targets
+except Exception:  # pragma: no cover - defensive
+    def extract_comparison_targets(image_context):
+        return []
 from app.services.llm import get_llm_provider
 from app.schemas.chat import ChatRequest, ChatResponse, MessageRole
 from app.core.config import settings
@@ -253,6 +270,28 @@ def _call_llm_with_citations_and_evidence(
         temperature=temperature,
         conversation_context=conversation_context,
     )
+
+
+def _extract_ocr_text_from_chunks(chunks: list[dict]) -> str:
+    """Join OCR / image-derived chunk content into a single text body.
+
+    The Vision orchestrator uses this as the pre-extracted OCR ground
+    truth when it runs on a resolved image_context. We cap the total
+    body so a pathological set of chunks cannot balloon the provider
+    prompt.
+    """
+    if not chunks:
+        return ""
+    parts: List[str] = []
+    total = 0
+    for chunk in chunks:
+        content = chunk.get("content")
+        if isinstance(content, str) and content.strip():
+            parts.append(content.strip())
+            total += len(content)
+            if total > 20000:
+                break
+    return "\n".join(parts)
 
 
 def _should_retry_for_citations(
@@ -528,6 +567,7 @@ def _run_rag_with_chunks(
     ocr_confidence: Optional[int] = None,
     ocr_status: str = "success",
     ocr_error: Optional[str] = None,
+    auth: Optional["object"] = None,
 ) -> tuple[str, list[dict], dict]:
     """Phase 34A.1.2 — shared LLM/grounding pipeline used by both the
     pre-resolved image-content path and the standard hybrid path.
@@ -558,6 +598,7 @@ def _run_rag_with_chunks(
                 ocr_confidence=ocr_confidence,
                 ocr_status=ocr_status,
                 ocr_error=ocr_error,
+                auth=auth,
             )
             if vision_meta:
                 retrieval_metadata["vision"] = dict(vision_meta)
@@ -593,6 +634,60 @@ def _run_rag_with_chunks(
             retrieval_metadata["vision_cache_hit"] = False
 
     # Phase 34A.1.2 — for image_content paths, by-id chunks carry
+    # ------------------------------------------------------------------
+    # Phase 34D — IMAGE_COMPARISON flow.
+    #
+    # When ``image_context.comparison`` is present (a list of two
+    # {document_id, image_id} dicts) we run the comparison
+    # orchestrator on the two authorized images and prepend two
+    # synthetic chunks (image A, image B) so the citation renderer
+    # attaches a [N] marker to each image. Comparison is independent
+    # from the single-image Phase 34D path above; the two never run
+    # together. When comparison is disabled, not requested, or fails,
+    # the chat pipeline continues with the Phase 34B single-image
+    # evidence.
+    # ------------------------------------------------------------------
+    comparison_targets = extract_comparison_targets(image_context) if image_context else []
+    if len(comparison_targets) >= 2 and auth is not None:
+        try:
+            from app.vision.integration import (
+                _maybe_run_comparison_vision as _maybe_run_comparison_vision_runtime,
+            )
+            comparison_meta = _maybe_run_comparison_vision_runtime(
+                db,
+                auth=auth,
+                question=query,
+                comparison_targets=list(comparison_targets),
+                context_hint="",
+            )
+        except Exception as exc:
+            logger.debug("answer_generator: comparison orchestrator crashed: %s", exc)
+            comparison_meta = None
+        if comparison_meta:
+            retrieval_metadata["advanced_vision_comparison"] = dict(comparison_meta)
+            if comparison_meta.get("advanced_vision_ran"):
+                try:
+                    from app.vision.integration import (
+                        _build_comparison_synthetic_chunks as _build_compare_chunks,
+                    )
+                    image_ids = list(comparison_meta.get("advanced_vision_image_ids") or [])
+                    source_a = comparison_meta.get("advanced_vision_image_a_filename") or (
+                        f"image_{image_ids[0]}.png" if len(image_ids) >= 1 else "image_a.png"
+                    )
+                    source_b = comparison_meta.get("advanced_vision_image_b_filename") or (
+                        f"image_{image_ids[1]}.png" if len(image_ids) >= 2 else "image_b.png"
+                    )
+                    synthetic_chunks = _build_compare_chunks(
+                        advanced_meta=comparison_meta,
+                        source_filename_a=source_a,
+                        source_filename_b=source_b,
+                    )
+                    if synthetic_chunks:
+                        chunks = list(synthetic_chunks) + list(chunks or [])
+                except Exception as exc:
+                    logger.debug("answer_generator: comparison synthetic-chunk build failed: %s", exc)
+
+
     # ``score=None`` (Qdrant payload filter lookup, not similarity).
     # The relevance threshold check must NOT block them, so we
     # override the threshold to 0 for this branch and record the
@@ -1077,6 +1172,16 @@ def generate_answer_with_rag_audit(
         model_name=model_name,
         request_ip=request_ip,
         request_user_agent=request_user_agent,
+        # Phase 34B/34D — anything that supplied an image_context in
+        # scope, even on the STANDARD hybrid path (not only the
+        # pre-resolved image_content fast path), must forward the
+        # session + image_context + OCR signals so the Vision /
+        # advanced-Vision orchestrator can run. OCR signals are
+        # best-effort derived from the retrieved chunks.
+        image_context=image_context,
+        db=db,
+        ocr_text=_extract_ocr_text_from_chunks(chunks),
+        ocr_status="success",
     )
 
 
@@ -1127,6 +1232,7 @@ def _run_rag_with_chunks_audit(
                 ocr_confidence=ocr_confidence,
                 ocr_status=ocr_status,
                 ocr_error=ocr_error,
+                auth=auth,
             )
             if vision_meta:
                 retrieval_metadata["vision"] = dict(vision_meta)
@@ -1160,6 +1266,60 @@ def _run_rag_with_chunks_audit(
             retrieval_metadata["vision_cache_hit"] = False
 
     # Phase 34A.1.2 — bypass the relevance floor for image_content
+    # ------------------------------------------------------------------
+    # Phase 34D — IMAGE_COMPARISON flow.
+    #
+    # When ``image_context.comparison`` is present (a list of two
+    # {document_id, image_id} dicts) we run the comparison
+    # orchestrator on the two authorized images and prepend two
+    # synthetic chunks (image A, image B) so the citation renderer
+    # attaches a [N] marker to each image. Comparison is independent
+    # from the single-image Phase 34D path above; the two never run
+    # together. When comparison is disabled, not requested, or fails,
+    # the chat pipeline continues with the Phase 34B single-image
+    # evidence.
+    # ------------------------------------------------------------------
+    comparison_targets = extract_comparison_targets(image_context) if image_context else []
+    if len(comparison_targets) >= 2 and auth is not None:
+        try:
+            from app.vision.integration import (
+                _maybe_run_comparison_vision as _maybe_run_comparison_vision_runtime,
+            )
+            comparison_meta = _maybe_run_comparison_vision_runtime(
+                db,
+                auth=auth,
+                question=query,
+                comparison_targets=list(comparison_targets),
+                context_hint="",
+            )
+        except Exception as exc:
+            logger.debug("answer_generator: comparison orchestrator crashed: %s", exc)
+            comparison_meta = None
+        if comparison_meta:
+            retrieval_metadata["advanced_vision_comparison"] = dict(comparison_meta)
+            if comparison_meta.get("advanced_vision_ran"):
+                try:
+                    from app.vision.integration import (
+                        _build_comparison_synthetic_chunks as _build_compare_chunks,
+                    )
+                    image_ids = list(comparison_meta.get("advanced_vision_image_ids") or [])
+                    source_a = comparison_meta.get("advanced_vision_image_a_filename") or (
+                        f"image_{image_ids[0]}.png" if len(image_ids) >= 1 else "image_a.png"
+                    )
+                    source_b = comparison_meta.get("advanced_vision_image_b_filename") or (
+                        f"image_{image_ids[1]}.png" if len(image_ids) >= 2 else "image_b.png"
+                    )
+                    synthetic_chunks = _build_compare_chunks(
+                        advanced_meta=comparison_meta,
+                        source_filename_a=source_a,
+                        source_filename_b=source_b,
+                    )
+                    if synthetic_chunks:
+                        chunks = list(synthetic_chunks) + list(chunks or [])
+                except Exception as exc:
+                    logger.debug("answer_generator: comparison synthetic-chunk build failed: %s", exc)
+
+
     # sources (by-id chunks have score=None). Source relationship is
     # the relevance signal.
     grounding_threshold = min_relevance_score
@@ -1187,12 +1347,27 @@ def _run_rag_with_chunks_audit(
             "pre_llm_skip_reason": "image_content_resolved_source",
         }
     else:
+        # Phase 34D — source-aware: when an explicit authorized
+        # image_context is in scope (the chat endpoint already RBAC-gated
+        # it), surface that into the retrieval_metadata so the grounding
+        # layer can recognise an exact-text OCR lookup (e.g. "What error
+        # code is shown?") and NOT block it on topic-relevance keyword
+        # overlap. This is the narrow source-aware signal used by
+        # ``grounding._is_ocr_image_context_lookup``. It never invokes
+        # advanced vision and never lowers any relevance threshold.
+        if image_context and isinstance(image_context, dict):
+            retrieval_metadata.setdefault("image_routing", {})
+            if not retrieval_metadata["image_routing"].get("image_context_used"):
+                retrieval_metadata["image_routing"]["image_context_used"] = bool(
+                    image_context.get("image_id") or image_context.get("document_id")
+                )
         should_block, fallback_message, grounding_meta = apply_grounding_checks(
             chunks=chunks,
             answer=None,
             threshold=grounding_threshold,
             require_citations=False,
             query=query,  # For topic relevance check
+            retrieval_metadata=retrieval_metadata,
         )
 
     # CRAG decision metadata - tracks corrective RAG flow

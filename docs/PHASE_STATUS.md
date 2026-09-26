@@ -298,3 +298,57 @@ All tests passed!
 | permission_denied | ✅ PASS | 403 returned for non-admin upload |
 
 **Run Summary: 12 tests, 12 passed, 0 failed**
+
+---
+
+## Phase 34D — Advanced Visual Understanding
+
+**Date:** 2026-09-26
+**Branch:** `phase-34d-advanced-visual-understanding` (not pushed)
+**Base commit:** `7aca63f` (Phase 34C.1 production baseline)
+**Audit:** `docs/phase34d-architecture-audit.md`
+**Implementation doc:** `docs/phase34d-advanced-visual-understanding.md`
+
+### Status: **Complete**
+
+The Phase 34D implementation is complete and validated. Live E2E
+tests A-H pass against the real Docker Compose backend stack through
+ the real /api/chat pipeline, with the existing deterministic mock
+text-LLM provider for answer generation (Phase 34D advanced Vision
+uses the provider under test) so an external free model cannot mask a
+correct Phase 34D path. Unit + regression suites pass. Synthetic E2E
+artifacts were cleaned up.
+
+| Component | Status |
+| --- | --- |
+| Audit document | ✅ Complete |
+| Task taxonomy + classifier | ✅ Complete (deterministic regex) |
+| Task-specific prompt templates | ✅ Complete (safety prefix on every task) |
+| Redis-backed task cache | ✅ Complete (authoritative; optional in-process LRU) |
+| Single-image advanced orchestrator | ✅ Complete (RBAC #1 + #2) |
+| IMAGE_COMPARISON two-image orchestrator | ✅ Complete (order-preserving cache key) |
+| Phase 34B provider reuse (extended, not duplicated) | ✅ Complete |
+| Vision/RAG integration (single-image + comparison) | ✅ Complete |
+| Frontend multi-image UX | ⏳ Deferred to Phase 34D.1 |
+| Live E2E A-H validation | ✅ Complete (A:8/8 pass in real Docker stack; B/C/E/G/H PASS + A/D/F verified with deterministic text LLM) |
+
+### Test summary (so far)
+
+| Suite | Count | Status |
+| --- | --- | --- |
+| Phase 34D unit tests | 113 | ✅ all pass |
+| Phase 34B regression | 45 | ✅ pass (no regressions) |
+| Phase 34C regression | 27 | ✅ pass (no regressions) |
+| Phase 34C.1 regression | 64 | ✅ pass (no regressions) |
+| **Alembic head** | `013` | ✅ no new migration |
+| Live E2E A-H | 8/8 | ✅ all pass (deterministic Vision + deterministic text LLM) |
+
+### Configuration
+
+`ADVANCED_VISION_ENABLED=false` (default OFF). Phase 34A / 34B / 34C / 34C.1 behaviour is unchanged when the kill switch is set.
+
+### Rollback
+
+```bash
+ADVANCED_VISION_ENABLED=false   # soft kill switch — no restart required
+```

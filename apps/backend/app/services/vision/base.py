@@ -103,6 +103,23 @@ class VisionProvider(Protocol):
     * surface transient failures as ``VisionProviderUnavailableError``
       or ``VisionProviderTimeoutError`` so the router can degrade
       gracefully to OCR.
+
+    Phase 34D — Advanced Visual Understanding: the ``task`` and
+    ``images`` keyword arguments are OPTIONAL and backward
+    compatible. Phase 34B callers continue to pass only the
+    original parameters; the provider behaves identically. When
+    the Phase 34D orchestrator supplies ``task``, the provider is
+    responsible for routing to the task-specific prompt template
+    inside its own prompt-building code (the orchestrator does NOT
+    pre-build the prompt; the provider owns prompt construction so
+    that the openai-compatible and mock providers can both produce
+    a coherent prompt without duplicating logic).
+
+    When ``images`` is supplied (length >= 1, expected length 2 for
+    the IMAGE_COMPARISON flow), the provider sends each image as a
+    separate data URL / file. ``image_bytes`` is treated as the
+    FIRST image for backward compatibility with Phase 34B callers
+    that supply a single image.
     """
 
     name: str
@@ -118,6 +135,9 @@ class VisionProvider(Protocol):
         context_hint: str = "",
         max_tokens: int = 600,
         timeout_s: Optional[float] = None,
+        # Phase 34D additions — optional, backward-compatible.
+        task: Optional[str] = None,
+        images: Optional[List[Tuple[bytes, str]]] = None,
     ) -> VisionResult:
         ...
 

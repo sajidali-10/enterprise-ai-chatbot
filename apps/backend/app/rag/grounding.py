@@ -260,6 +260,216 @@ def _is_image_observation_query(query: str, chunks: list[dict]) -> bool:
     return bool(decision.any_path_eligible())
 
 
+def _is_ocr_image_context_lookup(
+    query: str,
+    chunks: list[dict],
+    retrieval_metadata: Optional[dict] = None,
+) -> bool:
+    """Phase 34D — narrow topic-relevance source-aware pass for an exact-
+    text OCR answer backed by an explicit authorized image_context.
+
+    This handles the exact-text OCR route (e.g. "What error code is
+    shown?") when the retriever scoped the candidate set to the image's
+    OCR chunks (``image_content_context_fallback``) even though query
+    analysis classified it as ``general``. The OCR body is the answer; the
+    user's meta-question shares little vocabulary with it, so the generic
+    keyword-overlap check would otherwise block pre-LLM (overlap ~0.25).
+
+    Returns True ONLY when ALL of these hold:
+      1. The request had an explicit authorized image_context and the
+         routing scoped to image-content OCR chunks
+         (``image_routing.routing_mode`` is an ``image_content_*`` mode
+         or ``image_context_used`` is true).
+      2. The query is NOT product-meaning / troubleshooting / root-cause /
+         configuration intent (we never bypass those).
+      3. The query is an exact-text / identifier lookup that OCR answers
+         (the classifier reports ``is_identifier_lookup``) OR at least one
+         supplied chunk is image-derived (has ``image_id`` / OCR source).
+
+    This is OFF for ordinary text RAG, KB product queries, and any query
+    without an explicit authorized image_context. It does NOT lower any
+    threshold and never invokes advanced vision.
+    """
+    if not query or not chunks:
+        return False
+
+    # 1) explicit authorized image_context scoped to image content.
+    routing = (retrieval_metadata or {}).get("image_routing") or {}
+    if not isinstance(routing, dict):
+        routing = {}
+    routing_mode = str(routing.get("routing_mode") or "")
+    image_context_used = bool(routing.get("image_context_used"))
+    is_image_scoped = bool(
+        image_context_used
+        or routing_mode.startswith("image_content_")
+        or routing_mode == "image_content_context_fallback"
+    )
+    if not is_image_scoped:
+        return False
+
+    # 2) never bypass product-meaning / troubleshooting / config intent.
+    try:
+        from app.services.advanced_vision.router import classify_visual_task
+        classification = classify_visual_task(query)
+        if classification.is_product_meaning:
+            return False
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+    # 3) exact-text identifier lookup OR image-derived chunk present.
+    if classification.is_identifier_lookup:
+        return True
+    has_image_derived_chunk = any(
+        _is_image_derived_chunk(c) for c in chunks
+    )
+    return has_image_derived_chunk
+
+
+def _is_image_derived_chunk(chunk: dict) -> bool:
+    """True when ``chunk`` is image/OCR-derived (has an ``image_id`` or an
+    OCR source_type), i.e. it is evidence the image is in scope."""
+    if not isinstance(chunk, dict):
+        return False
+    if chunk.get("image_id") is not None:
+        return True
+    st = (chunk.get("source_type") or chunk.get("content_type") or "").lower()
+    if st in {"image_ocr", "image_knowledge", "pdf_ocr", "pdf_page_ocr", "docx_image_ocr"}:
+        return True
+    return False
+
+
+def _is_ocr_evidence_source(
+    query: str,
+    chunks: list[dict],
+    retrieval_metadata: Optional[dict] = None,
+) -> bool:
+    """Phase 34D — evidence-level source-aware check for an exact-text OCR
+    answer backed by an explicit authorized image_context.
+
+    Mirrors ``_is_ocr_image_context_lookup`` for the evidence-level decision:
+    when the request carries an explicit authorized image_context scoped to
+    image-content OCR chunks AND the query is an identifier / exact-text
+    lookup (not product-meaning / KB), the OCR body is authoritative even
+    though the by-id OCR chunks carry ``score=None`` (so the generic
+    weak-evidence decision would otherwise block the answer). This is used
+    by ``decide_evidence_level`` to grant STRONG evidence and never invokes
+    advanced vision or lowers thresholds.
+    """
+    if not query or not chunks:
+        return False
+    routing = (retrieval_metadata or {}).get("image_routing") or {}
+    if not isinstance(routing, dict):
+        routing = {}
+    routing_mode = str(routing.get("routing_mode") or "")
+    image_context_used = bool(routing.get("image_context_used"))
+    is_image_scoped = bool(
+        image_context_used
+        or routing_mode.startswith("image_content_")
+        or routing_mode == "image_content_context_fallback"
+    )
+    if not is_image_scoped:
+        return False
+    try:
+        from app.services.advanced_vision.router import classify_visual_task
+        classification = classify_visual_task(query)
+        if classification.is_product_meaning:
+            return False
+    except Exception:  # pragma: no cover - defensive
+        return False
+    if classification.is_identifier_lookup:
+        return True
+    return any(_is_image_derived_chunk(c) for c in chunks)
+
+
+def _is_advanced_vision_topic_bypass(query: str, chunks: list[dict]) -> bool:
+    """Phase 34D — narrowly-scoped topic-relevance bypass for visual-
+    observation questions backed by advanced-vision evidence.
+
+    The topic-relevance gate (``check_topic_relevance``) blocks a
+    question when the query and the chunk text share too few keywords.
+    A visual-observation question ("What visually looks wrong with this
+    screen?") genuinely shares almost no vocabulary with the OCR body
+    ("Server A Healthy … Apply disabled") — the visual task itself is
+    what makes the image evidence relevant.
+
+    This helper returns True ONLY when ALL of these hold:
+
+      1. The request carries an explicit AUTHORIZED image_context AND
+         Phase 34D produced an advanced-vision evidence chunk for that
+         same image (a chunk whose ``source_type``/``content_type`` is
+         ``advanced_vision`` with ``advanced_vision_ran=True``). The
+         advanced orchestrator already enforced RBAC before producing
+         that chunk, so authorization is inherent to its presence.
+      2. The query is classified as a VISUAL task (UI_STATE_ANALYSIS,
+         CHART_ANALYSIS, DIAGRAM_ANALYSIS, TABLE_VISUAL_ANALYSIS, or
+         GENERAL_VISUAL) — i.e. ``classify_visual_task`` reports
+         ``should_run_advanced_vision=True``.
+      3. The query is NOT product-meaning / troubleshooting /
+         configuration / root-cause intent (the classifier excludes
+         those, and we additionally reject any query flagged
+         ``is_product_meaning``).
+      4. The advanced-vision evidence belongs to an authorized image.
+
+    It deliberately does NOT bypass for:
+      * identifier-lookup / exact-text questions (OCR owns them),
+      * ordinary KB / product-meaning / troubleshooting queries,
+      * any query without an advanced-vision evidence chunk,
+      * any chunk the user cannot access.
+
+    The bypass is OFF by default for every other query, so ordinary text
+    RAG and Phase 34C.1 historical-image synthesis are unchanged.
+    """
+    if not query or not chunks:
+        return False
+
+    # 1) Must actually have an advanced-vision evidence chunk in scope.
+    adv_chunks = [
+        c for c in chunks if _is_advanced_vision_evidence_chunk(c)
+    ]
+    if not adv_chunks:
+        return False
+
+    # 2) The advanced-query classifier must agree the question is a
+    #    visual task that advanced vision is allowed to run for (this
+    #    rejects identifier-lookup + product-meaning + trouble-shooting
+    #    + root-cause even if a stale advanced chunk were present).
+    try:
+        from app.services.advanced_vision.router import classify_visual_task
+    except Exception:  # pragma: no cover - defensive
+        return False
+    classification = classify_visual_task(query)
+    if not classification.should_run_advanced_vision:
+        return False
+    if classification.is_product_meaning:
+        return False
+
+    return True
+
+
+def _is_advanced_vision_evidence_chunk(chunk: dict) -> bool:
+    """True when ``chunk`` is a Phase 34D advanced-vision evidence chunk
+    that was actually successfully produced for an authorized image.
+
+    We match on the synthetic chunk markers written by
+    ``app.vision.integration`` (``source_type``/``content_type`` =
+    ``advanced_vision`` and ``advanced_vision_ran=True``) and require an
+    ``image_id`` so the evidence is image-anchored. The advanced
+    orchestrator already enforced RBAC (both gates) before emitting this
+    chunk, so its presence implies an authorized image.
+    """
+    if not isinstance(chunk, dict):
+        return False
+    st = (chunk.get("source_type") or chunk.get("content_type") or "").lower()
+    if st != "advanced_vision":
+        return False
+    if not chunk.get("image_id"):
+        return False
+    meta = chunk.get("metadata")
+    if isinstance(meta, dict) and meta.get("advanced_vision_ran"):
+        return True
+    return False
+
+
 def check_retrieval_guardrail(chunks: list[dict]) -> tuple[bool, Optional[str], dict]:
     """
     Check if retrieval returned any chunks.
@@ -612,6 +822,39 @@ def decide_evidence_level(
     )
     if is_resolved_image_content:
         metadata["rationale"].append("resolved_image_content_source")
+        metadata["decision"] = "strong"
+        return EvidenceLevel.STRONG, metadata
+
+    # Phase 34D — advanced-vision evidence grants STRONG evidence.
+    #
+    # A visual-observation question backed by an advanced-vision evidence
+    # chunk (``advanced_vison`` synthetic chunk emitted by the orchestrator
+    # for an authorized image) is authoritative for the visual observation
+    # even though the synthetic chunk carries ``score=None`` (it is not a
+    # similarity hit). Without this, ``decide_evidence_level`` would classify
+    # as WEAK (top_score from ``score=None`` -> 0) and the chat would return
+    # the insufficient-info fallback with no answer and no citation. We grant
+    # STRONG narrowly: only when an ``advanced_vision`` chunk is actually in
+    # the candidate set (the orchestrator already RBAC'd + ran it).
+    has_advanced_vision_chunk = any(
+        _is_advanced_vision_evidence_chunk(c) for c in chunks
+    )
+    if has_advanced_vision_chunk:
+        metadata["rationale"].append("advanced_vision_evidence")
+        metadata["decision"] = "strong"
+        return EvidenceLevel.STRONG, metadata
+
+    # Phase 34D — exact-text OCR lookup backed by an explicit authorized
+    # image_context. When the query is an identifier/exact-text lookup that
+    # the OCR body answers (e.g. "What error code is shown?"), the image
+    # source relationship is the relevance signal — the OCR chunks carry
+    # score=None (by-id fetch) or low lexical overlap with the meta-question
+    # so the generic weak-evidence decision would otherwise block the answer.
+    # This grants STRONG narrowly, mirroring the resolved-image-content /
+    # advanced-vision grants. It never invokes advanced vision and never
+    # lowers a threshold.
+    if _is_ocr_evidence_source(query, chunks, retrieval_metadata):
+        metadata["rationale"].append("ocr_image_context_lookup")
         metadata["decision"] = "strong"
         return EvidenceLevel.STRONG, metadata
 
@@ -1074,6 +1317,31 @@ def _run_grounding_checks(
             metadata["topic_checked"] = False
             metadata["topic_bypassed_reason"] = (
                 "phase34c1_historical_image_observation"
+            )
+        # Phase 34D — narrowly-scoped advanced-vision bypass. A visual-
+        # observation question backed by an authorized advanced-vision
+        # evidence chunk satisfies topic relevance even when OCR keyword
+        # overlap is low ("What visually looks wrong?" vs "Server A
+        # Healthy…"). This is NOT a global weakening: it fires ONLY when
+        # an advanced_vision chunk with ran=True + visual task_type exists
+        # AND the query classifier confirms a visual (non product-meaning /
+        # troubleshooting / identifier) task.
+        elif _is_advanced_vision_topic_bypass(query, chunks):
+            metadata["topic_checked"] = False
+            metadata["topic_bypassed_reason"] = (
+                "phase34d_advanced_vision_evidence"
+            )
+        # Phase 34D — exact-text OCR lookup with an explicit authorized
+        # image_context scoped to image-content chunks (
+        # image_content_context_fallback). The OCR body IS the answer for
+        # such questions, so the generic keyword-overlap check would
+        # otherwise block a correct exact-text response (e.g. "What error
+        # code is shown?"). This is OFF for product-meaning / KB queries
+        # and never invokes advanced vision.
+        elif _is_ocr_image_context_lookup(query, chunks, retrieval_metadata):
+            metadata["topic_checked"] = False
+            metadata["topic_bypassed_reason"] = (
+                "phase34d_ocr_image_context_lookup"
             )
         else:
             should_block, message, topic_meta = check_topic_relevance(query, chunks)

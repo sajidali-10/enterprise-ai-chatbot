@@ -85,6 +85,13 @@ class MockVisionProvider:
         context_hint: str = "",
         max_tokens: int = 600,
         timeout_s: Optional[float] = None,
+        # Phase 34D additions — optional, backward-compatible. The
+        # mock provider does not use ``images`` for comparison — it
+        # treats the first image as the source. Tests that exercise
+        # comparison use a real provider or a test double that
+        # overrides ``analyze_image``.
+        task: Optional[str] = None,
+        images: Optional[List[Tuple[bytes, str]]] = None,
     ) -> VisionResult:
         ocr_text = (ocr_text or "").strip()
         prompt_lower = (prompt or "").lower()

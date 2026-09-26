@@ -274,3 +274,48 @@ def recent_targets_from_image_context(
             i = None
         out.append((d, i))
     return out
+
+
+def extract_comparison_targets(
+    image_context: Optional[Dict[str, Any]],
+) -> List[Tuple[int, Optional[int]]]:
+    """Phase 34D — extract two image targets for the IMAGE_COMPARISON flow.
+
+    Reads ``image_context.comparison`` which is a list of
+    ``{document_id, image_id}`` dicts in *order*. Image A is the
+    first entry; image B is the second entry. Order is preserved
+    so the comparison cache key (which encodes A before B) does
+    not silently invert a swapped request.
+
+    Returns at most two ``(document_id, image_id)`` tuples. Each
+    ``document_id`` MUST be present (the comparison flow uses the
+    ``document_id`` for RBAC and MinIO fetch). Missing / malformed
+    entries are dropped. The caller must reject any request with
+    fewer than two tuples (the orchestrator short-circuits to a
+    safe "comparison_unavailable" outcome).
+    """
+    if not image_context or not isinstance(image_context, dict):
+        return []
+    comparison = image_context.get("comparison")
+    if not isinstance(comparison, list):
+        return []
+    out: List[Tuple[int, Optional[int]]] = []
+    for entry in comparison[:2]:  # hard cap at two
+        if not isinstance(entry, dict):
+            continue
+        doc_raw = entry.get("document_id")
+        if doc_raw is None:
+            continue
+        try:
+            doc_id = int(doc_raw)
+        except (TypeError, ValueError):
+            continue
+        img_id: Optional[int] = None
+        img_raw = entry.get("image_id")
+        if img_raw is not None:
+            try:
+                img_id = int(img_raw)
+            except (TypeError, ValueError):
+                img_id = None
+        out.append((doc_id, img_id))
+    return out

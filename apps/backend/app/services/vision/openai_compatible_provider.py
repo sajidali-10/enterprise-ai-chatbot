@@ -145,6 +145,9 @@ class OpenAICompatibleVisionProvider:
         context_hint: str = "",
         max_tokens: int = 600,
         timeout_s: Optional[float] = None,
+        # Phase 34D additions — optional, backward-compatible.
+        task: Optional[str] = None,
+        images: Optional[List[Tuple[bytes, str]]] = None,
     ) -> VisionResult:
         if not image_bytes:
             raise VisionProviderUnavailableError(
@@ -152,25 +155,55 @@ class OpenAICompatibleVisionProvider:
             )
 
         effective_timeout = float(timeout_s) if timeout_s is not None else self.timeout_s
-        data_url = _build_data_url(image_bytes, mime_type or "image/png")
 
-        user_prompt = self._build_user_prompt(
-            prompt=prompt, ocr_text=ocr_text, context_hint=context_hint
+        # Phase 34D: build the task-aware prompt when ``task`` is set.
+        # ``images`` overrides ``image_bytes`` when supplied; the
+        # first image in ``images`` is treated as image A and (for
+        # comparison) the second as image B. Order is preserved.
+        image_payloads = self._resolve_image_payloads(
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            images=images,
+            task=task,
         )
+
+        if task:
+            system_prompt, user_prompt, task_max_tokens = self._build_task_prompt(
+                task=task,
+                question=prompt,
+                ocr_text=ocr_text,
+                context_hint=context_hint,
+                image_count=len(image_payloads),
+            )
+            effective_max_tokens = int(
+                max(64, min(max_tokens or task_max_tokens, 4096))
+            )
+        else:
+            system_prompt = _SYSTEM_PROMPT
+            user_prompt = self._build_user_prompt(
+                prompt=prompt, ocr_text=ocr_text, context_hint=context_hint
+            )
+            effective_max_tokens = int(max(64, min(max_tokens, 4096)))
 
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": user_prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
+                        *[
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": data_url},
+                            }
+                            for data_url, _mime in image_payloads
+                        ],
                     ],
                 },
             ],
-            "max_tokens": int(max(64, min(max_tokens, 4096))),
+            "max_tokens": effective_max_tokens,
             "temperature": 0.0,
         }
 
@@ -181,6 +214,82 @@ class OpenAICompatibleVisionProvider:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _resolve_image_payloads(
+        self,
+        *,
+        image_bytes: bytes,
+        mime_type: str,
+        images: Optional[List[Tuple[bytes, str]]],
+        task: Optional[str],
+    ) -> List[Tuple[str, str]]:
+        """Build the ordered list of (data_url, mime_type) for the request.
+
+        Phase 34B callers always pass ``image_bytes`` only — single
+        image. Phase 34D callers may pass ``images`` instead with one
+        or two entries. Order is preserved (A → B) for comparison.
+        """
+        if images:
+            return [
+                (_build_data_url(b or b"", m or mime_type or "image/png"), m or mime_type or "image/png")
+                for b, m in images
+                if b
+            ]
+        return [(_build_data_url(image_bytes, mime_type or "image/png"), mime_type or "image/png")]
+
+    def _build_task_prompt(
+        self,
+        *,
+        task: str,
+        question: str,
+        ocr_text: str,
+        context_hint: str,
+        image_count: int,
+    ) -> Tuple[str, str, int]:
+        """Build a task-aware system + user prompt.
+
+        The advanced_vision package owns the canonical task prompt
+        templates. We import them lazily so this module remains
+        import-safe in environments where Phase 34D is disabled
+        (the import would still succeed; only calling this method
+        without Phase 34D installed would fail).
+        """
+        try:
+            from app.services.advanced_vision.prompts import (
+                build_advanced_vision_prompt,
+                build_comparison_prompt,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            raise VisionProviderUnavailableError(
+                f"advanced_vision prompts unavailable: {exc}"
+            ) from exc
+
+        if task == "image_comparison" or image_count >= 2:
+            built = build_comparison_prompt(
+                question=question,
+                ocr_text_a=ocr_text,
+                ocr_text_b="",
+                prompt_version=int(
+                    __import__("app.core.config", fromlist=["settings"]).settings.ADVANCED_VISION_PROMPT_VERSION
+                ),
+            )
+        else:
+            built = build_advanced_vision_prompt(
+                task_type=task,
+                question=question,
+                ocr_text=ocr_text,
+                prompt_version=int(
+                    __import__("app.core.config", fromlist=["settings"]).settings.ADVANCED_VISION_PROMPT_VERSION
+                ),
+            )
+
+        # Layer the context hint into the user prompt so existing
+        # callers that supply context_hint still see it.
+        hint = (context_hint or "").strip()
+        user_prompt = (
+            f"Context: {hint}\n\n{built.user}" if hint else built.user
+        )
+        return built.system, user_prompt, built.max_tokens
 
     def _build_user_prompt(
         self, *, prompt: str, ocr_text: str, context_hint: str

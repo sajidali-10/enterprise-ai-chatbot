@@ -3,6 +3,47 @@ from app.schemas.chat import ChatRequest, ChatResponse, MessageRole
 from app.services.llm.base import LlmProvider
 
 
+def _extract_ocr_body(content: str) -> str:
+    """Return the OCR body embedded in a chunk payload.
+
+    The prompt's ``[{n}] Source: <file>\n<content>`` block may carry a
+    ``Source Type: Image\nOCR Text:\n...`` header (Phase 34A OCR chunks) or a
+    ``Source image: ...`` / ``OCR:\n...`` header (image_knowledge chunks).
+    For exact-text lookups, the mock text provider must surface the actual
+    visible OCR line (e.g. ``Failed Reason: 902``) deterministically, not the
+    header. If no OCR marker is found, fall back to the raw content.
+    """
+    if not content:
+        return ""
+    text = content.strip()
+    # ``OCR Text:`` (Phase 34A) — slice after the marker.
+    m = re.search(r"OCR Text:\s*", text, re.IGNORECASE)
+    if m:
+        return _strip_ocr_headers(text[m.end():])
+    # ``OCR:`` on its own line (image_knowledge body).
+    m2 = re.search(r"(?m)^\s*OCR:\s*$\s*(.*)$", text)
+    if m2 and m2.group(1).strip():
+        return _strip_ocr_headers(m2.group(1))
+    return _strip_ocr_headers(text)
+
+
+def _strip_ocr_headers(text: str) -> str:
+    """Remove leading source/type/file/header lines so only visible content stays."""
+    if not text:
+        return ""
+    out = []
+    for line in text.splitlines():
+        low = line.strip().lower()
+        if low.startswith("source image:") or low.startswith("source type:") \
+           or low.startswith("image type:") or low.startswith("file:") \
+           or low.startswith("page:") or low.startswith("ocr text:") \
+           or low == "ocr:":
+            continue
+        if line.strip():
+            out.append(line.strip())
+    return "\n".join(out)
+
+
 class MockProvider(LlmProvider):
     """
     Mock LLM provider for testing and development.
@@ -58,18 +99,22 @@ class MockProvider(LlmProvider):
             # Parse chunks from [1], [2], etc format
             chunk_pattern = r'\[(\d+)\]\s*Source:\s*(.*?)\n(.*?)(?=\[\d+\]|\Z)'
             chunks = re.findall(chunk_pattern, info_section, re.DOTALL)
-            
+
             if chunks:
                 # Build a mock RAG answer that references retrieved content
                 answer_parts = []
                 for chunk_num, source, content in chunks:
-                    # Truncate content for the answer
-                    content_preview = content.strip()[:200]
+                    # Surface the most informative OCR excerpt so exact-text
+                    # answers (e.g. an error code like "902") are preserved
+                    # deterministically instead of depending on the external
+                    # OpenRouter model deciding which visible token to echo.
+                    body = _extract_ocr_body(content)
+                    content_preview = body[:200] if body else (content.strip()[:200])
                     if content_preview:
                         answer_parts.append(
                             f"According to [{chunk_num}] ({source}), {content_preview}..."
                         )
-                
+
                 if answer_parts:
                     answer = f"Based on the retrieved information: " + " ".join(answer_parts[:3])
                     return ChatResponse(message=answer, role=MessageRole.assistant)
